@@ -3,3 +3,6 @@ __pycache__/
 alerts
 signal_db
 screener_outputs
+logs
+positions
+data_cache
