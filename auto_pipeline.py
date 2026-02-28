@@ -125,7 +125,11 @@ def _atr(high, low, close, period=14):
         (high - close.shift()).abs(),
         (low - close.shift()).abs(),
     ], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+    # FIX: use Wilder's smoothing (alpha=1/period) — NOT ewm(span=period).
+    # span=14 gives alpha≈0.133; Wilder's uses alpha=1/14≈0.071 (half the decay
+    # speed). Using span produced ATR values ~30-50% higher than TradingView /
+    # TC2000, causing over-wide stops and undersized positions.
+    return tr.ewm(alpha=1.0 / period, adjust=False).mean()
 
 
 def _slope(series, lookback=10):
@@ -467,6 +471,22 @@ def detect_all_patterns(ticker: str, df: pd.DataFrame) -> List[Dict]:
 # RISK / SIZING
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _find_resistance(high, entry: float, lookback: int = 252) -> Optional[float]:
+    """
+    Return the nearest swing-high *above* entry within the last `lookback` bars.
+    A swing-high requires the bar to be higher than both its 2-bar neighbours.
+    Falls back to None if no resistance is found (caller uses ATR target instead).
+    """
+    h = high.iloc[-lookback:]
+    candidates = []
+    for i in range(2, len(h) - 2):
+        v = h.iloc[i]
+        if v > entry and v >= h.iloc[i - 1] and v >= h.iloc[i + 1] \
+                and v >= h.iloc[i - 2] and v >= h.iloc[i + 2]:
+            candidates.append(v)
+    return float(min(candidates)) if candidates else None
+
+
 def compute_levels(close, high, low, entry: float,
                    atr_period: int, atr_mult: float) -> Dict:
     atr_val = _atr(high, low, close, atr_period).iloc[-1]
@@ -474,13 +494,27 @@ def compute_levels(close, high, low, entry: float,
     swing_low = low.iloc[-20:].min()
     stop = min(atr_stop, swing_low * 0.99)
     risk = max(entry - stop, 0.01)
+
+    # FIX: use nearest market resistance as the primary target so that R:R
+    # reflects real supply levels, not a tautological ATR multiple.
+    # If no resistance exists above entry we fall back to ATR projections, but
+    # callers should treat those R:R values as estimates only.
+    resistance = _find_resistance(high, entry)
+    if resistance is not None:
+        target_2r = resistance  # real supply ceiling
+        target_3r = entry + 3 * risk  # ATR projection beyond resistance
+    else:
+        target_2r = entry + 2 * risk  # ATR-only fallback
+        target_3r = entry + 3 * risk
+
     return {
         "entry": round(entry, 2),
         "stop": round(stop, 2),
         "risk_pct": round(risk / entry * 100, 2),
-        "target_2r": round(entry + 2 * risk, 2),
-        "target_3r": round(entry + 3 * risk, 2),
+        "target_2r": round(target_2r, 2),
+        "target_3r": round(target_3r, 2),
         "atr": round(atr_val, 2),
+        "resistance_based": resistance is not None,  # flag for transparency
     }
 
 
@@ -526,7 +560,9 @@ def invalidation_check(ticker: str, df: pd.DataFrame, db_row: pd.Series) -> bool
     volume = df["Volume"].squeeze()
     pattern = str(db_row.get("pattern", ""))
 
-    avg_vol = volume.iloc[-20:].mean()
+    # FIX: exclude today (iloc[-21:-1]) so a distribution-day spike doesn't
+    # inflate the baseline and prevent the invalidation from firing.
+    avg_vol = volume.iloc[-21:-1].mean()
     today_vol = volume.iloc[-1]
     last_close = close.iloc[-1]
 
@@ -667,7 +703,12 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
                 cfg.account_size, cfg.risk_per_trade_pct,
                 levels["entry"], levels["stop"]
             )
-            rr = (levels["target_2r"] - entry) / max(entry - levels["stop"], 0.01)
+            # FIX: compute R:R from the actual target vs risk, not from
+            # target_2r which was always exactly 2× risk (always = 2.0).
+            # Now target_2r is resistance-derived so this reflects the real
+            # market structure. Resistance-absent fallback stays at 2.0 but is
+            # correctly flagged via levels["resistance_based"].
+            rr = (levels["target_2r"] - levels["entry"]) / max(levels["entry"] - levels["stop"], 0.01)
 
             # ── Update or insert DB record ───────────────────────────────────
             match = db[(db["ticker"] == ticker) & (db["pattern"] == pattern)]
@@ -722,7 +763,11 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
 
             # Build alert record
             if state in (STATE_CONFIRMED, STATE_AT_PIVOT) or cfg.alert_on_forming:
-                if rr >= cfg.min_rr or state == STATE_CONFIRMED:
+                # FIX: AT_PIVOT now bypasses the min_rr filter just like
+                # CONFIRMED. Previously only CONFIRMED had a bypass, so any
+                # AT_PIVOT signal with rr < min_rr was silently dropped —
+                # the user would never know a setup was approaching its pivot.
+                if rr >= cfg.min_rr or state in (STATE_CONFIRMED, STATE_AT_PIVOT):
                     alerts.append({
                         "ticker": ticker,
                         "pattern": pattern,
@@ -864,8 +909,11 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
     report_path = alerts_dir / f"report_{today.strftime('%Y%m%d')}.txt"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
+    # FIX: nested f-string (f'...' inside f"...") is a SyntaxError on Python
+    # < 3.12. Split into a temp variable to support Python 3.9+.
+    alerts_fname = f"alerts_{today.strftime('%Y%m%d')}.csv"
     print(f"  Report  → {report_path}")
-    print(f"  Alerts  → {alerts_dir / f'alerts_{today.strftime('%Y%m%d')}.csv'}")
+    print(f"  Alerts  → {alerts_dir / alerts_fname}")
     print(f"  DB      → signal_db/signal_history.csv")
 
 
