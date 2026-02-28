@@ -11,7 +11,6 @@ Strategy Stack:
   5. ADX Trend Strength                   (strong directional moves)
   6. Volatility-Adjusted Momentum (VAM)   (momentum per unit of risk)
   7. 52-Week High Proximity               (near breakout zone)
-  8. Earnings Price Reaction              (fundamental catalyst)
 
 Usage:
   pip install yfinance pandas numpy scipy ta colorama tabulate
@@ -77,9 +76,10 @@ def ema(series: pd.Series, period: int) -> pd.Series:
 
 
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder's RSI — uses EWM smoothing (alpha=1/period), matching standard charting platforms."""
     delta = series.diff()
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
     rs = gain / loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
 
@@ -111,14 +111,6 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> 
 def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     sign = np.sign(close.diff()).fillna(0)
     return (sign * volume).cumsum()
-
-
-def annualized_return(series: pd.Series, days: int) -> float:
-    """Annualized return over last `days` calendar days"""
-    if len(series) < days:
-        return np.nan
-    ret = series.iloc[-1] / series.iloc[-days] - 1
-    return (1 + ret) ** (252 / days) - 1
 
 
 def linear_slope_r2(series: pd.Series) -> tuple:
@@ -160,12 +152,10 @@ def score_stage2(close: pd.Series) -> float:
     if not ma_rising or last < ma30:
         return 0.0
 
-    # Penalize if too extended (Stage III risk)
-    # Sweet spot: 2% to 25% above 30w MA
-    if pct_above < 2:
-        stage_score = 30.0
-    elif pct_above <= 25:
-        stage_score = 60.0 + (pct_above - 2) * (40.0 / 23.0)
+    # Penalize if too extended (Stage III risk).
+    # Linear ramp: 0% above MA → 30, 25% above MA → 100, beyond 25% → discounted.
+    if pct_above <= 25:
+        stage_score = 30.0 + pct_above * (70.0 / 25.0)
     else:
         # Extended — discount linearly beyond 25%
         stage_score = max(0, 100 - (pct_above - 25) * 3)
@@ -182,10 +172,13 @@ def score_relative_strength(close: pd.Series, bench: pd.Series,
     """
     Mansfield Relative Strength: stock return vs benchmark return
     across multiple timeframes, weighted toward recent.
+    Weights are re-normalized if any period fails, so the score is always
+    correctly scaled to 0-100.
     """
-    scores = []
-    weights = [0.5, 0.3, 0.2]
-    for p, w in zip(periods, weights):
+    raw_weights = [0.5, 0.3, 0.2]
+    weighted_scores = []
+    successful_weights = []
+    for p, w in zip(periods, raw_weights):
         try:
             aligned = close.align(bench, join="inner")
             s_ret = aligned[0].iloc[-1] / aligned[0].iloc[-p] - 1
@@ -193,15 +186,20 @@ def score_relative_strength(close: pd.Series, bench: pd.Series,
             rs = (s_ret - b_ret) * 100  # RS in percentage points
             # Normalize: >+20pp = 100, 0pp = 50, <-20pp = 0
             norm = np.clip(50 + rs * 2.5, 0, 100)
-            scores.append(norm * w)
+            weighted_scores.append(norm * w)
+            successful_weights.append(w)
         except Exception:
             pass
-    return float(sum(scores)) if scores else 0.0
+    if not weighted_scores:
+        return 0.0
+    total_weight = sum(successful_weights)
+    return float(sum(weighted_scores) / total_weight)
 
 
 def score_macd(close: pd.Series) -> float:
     """
-    MACD signal: histogram trend + zero-line cross + momentum acceleration
+    MACD signal: histogram trend + zero-line cross + momentum acceleration.
+    Bidirectional: bullish conditions add to 50, bearish subtract from 50.
     """
     m_line, sig_line, hist = macd(close)
     if hist.dropna().__len__() < 5:
@@ -214,19 +212,25 @@ def score_macd(close: pd.Series) -> float:
 
     score = 50.0  # Neutral start
 
-    # MACD line above signal
+    # MACD line vs signal: +20 if bullish, -20 if bearish
     if m_val > sig_val:
         score += 20
+    else:
+        score -= 20
 
-    # Histogram growing (momentum accelerating)
+    # Histogram direction (momentum accelerating/decelerating): +15 / -15
     if last_hist > prev_hist:
         score += 15
+    else:
+        score -= 15
 
-    # Histogram positive
+    # Histogram sign (above/below zero): +10 / -10
     if last_hist > 0:
         score += 10
+    else:
+        score -= 10
 
-    # Recent crossover bonus (within last 5 bars)
+    # Recent bullish crossover bonus (within last 5 bars)
     crossover = ((hist.iloc[-5:] > 0) & (hist.shift().iloc[-5:] < 0)).any()
     if crossover:
         score += 5
@@ -292,19 +296,21 @@ def score_adx(high: pd.Series, low: pd.Series, close: pd.Series) -> float:
 
 def score_vam(close: pd.Series, periods=(20, 60)) -> float:
     """
-    Volatility-Adjusted Momentum: annualized return / annualized vol
-    Think of it as a Sharpe-like momentum score.
+    Volatility-Adjusted Momentum: annualized return / annualized vol.
+    Both numerator and denominator are annualized for a true Sharpe-like ratio.
     """
     scores = []
     for p in periods:
         if len(close) < p + 1:
             continue
         rets = close.pct_change().dropna()
-        ret = close.iloc[-1] / close.iloc[-p] - 1
-        vol = rets.iloc[-p:].std() * np.sqrt(252)
-        if vol < 0.001:
+        raw_ret = close.iloc[-1] / close.iloc[-p] - 1
+        # Annualize the return to match the annualized volatility
+        ann_ret = (1 + raw_ret) ** (252 / p) - 1
+        ann_vol = rets.iloc[-p:].std() * np.sqrt(252)
+        if ann_vol < 0.001:
             continue
-        vam = ret / vol
+        vam = ann_ret / ann_vol
         # Normalize: vam of 1.0 = 100 (very high), 0 = 50, -1 = 0
         norm = np.clip(50 + vam * 50, 0, 100)
         scores.append(norm)
@@ -379,7 +385,10 @@ def download_data(tickers: list, days: int) -> dict:
                             "Volume": raw["Volume"][ticker],
                         }).dropna()
                     else:
-                        df = raw.copy()
+                        # Single-ticker batch: flat DataFrame belongs only to batch[0]
+                        if ticker != batch[0]:
+                            continue
+                        df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
                     if len(df) > 100:
                         data[ticker] = df
                 except Exception:
