@@ -283,7 +283,15 @@ SIGNAL_DB_COLS = [
 def load_signal_db(db_path: Path) -> pd.DataFrame:
     if db_path.exists():
         try:
-            return pd.read_csv(db_path, parse_dates=["first_seen", "last_seen"])
+            db = pd.read_csv(db_path)
+            for col in ("first_seen", "last_seen"):
+                if col in db.columns:
+                    # Keep seen columns as calendar dates (no time/tz semantics).
+                    # This avoids tz-aware/naive mixing while matching the business
+                    # meaning of these fields: "seen on day X".
+                    day_text = db[col].astype(str).str.extract(r"(\d{4}-\d{2}-\d{2})", expand=False)
+                    db[col] = pd.to_datetime(day_text, errors="coerce").dt.date
+            return db
         except Exception:
             pass
     return pd.DataFrame(columns=SIGNAL_DB_COLS)
@@ -295,7 +303,7 @@ def save_signal_db(db: pd.DataFrame, db_path: Path) -> None:
 
 def expire_missing_tickers(db: pd.DataFrame,
                            active_tickers: List[str],
-                           today: datetime) -> pd.DataFrame:
+                           today) -> pd.DataFrame:
     """
     Mark tickers that have disappeared from screener as EXPIRED
     if they haven't been seen for > 2 days and aren't ACTIVE trades.
@@ -305,7 +313,9 @@ def expire_missing_tickers(db: pd.DataFrame,
     db = db.copy()
     for idx, row in db.iterrows():
         if row["ticker"] not in active_tickers and row["state"] not in (STATE_ACTIVE, STATE_EXPIRED, STATE_FAILED):
-            last = pd.Timestamp(row["last_seen"])
+            last = row["last_seen"]
+            if pd.isna(last):
+                continue
             gap = (today - last).days
             if gap > 2:
                 db.at[idx, "state"] = STATE_EXPIRED
@@ -597,7 +607,8 @@ def invalidation_check(ticker: str, df: pd.DataFrame, db_row: pd.Series) -> bool
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
-    today = market_today()
+    # Use calendar-day values for signal timestamps (no tz arithmetic).
+    today = market_today().date()
 
     # ── Setup dirs ───────────────────────────────────────────────────────────
     base = Path(cfg.base_dir)
@@ -797,7 +808,6 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
             time.sleep(0.2)
 
         except Exception as e:
-            raise e
             print(f"{Fore.RED}error: {e}{Style.RESET_ALL}")
 
     # ── Step 5: Save DB & write outputs ─────────────────────────────────────
