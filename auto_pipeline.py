@@ -49,6 +49,8 @@ import yfinance as yf
 from colorama import Fore, Style, init
 from tabulate import tabulate
 
+from time_utils import market_today, date_to_iso_extended, date_to_iso_basic, market_now
+
 warnings.filterwarnings("ignore")
 init(autoreset=True)
 
@@ -82,7 +84,7 @@ class PipelineConfig:
     alert_on_forming: bool = True  # include FORMING signals (lower priority)
 
     # Scheduling
-    schedule_time: str = "16:05"  # HH:MM ET — just after TSX close
+    schedule_time: str = "16:30"  # HH:MM ET — after TSX close
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -214,7 +216,8 @@ def scan_screener_dir(screener_dir: Path,
         if date is None:
             # Fall back to file modification time
             date = datetime.fromtimestamp(path.stat().st_mtime).replace(
-                hour=0, minute=0, second=0, microsecond=0)
+                hour=0, minute=0, second=0, microsecond=0
+            )
         if date < cutoff:
             continue
         tickers = _read_screener_file(path)
@@ -225,7 +228,7 @@ def scan_screener_dir(screener_dir: Path,
             else:
                 results[date] = tickers
             print(f"  {Fore.CYAN}Read{Style.RESET_ALL} {path.name} "
-                  f"→ {len(tickers)} tickers ({date.strftime('%Y-%m-%d')})")
+                  f"→ {len(tickers)} tickers ({date_to_iso_extended(date)})")
 
     return results
 
@@ -593,8 +596,8 @@ def invalidation_check(ticker: str, df: pd.DataFrame, db_row: pd.Series) -> bool
 # CORE PIPELINE RUN
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.DataFrame:
-    today = today or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
+    today = market_today()
 
     # ── Setup dirs ───────────────────────────────────────────────────────────
     base = Path(cfg.base_dir)
@@ -607,7 +610,7 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
     db_path = db_dir / "signal_history.csv"
 
     print(f"\n{'=' * 65}")
-    print(f"  {Fore.YELLOW}🤖  AUTO ENTRY PIPELINE  —  {today.strftime('%Y-%m-%d')}{Style.RESET_ALL}")
+    print(f"  {Fore.YELLOW}🤖  AUTO ENTRY PIPELINE  —  {date_to_iso_extended(today)}{Style.RESET_ALL}")
     print(f"{'=' * 65}\n")
 
     # ── Step 1: Scan screener CSVs ───────────────────────────────────────────
@@ -649,8 +652,8 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
     # ── Step 4: Download price data & run detectors ──────────────────────────
     print(f"\n{Fore.CYAN}[4/5] Downloading price data & detecting patterns...{Style.RESET_ALL}")
 
-    start_dt = (today - timedelta(days=cfg.price_data_days)).strftime("%Y-%m-%d")
-    end_dt = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    start_dt = date_to_iso_extended(today - timedelta(days=cfg.price_data_days))
+    end_dt = date_to_iso_extended(today + timedelta(days=1))
 
     alerts: List[Dict] = []
 
@@ -658,8 +661,11 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
         print(f"  {ticker:<14}", end=" ", flush=True)
         try:
             raw = yf.download(
-                ticker, start=start_dt, end=end_dt,
-                auto_adjust=True, progress=False
+                ticker,
+                start=start_dt,
+                end=end_dt,
+                auto_adjust=True,
+                progress=False
             )
             if raw.empty or len(raw) < 60:
                 print(f"{Fore.YELLOW}insufficient data{Style.RESET_ALL}")
@@ -791,6 +797,7 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
             time.sleep(0.2)
 
         except Exception as e:
+            raise e
             print(f"{Fore.RED}error: {e}{Style.RESET_ALL}")
 
     # ── Step 5: Save DB & write outputs ─────────────────────────────────────
@@ -808,7 +815,7 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
         df_alerts = df_alerts.drop(columns=["_sort"])
 
     # Write alert CSV
-    alert_csv = alerts_dir / f"alerts_{today.strftime('%Y%m%d')}.csv"
+    alert_csv = alerts_dir / f"alerts_{date_to_iso_basic(today)}.csv"
     df_alerts.to_csv(alert_csv, index=False)
 
     # Write human-readable report
@@ -826,7 +833,7 @@ def run_pipeline(cfg: PipelineConfig, today: Optional[datetime] = None) -> pd.Da
 
 def _print_summary(df_alerts: pd.DataFrame, today: datetime, n_tracked: int):
     print(f"\n{'=' * 65}")
-    print(f"  {Fore.GREEN}📊  DAILY ALERT SUMMARY — {today.strftime('%Y-%m-%d')}{Style.RESET_ALL}")
+    print(f"  {Fore.GREEN}📊  DAILY ALERT SUMMARY — {date_to_iso_extended(today)}{Style.RESET_ALL}")
     print(f"{'=' * 65}\n")
 
     if df_alerts.empty:
@@ -862,7 +869,7 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
                   cfg: PipelineConfig, n_tracked: int):
     lines = []
     lines.append(f"TSX AUTO ENTRY PIPELINE — Daily Report")
-    lines.append(f"Date    : {today.strftime('%Y-%m-%d')}")
+    lines.append(f"Date    : {date_to_iso_extended(today)}")
     lines.append(f"Account : ${cfg.account_size:,.0f}   Risk/trade: {cfg.risk_per_trade_pct}%")
     lines.append(f"Tracked : {n_tracked} tickers")
     lines.append("=" * 65)
@@ -906,21 +913,21 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
     lines.append("  BASE : exit if price closes back inside base after breakout")
     lines.append("\n⚠  Educational only. Not financial advice.")
 
-    report_path = alerts_dir / f"report_{today.strftime('%Y%m%d')}.txt"
+    report_path = alerts_dir / f"report_{date_to_iso_basic(today)}.txt"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     # FIX: nested f-string (f'...' inside f"...") is a SyntaxError on Python
     # < 3.12. Split into a temp variable to support Python 3.9+.
-    alerts_fname = f"alerts_{today.strftime('%Y%m%d')}.csv"
+    alerts_fname = f"alerts_{date_to_iso_basic(today)}.csv"
     print(f"  Report  → {report_path}")
     print(f"  Alerts  → {alerts_dir / alerts_fname}")
     print(f"  DB      → signal_db/signal_history.csv")
 
 
 def _write_empty_report(alerts_dir: Path, today: datetime):
-    path = alerts_dir / f"report_{today.strftime('%Y%m%d')}.txt"
+    path = alerts_dir / f"report_{date_to_iso_basic(today)}.txt"
     with open(path, "w") as f:
-        f.write(f"No screener files found — {today.strftime('%Y-%m-%d')}\n")
+        f.write(f"No screener files found — {date_to_iso_extended(today)}\n")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -975,8 +982,8 @@ def main():
     parser.add_argument("--max-tickers", default=40, type=int)
     parser.add_argument("--schedule", action="store_true",
                         help="Run as daily scheduler at market close")
-    parser.add_argument("--schedule-time", default="16:05",
-                        help="HH:MM to run daily (default: 16:05)")
+    parser.add_argument("--schedule-time", default="16:30",
+                        help="HH:MM to run daily (default: 16:30)")
     parser.add_argument("--ticker", default=None,
                         help="Debug: analyse a single ticker and exit")
     args = parser.parse_args()
@@ -993,11 +1000,15 @@ def main():
     # Single ticker debug mode
     if args.ticker:
         print(f"\nDebug mode: analysing {args.ticker}")
-        end = datetime.now()
+        end = market_now()
         start = end - timedelta(days=cfg.price_data_days)
-        raw = yf.download(args.ticker, start=start.strftime("%Y-%m-%d"),
-                          end=end.strftime("%Y-%m-%d"),
-                          auto_adjust=True, progress=False)
+        raw = yf.download(
+            args.ticker,
+            start=date_to_iso_extended(start),
+            end=date_to_iso_extended(end),
+            auto_adjust=True,
+            progress=False
+        )
         if raw.empty:
             print("No data returned.")
             return

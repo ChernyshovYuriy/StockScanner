@@ -24,12 +24,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, List
 
+from time_utils import market_today, date_to_iso_extended, market_now, date_to_iso_basic_minutes, date_to_iso_basic
+
 warnings.filterwarnings("ignore")
 
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import timedelta
 from scipy import stats
 from scipy.stats import linregress
 from tabulate import tabulate
@@ -103,7 +105,7 @@ class DataManager:
     def download_data(self, days: int, force_refresh: bool = False) -> Dict[str, pd.DataFrame]:
         """Download data with caching"""
         all_tickers = list(set(self.tickers + [BENCHMARK]))
-        cache_file = self.cache_dir / f"data_{datetime.now().strftime('%Y%m%d')}.parquet"
+        cache_file = self.cache_dir / f"data_{date_to_iso_basic(market_now())}.parquet"
 
         # Try to load from cache
         if not force_refresh and cache_file.exists():
@@ -114,7 +116,7 @@ class DataManager:
                 pass
 
         # Download fresh data
-        end = datetime.today()
+        end = market_today()
         start = end - timedelta(days=days + 60)
 
         print(f"\n{Fore.CYAN}Downloading data for {len(all_tickers)} tickers...{Style.RESET_ALL}")
@@ -132,8 +134,8 @@ class DataManager:
             try:
                 raw = yf.download(
                     batch,
-                    start=start.strftime("%Y-%m-%d"),
-                    end=end.strftime("%Y-%m-%d"),
+                    start=date_to_iso_extended(start),
+                    end=date_to_iso_extended(end),
                     auto_adjust=True,
                     progress=False,
                     threads=True,
@@ -965,7 +967,7 @@ def display_results(df_results: pd.DataFrame, config: ScreenerConfig,
     print(f"    Min Price  : ${config.min_price}")
     print(f"    Universe   : {len(data_manager.tickers)} tickers")
     print(f"    Passed     : {len(df_results)} stocks")
-    print(f"    Run Date   : {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"    Run Date   : {market_now()}")
 
     # Correlation warning
     print(f"\n{Fore.YELLOW}⚠️  Quick Stats:{Style.RESET_ALL}")
@@ -981,7 +983,7 @@ def save_results(df_results: pd.DataFrame, output_dir: str = "screener_outputs")
     """Save results to CSV and JSON"""
     Path(output_dir).mkdir(exist_ok=True)
 
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+    timestamp = date_to_iso_basic_minutes(market_now())
 
     # CSV output
     csv_path = Path(output_dir) / f"{timestamp}.csv"

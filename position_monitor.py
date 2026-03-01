@@ -30,6 +30,8 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+from time_utils import date_to_iso_basic, market_today
+
 try:
     import yfinance as yf
 except ImportError:
@@ -142,7 +144,7 @@ def download_ohlc(ticker: str, start: date, end: Optional[date] = None) -> pd.Da
     df = yf.download(
         tickers=ticker,
         start=start.isoformat(),
-        end=(end_dt.isoformat()),
+        end=end_dt.isoformat(),
         interval="1d",
         auto_adjust=True,
         progress=False,
@@ -363,7 +365,7 @@ def main() -> None:
     print(out_df.to_string(index=False))
 
     # Write daily log
-    today_str = date.today().isoformat()
+    today_str = date_to_iso_basic(market_today())
     log_path = LOGS_DIR / f"position_monitor_{today_str}.csv"
     out_df.to_csv(log_path, index=False)
     print(f"\nSaved log: {log_path.resolve()}")
