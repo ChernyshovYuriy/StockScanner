@@ -926,8 +926,7 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
     report_path = alerts_dir / f"report_{date_to_iso_basic(today)}.txt"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    # FIX: nested f-string (f'...' inside f"...") is a SyntaxError on Python
-    # < 3.12. Split into a temp variable to support Python 3.9+.
+
     alerts_fname = f"alerts_{date_to_iso_basic(today)}.csv"
     print(f"  Report  → {report_path}")
     print(f"  Alerts  → {alerts_dir / alerts_fname}")
