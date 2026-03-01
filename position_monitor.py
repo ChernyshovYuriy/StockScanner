@@ -32,6 +32,7 @@ from typing import Dict, Optional
 import pandas as pd
 
 from time_utils import date_to_iso_basic, market_today
+from report_html import append_positions_report
 
 try:
     import yfinance as yf
@@ -73,6 +74,7 @@ STOP_TRIGGER = "low"  # "low" or "close"
 # Whether to cache downloaded data locally per ticker
 ENABLE_CACHE = True
 
+STOP_TRIGGER = "low"   # "low" or "close"
 
 # -----------------------------
 # Helpers
@@ -314,32 +316,28 @@ def load_or_fetch_data(ticker: str, start: date) -> pd.DataFrame:
 
 
 def _append_shared_report(shared_report_file: str, out_df: pd.DataFrame) -> None:
-    shared_path = Path(shared_report_file)
-    shared_path.parent.mkdir(parents=True, exist_ok=True)
+    """
+    Append (or create) the position monitor section in the HTML shared report.
+    Delegates to report_html.append_positions_report which handles both
+    the 'pipeline already wrote the file' case and the standalone case.
+    """
+    date_str = date_to_iso_basic(market_today())
+    rows = out_df.to_dict("records") if not out_df.empty else []
 
-    lines = []
-    lines.append("\n" + "=" * 65)
-    lines.append("POSITION MONITOR — Daily Report")
-    lines.append(f"Date: {date_to_iso_basic(market_today())}")
-    lines.append("-" * 65)
-
-    if out_df.empty:
-        lines.append("No positions to evaluate.")
-    else:
-        lines.append(out_df.to_string(index=False))
-
-    with open(shared_path, "a", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-
-    print(f"Appended shared report: {shared_path.resolve()}")
+    append_positions_report(
+        path=shared_report_file,
+        date_str=date_str,
+        rows=rows,
+    )
+    print(f"Appended HTML positions section → {Path(shared_report_file).resolve()}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Position monitor")
     parser.add_argument(
         "--shared-report-file",
-        default=None,
-        help="Optional single report file path that monitor appends to",
+        default="report/report.html",
+        help="Optional HTML report file that monitor appends its section to",
     )
     args = parser.parse_args()
 

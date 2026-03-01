@@ -49,6 +49,7 @@ import yfinance as yf
 from colorama import Fore, Style, init
 from tabulate import tabulate
 
+from report_html import write_pipeline_report
 from time_utils import market_today, date_to_iso_extended, date_to_iso_basic, market_now
 
 warnings.filterwarnings("ignore")
@@ -933,11 +934,28 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
         f.write(report_text)
 
     if shared_report_path:
-        shared_path = Path(shared_report_path)
-        shared_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(shared_path, "w", encoding="utf-8") as f:
-            f.write(report_text)
-        print(f"  Shared  → {shared_path}")
+        date_str = date_to_iso_extended(today)
+        alerts_list = df_alerts.to_dict("records") if not df_alerts.empty else []
+        db_records = db.to_dict("records") if not db.empty else []
+
+        # Normalise DB records so None/NaT values survive JSON serialisation
+        for rec in db_records:
+            for k, v in rec.items():
+                if pd.isna(v) if not isinstance(v, (list, dict)) else False:
+                    rec[k] = "—"
+                else:
+                    rec[k] = str(v) if not isinstance(v, (int, float, bool)) else v
+
+        write_pipeline_report(
+            path=shared_report_path,
+            date_str=date_str,
+            account_size=cfg.account_size,
+            risk_pct=cfg.risk_per_trade_pct,
+            n_tracked=n_tracked,
+            alerts=alerts_list,
+            db_records=db_records,
+        )
+        print(f"  HTML    → {shared_report_path}")
 
     alerts_fname = f"alerts_{date_to_iso_basic(today)}.csv"
     print(f"  Report  → {report_path}")
@@ -953,10 +971,16 @@ def _write_empty_report(alerts_dir: Path, today: datetime,
         f.write(text)
 
     if shared_report_path:
-        shared_path = Path(shared_report_path)
-        shared_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(shared_path, "w", encoding="utf-8") as f:
-            f.write(text)
+        # Write a minimal HTML page so position_monitor can still append to it
+        write_pipeline_report(
+            path=shared_report_path,
+            date_str=date_to_iso_extended(today),
+            account_size=0,
+            risk_pct=0,
+            n_tracked=0,
+            alerts=[],
+            db_records=[],
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1015,7 +1039,8 @@ def main():
                         help="HH:MM to run daily (default: 16:30)")
     parser.add_argument("--ticker", default=None,
                         help="Debug: analyse a single ticker and exit")
-    parser.add_argument("--shared-report-file", default=None,
+    parser.add_argument("--shared-report-file",
+                        default="report/report.html",
                         help="Optional single report file path that pipeline writes to")
     args = parser.parse_args()
 
