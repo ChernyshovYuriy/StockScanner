@@ -86,6 +86,9 @@ class PipelineConfig:
     # Scheduling
     schedule_time: str = "16:30"  # HH:MM ET — after TSX close
 
+    # Reporting
+    shared_report_path: Optional[str] = None  # optional single-file report output
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SIGNAL STATES  (ordered — higher index = more advanced)
@@ -608,7 +611,7 @@ def invalidation_check(ticker: str, df: pd.DataFrame, db_row: pd.Series) -> bool
 
 def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     # Use calendar-day values for signal timestamps (no tz arithmetic).
-    today = market_today().date()
+    today = market_today()
 
     # ── Setup dirs ───────────────────────────────────────────────────────────
     base = Path(cfg.base_dir)
@@ -631,7 +634,7 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     if not history:
         print(f"\n{Fore.RED}No screener files found in: {screener_dir}{Style.RESET_ALL}")
         print(f"  Drop your daily CSV/JSON files there and re-run.\n")
-        _write_empty_report(alerts_dir, today)
+        _write_empty_report(alerts_dir, today, cfg.shared_report_path)
         return pd.DataFrame()
 
     print(f"  Found {len(history)} day(s) of screener data")
@@ -829,7 +832,7 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     df_alerts.to_csv(alert_csv, index=False)
 
     # Write human-readable report
-    _write_report(df_alerts, db, alerts_dir, today, cfg, len(tracked))
+    _write_report(df_alerts, db, alerts_dir, today, cfg, len(tracked), cfg.shared_report_path)
 
     # ── Print summary ────────────────────────────────────────────────────────
     _print_summary(df_alerts, today, len(tracked))
@@ -876,7 +879,8 @@ def _print_summary(df_alerts: pd.DataFrame, today: datetime, n_tracked: int):
 
 def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
                   alerts_dir: Path, today: datetime,
-                  cfg: PipelineConfig, n_tracked: int):
+                  cfg: PipelineConfig, n_tracked: int,
+                  shared_report_path: Optional[str] = None):
     lines = []
     lines.append(f"TSX AUTO ENTRY PIPELINE — Daily Report")
     lines.append(f"Date    : {date_to_iso_extended(today)}")
@@ -924,8 +928,16 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
     lines.append("\n⚠  Educational only. Not financial advice.")
 
     report_path = alerts_dir / f"report_{date_to_iso_basic(today)}.txt"
+    report_text = "\n".join(lines)
     with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        f.write(report_text)
+
+    if shared_report_path:
+        shared_path = Path(shared_report_path)
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(shared_path, "w", encoding="utf-8") as f:
+            f.write(report_text)
+        print(f"  Shared  → {shared_path}")
 
     alerts_fname = f"alerts_{date_to_iso_basic(today)}.csv"
     print(f"  Report  → {report_path}")
@@ -933,10 +945,18 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
     print(f"  DB      → signal_db/signal_history.csv")
 
 
-def _write_empty_report(alerts_dir: Path, today: datetime):
+def _write_empty_report(alerts_dir: Path, today: datetime,
+                        shared_report_path: Optional[str] = None):
+    text = f"No screener files found — {date_to_iso_extended(today)}\n"
     path = alerts_dir / f"report_{date_to_iso_basic(today)}.txt"
     with open(path, "w") as f:
-        f.write(f"No screener files found — {date_to_iso_extended(today)}\n")
+        f.write(text)
+
+    if shared_report_path:
+        shared_path = Path(shared_report_path)
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(shared_path, "w", encoding="utf-8") as f:
+            f.write(text)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -995,6 +1015,8 @@ def main():
                         help="HH:MM to run daily (default: 16:30)")
     parser.add_argument("--ticker", default=None,
                         help="Debug: analyse a single ticker and exit")
+    parser.add_argument("--shared-report-file", default=None,
+                        help="Optional single report file path that pipeline writes to")
     args = parser.parse_args()
 
     cfg = PipelineConfig(
@@ -1004,6 +1026,7 @@ def main():
         min_days_in_screener=args.min_days,
         max_tracked_tickers=args.max_tickers,
         schedule_time=args.schedule_time,
+        shared_report_path=args.shared_report_file,
     )
 
     # Single ticker debug mode

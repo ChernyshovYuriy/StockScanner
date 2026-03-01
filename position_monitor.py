@@ -22,6 +22,7 @@ Notes:
 
 from __future__ import annotations
 
+import argparse
 import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -312,7 +313,36 @@ def load_or_fetch_data(ticker: str, start: date) -> pd.DataFrame:
     return df
 
 
+def _append_shared_report(shared_report_file: str, out_df: pd.DataFrame) -> None:
+    shared_path = Path(shared_report_file)
+    shared_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = []
+    lines.append("\n" + "=" * 65)
+    lines.append("POSITION MONITOR — Daily Report")
+    lines.append(f"Date: {date_to_iso_basic(market_today())}")
+    lines.append("-" * 65)
+
+    if out_df.empty:
+        lines.append("No positions to evaluate.")
+    else:
+        lines.append(out_df.to_string(index=False))
+
+    with open(shared_path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    print(f"Appended shared report: {shared_path.resolve()}")
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Position monitor")
+    parser.add_argument(
+        "--shared-report-file",
+        default=None,
+        help="Optional single report file path that monitor appends to",
+    )
+    args = parser.parse_args()
+
     positions = parse_positions_csv(POSITIONS_CSV)
     if not positions:
         print("No positions found in positions.csv")
@@ -369,6 +399,9 @@ def main() -> None:
     log_path = LOGS_DIR / f"position_monitor_{today_str}.csv"
     out_df.to_csv(log_path, index=False)
     print(f"\nSaved log: {log_path.resolve()}")
+
+    if args.shared_report_file:
+        _append_shared_report(args.shared_report_file, out_df)
 
 
 if __name__ == "__main__":

@@ -40,11 +40,12 @@ def date_to_iso_extended(date: datetime) -> str:
 
 
 if __name__ == "__main__":
-    print(f"Market now       '{market_now()}'")
-    print(f"Markey today     '{market_today()}'")
-    print(f"Markey today str '{market_today_str()}'")
-    print(f"Markey start day '{start_of_market_day()}'")
-    print(f"To ISO basic     '{date_to_iso_basic(market_now())}'")
-    print(f"To ISO basic min '{date_to_iso_basic_minutes(market_now())}'")
-    print(f"To ISO extended  '{date_to_iso_extended(market_now())}'")
-    print(f"Debug            '{datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)}'")
+    print(f"Market now        '{market_now()}'")
+    print(f"Markey today      '{market_today()}'")
+    print(f"Markey today date '{market_today().date()}'")
+    print(f"Markey today str  '{market_today_str()}'")
+    print(f"Markey start day  '{start_of_market_day()}'")
+    print(f"To ISO basic      '{date_to_iso_basic(market_now())}'")
+    print(f"To ISO basic min  '{date_to_iso_basic_minutes(market_now())}'")
+    print(f"To ISO extended   '{date_to_iso_extended(market_now())}'")
+    print(f"Debug             '{datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)}'")
