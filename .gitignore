@@ -7,3 +7,4 @@ logs
 positions
 data_cache
 report
+.env

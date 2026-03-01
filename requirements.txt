@@ -1,3 +1,4 @@
+python-dotenv
 colorama
 tabulate
 scipy
