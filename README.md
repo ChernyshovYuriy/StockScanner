@@ -98,7 +98,7 @@ On first run, the pipeline creates:
 
 ```
 <base_dir>/
-  screener_outputs/      # drop your daily top-N CSVs here
+  screener_outputs/      # drop daily top-N CSVs here
   signal_db/
     signal_history.csv   # persistent signal state across days (auto-managed)
   alerts/
