@@ -165,3 +165,10 @@ pip install -r requirements.txt
 ## Disclaimer
 
 This repository is for research/education and does **not** constitute financial advice. Trading involves risk.
+
+---
+
+## License
+
+- MIT
+
