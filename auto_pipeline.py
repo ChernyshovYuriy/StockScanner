@@ -315,12 +315,16 @@ def expire_missing_tickers(db: pd.DataFrame,
     if db.empty:
         return db
     db = db.copy()
+    # TODO: Review this hack with date:
+    today_date = today.date() if isinstance(today, datetime) else today
     for idx, row in db.iterrows():
         if row["ticker"] not in active_tickers and row["state"] not in (STATE_ACTIVE, STATE_EXPIRED, STATE_FAILED):
             last = row["last_seen"]
             if pd.isna(last):
                 continue
-            gap = (today - last).days
+            # TODO: Review this hack with date:
+            last_date = last.date() if isinstance(last, datetime) else last
+            gap = (today_date - last_date).days
             if gap > 2:
                 db.at[idx, "state"] = STATE_EXPIRED
                 db.at[idx, "detail"] = f"Left screener after {gap}d"
