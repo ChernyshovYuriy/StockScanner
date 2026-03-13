@@ -90,6 +90,9 @@ class PipelineConfig:
     # Reporting
     shared_report_path: Optional[str] = None  # optional single-file report output
 
+    # Buy candidates
+    candidates_queue_path: Optional[str] = None  # optional single-file for buy candidates
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SIGNAL STATES  (ordered — higher index = more advanced)
@@ -836,6 +839,15 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     alert_csv = alerts_dir / f"alerts_{date_to_iso_basic(today)}.csv"
     df_alerts.to_csv(alert_csv, index=False)
 
+    candidates_queue_path = cfg.candidates_queue_path
+    if candidates_queue_path:
+        candidates_queue = []
+        confirmed = df_alerts[df_alerts["state"] == STATE_CONFIRMED]
+        for index, row in confirmed.iterrows():
+            candidates_queue.append(row["ticker"])
+        _write_candidates_queue(candidates_queue, candidates_queue_path)
+        print(f"  Queue   → {candidates_queue_path} ({len(candidates_queue)} ticker(s))")
+
     # Write human-readable report
     _write_report(df_alerts, db, alerts_dir, today, cfg, len(tracked), cfg.shared_report_path)
 
@@ -880,6 +892,15 @@ def _print_summary(df_alerts: pd.DataFrame, today: datetime, n_tracked: int):
     for _, row in df_alerts.iterrows():
         em = row.get("emoji", "")
         print(f"  {em} {row['ticker']:<12} {row['pattern']:<10} {row['detail']}")
+
+
+def _write_candidates_queue(tickers: List[str], output_path: str) -> None:
+    """Write one ticker per line to a queue file."""
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        for ticker in tickers:
+            f.write(f"{ticker}\n")
 
 
 def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
@@ -1046,6 +1067,9 @@ def main():
     parser.add_argument("--shared-report-file",
                         default="report/report.html",
                         help="Optional single report file path that pipeline writes to")
+    parser.add_argument("--candidates_queue",
+                        default="positions/candidates",
+                        help="Optional output file for tickers that jumped to CONFIRMED today")
     args = parser.parse_args()
 
     cfg = PipelineConfig(
@@ -1056,6 +1080,7 @@ def main():
         max_tracked_tickers=args.max_tickers,
         schedule_time=args.schedule_time,
         shared_report_path=args.shared_report_file,
+        candidates_queue_path=args.candidates_queue
     )
 
     # Single ticker debug mode

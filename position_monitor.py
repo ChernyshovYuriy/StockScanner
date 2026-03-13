@@ -5,8 +5,6 @@ Reads positions.csv (format: ticker,entry_date,entry_price,shares),
 downloads daily OHLCV (Yahoo Finance via yfinance), computes ATR-based risk controls,
 and prints a HOLD/SELL table + writes a daily log CSV.
 
-No CLI args; just run from IDE.
-
 Dependencies:
   pip install pandas yfinance
 
@@ -23,22 +21,16 @@ Notes:
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
+import yfinance as yf
 
-from time_utils import date_to_iso_basic, market_today
 from report_html import append_positions_report
-
-try:
-    import yfinance as yf
-except ImportError:
-    print("Missing dependency: yfinance. Install with: pip install yfinance", file=sys.stderr)
-    raise
+from time_utils import date_to_iso_basic, market_today
 
 # -----------------------------
 # Configuration (edit as needed)
@@ -74,7 +66,6 @@ STOP_TRIGGER = "low"  # "low" or "close"
 # Whether to cache downloaded data locally per ticker
 ENABLE_CACHE = True
 
-STOP_TRIGGER = "low"   # "low" or "close"
 
 # -----------------------------
 # Helpers
