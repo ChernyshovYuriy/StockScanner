@@ -49,6 +49,7 @@ import yfinance as yf
 from colorama import Fore, Style, init
 from tabulate import tabulate
 
+from config import ALERTS_PATH, SCREENER_OUT_PATH, OUT_PATH
 from report_html import write_pipeline_report
 from time_utils import market_today, date_to_iso_extended, date_to_iso_basic, market_now
 
@@ -64,9 +65,9 @@ init(autoreset=True)
 class PipelineConfig:
     # Directory layout
     base_dir: str = "."  # root — all sub-dirs created here
-    screener_subdir: str = "screener_outputs"  # drop daily CSVs here
-    db_subdir: str = "signal_db"  # signal history lives here
-    alerts_subdir: str = "alerts"  # daily alert output
+    screener_subdir: str = SCREENER_OUT_PATH  # drop daily CSVs here
+    db_subdir: str = OUT_PATH / "signal_db"  # signal history lives here
+    alerts_subdir: str = ALERTS_PATH  # daily alert output
 
     # Ticker promotion rules
     min_days_in_screener: int = 1  # days a ticker must appear before being tracked

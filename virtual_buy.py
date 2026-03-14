@@ -49,9 +49,7 @@ Output CSV columns
 
 from __future__ import annotations
 
-import argparse
-import sys
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -59,7 +57,8 @@ import pandas as pd
 import yfinance as yf
 from colorama import Fore, Style, init
 
-from time_utils import market_today, date_to_iso_extended
+from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH
+from time_utils import market_today
 
 init(autoreset=True)
 
@@ -68,6 +67,7 @@ init(autoreset=True)
 # ─────────────────────────────────────────────────────────────────────────────
 
 POSITIONS_COLS = ["ticker", "entry_date", "entry_price", "shares"]
+
 
 # yfinance: how many calendar days back to fetch to get at least one trading day
 
@@ -280,10 +280,10 @@ def append_position(path: Path, ticker: str, entry_date: date,
     path.parent.mkdir(parents=True, exist_ok=True)
 
     new_row = pd.DataFrame([{
-        "ticker":      ticker,
-        "entry_date":  entry_date.isoformat(),
+        "ticker": ticker,
+        "entry_date": entry_date.isoformat(),
         "entry_price": round(entry_price, 4),
-        "shares":      shares,
+        "shares": shares,
     }])
 
     write_header = not path.exists() or path.stat().st_size == 0
@@ -295,11 +295,11 @@ def append_position(path: Path, ticker: str, entry_date: date,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_virtual_buy(
-    signals_path: Path,
-    funds_path: Path,
-    positions_path: Path,
-    top_n: Optional[int],
-    dry_run: bool,
+        signals_path: Path,
+        funds_path: Path,
+        positions_path: Path,
+        top_n: Optional[int],
+        dry_run: bool,
 ) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {Fore.YELLOW}💸  Virtual Buy Runner{Style.RESET_ALL}")
@@ -357,10 +357,10 @@ def run_virtual_buy(
         )
 
         buy_records.append({
-            "ticker":      ticker,
-            "entry_date":  today,
+            "ticker": ticker,
+            "entry_date": today,
             "entry_price": price,
-            "shares":      shares,
+            "shares": shares,
         })
 
     # ── 4. Write to positions CSV ────────────────────────────────────────────
@@ -413,54 +413,11 @@ def run_virtual_buy(
     print(f"{Fore.RED}⚠  VIRTUAL TRANSACTIONS ONLY — not financial advice.{Style.RESET_ALL}\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Virtual Buy Runner — records paper trades to a positions CSV.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument(
-        "--signals", "-s",
-        default="positions/candidates",
-        help="Path to screener/pipeline output CSV (must contain a ticker column).",
-    )
-    parser.add_argument(
-        "--funds", "-f",
-       default="data/funds",
-        help="Path to plain-text file containing available capital (e.g. '50000').",
-    )
-    parser.add_argument(
-        "--positions", "-p",
-        default="positions/own.csv",
-        help="Path to positions output CSV (appended, not overwritten). "
-             "Default: positions/positions.csv",
-    )
-    parser.add_argument(
-        "--top", "-n",
-        type=int,
-        default=None,
-        help="Limit buys to the top-N tickers by score (default: all tickers).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print what would be bought without writing any records.",
-    )
-
-    args = parser.parse_args()
-
-    run_virtual_buy(
-        signals_path=Path(args.signals),
-        funds_path=Path(args.funds),
-        positions_path=Path(args.positions),
-        top_n=args.top,
-        dry_run=args.dry_run,
-    )
-
-
 if __name__ == "__main__":
-    main()
+    run_virtual_buy(
+        signals_path=Path(CANDIDATES_QUEUE_PATH),
+        funds_path=Path(FUNDS_PATH),
+        positions_path=Path(OWN_PATH),
+        top_n=10,
+        dry_run=False,
+    )

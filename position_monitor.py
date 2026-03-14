@@ -44,6 +44,7 @@ import pandas as pd
 import yfinance as yf
 from colorama import Fore, Style, init
 
+from config import CACHE_PATH, LOGS_PATH
 from report_html import append_positions_report
 from time_utils import date_to_iso_basic, market_now, market_today
 
@@ -53,11 +54,7 @@ init(autoreset=True)
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Default file paths (all overridable via CLI)
-DEFAULT_POSITIONS_CSV = Path("positions/own.csv")
-DEFAULT_FUNDS_FILE = Path("data/funds")
-DATA_DIR = Path("data_cache")
-LOGS_DIR = Path("logs")
+CACHE_DATA_DIR = Path(CACHE_PATH)
 
 # ATR / stop parameters
 ATR_PERIOD = 14
@@ -198,8 +195,8 @@ def download_ohlc(ticker: str, start: date, end: Optional[date] = None) -> pd.Da
 
 def load_or_fetch_data(ticker: str, start: date) -> pd.DataFrame:
     """Load daily bars from local cache if available, else download and cache."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = DATA_DIR / f"{ticker.replace('/', '_')}.csv"
+    CACHE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = CACHE_DATA_DIR / f"{ticker.replace('/', '_')}.csv"
 
     cached = pd.DataFrame()
     if ENABLE_CACHE and cache_path.exists():
@@ -551,9 +548,9 @@ def execute_virtual_sells(
     )
 
     # ── Append to sells log ───────────────────────────────────────────────────
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_PATH.mkdir(parents=True, exist_ok=True)
     today_str = date_to_iso_basic(market_today())
-    sells_log = LOGS_DIR / f"sells_{today_str}.csv"
+    sells_log = LOGS_PATH / f"sells_{today_str}.csv"
 
     sells_df = pd.DataFrame(sold_records)
     write_hdr = not sells_log.exists() or sells_log.stat().st_size == 0
@@ -586,13 +583,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--positions", "-p",
-        default=str(DEFAULT_POSITIONS_CSV),
-        help=f"Path to positions CSV (default: {DEFAULT_POSITIONS_CSV})",
+        default="positions-csv",
+        help=f"Path to positions CSV",
     )
     parser.add_argument(
         "--funds", "-f",
-        default=str(DEFAULT_FUNDS_FILE),
-        help=f"Path to funds plain-text file (default: {DEFAULT_FUNDS_FILE})",
+        default="funds-path",
+        help=f"Path to funds plain-text file)",
     )
     parser.add_argument(
         "--execute-sells",
@@ -655,7 +652,7 @@ def main() -> None:
 
     print(f"  Loaded {len(positions)} open position(s) from {positions_path}\n")
 
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_PATH.mkdir(parents=True, exist_ok=True)
 
     # ── Analyse each position ─────────────────────────────────────────────────
     rows: List[Dict] = []
@@ -725,7 +722,7 @@ def main() -> None:
 
     # ── Write daily log ────────────────────────────────────────────────────────
     today_str = date_to_iso_basic(market_today())
-    log_path = LOGS_DIR / f"position_monitor_{today_str}.csv"
+    log_path = LOGS_PATH / f"position_monitor_{today_str}.csv"
     out_df.to_csv(log_path, index=False)
     print(f"Log saved → {log_path.resolve()}")
 

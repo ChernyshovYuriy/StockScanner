@@ -1,11 +1,9 @@
 .idea
 __pycache__/
-alerts
 signal_db
-screener_outputs
 logs
-positions
-data_cache
-report
+cache
+out
 .env
-data/funds
+data/candidates_queue
+data/own.csv

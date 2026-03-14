@@ -29,9 +29,11 @@ import os
 import smtplib
 import socket
 import sys
+from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 from time_utils import market_now, market_today_str
@@ -69,6 +71,18 @@ try:
         ALERTS_DIR = Path(os.environ.get("ALERTS_DIR", str(ALERTS_DIR)))
 except ImportError:
     pass  # dotenv not installed — that's fine
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class SendConfig:
+    file: str
+    date: str | None
+    dry_run: bool
+    alerts_dir: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -225,34 +239,8 @@ def send_email(msg: MIMEMultipart, dry_run: bool = False) -> None:
         sys.exit(1)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Send the TSX pipeline HTML report via Gmail."
-    )
-    parser.add_argument(
-        "--file", "-f",
-        default="report/report.html",
-        help="Path to a specific HTML report file to send.",
-    )
-    parser.add_argument(
-        "--date", "-d", default=None,
-        help="Date string (YYYYMMDD) to find the right report, e.g. 20260301",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Validate config and locate the file without actually sending.",
-    )
-    parser.add_argument(
-        "--alerts-dir", default=None,
-        help=f"Override the alerts directory (default: {ALERTS_DIR})",
-    )
-    args = parser.parse_args()
-
-    alerts_dir = Path(args.alerts_dir) if args.alerts_dir else ALERTS_DIR
+def send_report(cfg: SendConfig):
+    alerts_dir = Path(cfg.alerts_dir)
 
     print("─" * 55)
     print("  TSX Pipeline — Gmail Sender")
@@ -277,13 +265,13 @@ def main() -> None:
     # ── 2. Find report file ──────────────────────────────────────────────────
     print("\n[2/3] Locating report file...")
     try:
-        if args.file:
-            report_path = Path(args.file)
+        if cfg.file:
+            report_path = Path(cfg.file)
             if not report_path.exists():
                 print(f"❌  File not found: {report_path}", file=sys.stderr)
                 sys.exit(1)
         else:
-            report_path = find_report(alerts_dir, args.date)
+            report_path = find_report(alerts_dir, cfg.date)
     except FileNotFoundError as e:
         print(f"❌  {e}", file=sys.stderr)
         sys.exit(1)
@@ -293,15 +281,53 @@ def main() -> None:
     print(f"  Size : {size_kb:.1f} KB")
 
     # ── 3. Build & send ──────────────────────────────────────────────────────
-    print(f"\n[3/3] {'[dry-run] Validating' if args.dry_run else 'Sending'} email...")
+    print(f"\n[3/3] {'[dry-run] Validating' if cfg.dry_run else 'Sending'} email...")
     msg = build_message(report_path, GMAIL_SENDER, GMAIL_RECIPIENT)
-    send_email(msg, dry_run=args.dry_run)
+    send_email(msg, dry_run=cfg.dry_run)
 
-    if args.dry_run:
+    if cfg.dry_run:
         print("\n✅  Dry-run complete — no email sent.")
     else:
         print(f"\n✅  Report sent to {GMAIL_RECIPIENT}")
         print(f"    Subject : {msg['Subject']}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Send the TSX pipeline HTML report via Gmail."
+    )
+    parser.add_argument(
+        "--file", "-f",
+        default="report/report.html",
+        help="Path to a specific HTML report file to send.",
+    )
+    parser.add_argument(
+        "--date", "-d", default=None,
+        help="Date string (YYYYMMDD) to find the right report, e.g. 20260301",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Validate config and locate the file without actually sending.",
+    )
+    parser.add_argument(
+        "--alerts-dir", default=None,
+        help=f"Override the alerts directory (default: {ALERTS_DIR})",
+    )
+    args = parser.parse_args()
+
+    cfg = SendConfig(
+        file=args.file,
+        date=args.date,
+        dry_run=args.dry_run,
+        alerts_dir=args.alerts_dir
+    )
+
+    send_report(cfg)
 
 
 if __name__ == "__main__":

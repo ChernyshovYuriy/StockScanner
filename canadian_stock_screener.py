@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, List
 
+from config import CACHE_PATH
 from time_utils import market_today, date_to_iso_extended, market_now, date_to_iso_basic_minutes, date_to_iso_basic
 
 warnings.filterwarnings("ignore")
@@ -86,7 +87,7 @@ BENCHMARK = "XIU.TO"
 class DataManager:
     """Handles data downloading, caching, and preprocessing"""
 
-    def __init__(self, tickers_file: str, cache_dir: str = "data_cache"):
+    def __init__(self, tickers_file: str, cache_dir: str = CACHE_PATH):
         self.tickers = self._load_tickers(tickers_file)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
