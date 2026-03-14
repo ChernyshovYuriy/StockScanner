@@ -211,6 +211,43 @@ def read_tickers(path: Path, top_n: Optional[int]) -> list[str]:
     return tickers
 
 
+def remove_tickers_from_queue(path: Path, bought_tickers: list[str]) -> int:
+    """
+    Remove bought tickers from a plain-text queue file (one ticker per line).
+
+    Returns the number of queue rows removed.
+    Notes:
+      - Matching is case-insensitive.
+      - Blank lines and comment lines (#...) are preserved.
+      - If the queue file is missing, no-op.
+    """
+    if not path.exists() or not bought_tickers:
+        return 0
+
+    bought = {t.strip().upper() for t in bought_tickers if t and t.strip()}
+    if not bought:
+        return 0
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    kept_lines: list[str] = []
+    removed = 0
+
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            kept_lines.append(raw)
+            continue
+
+        if stripped.upper() in bought:
+            removed += 1
+            continue
+
+        kept_lines.append(raw)
+
+    path.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+    return removed
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PRICE FETCH  — latest available price (~15-min delayed quote from Yahoo)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -396,6 +433,16 @@ def run_virtual_buy(
         print(
             f"{Fore.GREEN}✓ Funds updated → {funds_path.resolve()}  "
             f"(${remaining:,.2f} remaining){Style.RESET_ALL}"
+        )
+
+    removed = remove_tickers_from_queue(
+        signals_path,
+        [rec["ticker"] for rec in buy_records],
+    )
+    if removed:
+        print(
+            f"{Fore.GREEN}✓ Queue updated → removed {removed} bought ticker(s) "
+            f"from {signals_path.resolve()}{Style.RESET_ALL}"
         )
 
     print(f"  Tickers bought : {len(buy_records)}")
