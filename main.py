@@ -1,10 +1,16 @@
+import sys
+import sys
+import uuid
+
 from colorama import Fore, Style
 
 from auto_pipeline import PipelineConfig, run_pipeline
 from canadian_stock_screener import DataManager, StockScreener, CONFIG, display_results, save_results
+from concurrent_utils import acquire_lock
 from config import ALERTS_PATH
 from config import CAN_TICKERS_PATH, CAN_TICKERS_ONE_LINE_PATH, CAN_TICKERS_REJECTED_PATH, SCREENER_OUT_PATH, \
     CAN_TICKERS_UNIVERSE_PATH, REPORT_PATH, CANDIDATES_QUEUE_PATH
+from log_utils import log
 from send_report import SendConfig, send_report
 from swing_tickers import UniverseBuilderConfig, Thresholds, run_universe_builder
 
@@ -70,11 +76,25 @@ def __run_send_report():
 
 
 if __name__ == "__main__":
-    # Prepare tickers list for swing trading:
-    __build_swing_tickers()
-    # Run the screener
-    __run_stock_screener()
-    # Run the pipeline
-    __run_pipeline()
-    # Send the report
-    __run_send_report()
+    service = "main"
+    run_id = uuid.uuid4().hex
+
+    try:
+        lock_path, lock_file = acquire_lock(service)
+    except BlockingIOError:
+        log(service, run_id, "skip_already_running")
+        sys.exit(0)
+
+    log(service, run_id, "start", lock_file=str(lock_path))
+    try:
+        # Prepare tickers list for swing trading:
+        __build_swing_tickers()
+        # Run the screener
+        __run_stock_screener()
+        # Run the pipeline
+        __run_pipeline()
+        # Send the report
+        __run_send_report()
+        log(service, run_id, "completed")
+    finally:
+        lock_file.close()

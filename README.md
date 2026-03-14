@@ -43,7 +43,7 @@ It also applies basic filters such as **minimum price** and **minimum average vo
 ### Output
 - Prints a table to the console.
 - Saves the top picks to:
-  - `screener_outputs/YYYYMMDD_HHMM.csv`
+  - `out/screener_outputs/YYYYMMDD_HHMM.csv`
 
 ### Run
 ```bash
@@ -98,40 +98,32 @@ On first run, the pipeline creates:
 
 ```
 <base_dir>/
-  screener_outputs/      # drop daily top-N CSVs here
-  signal_db/
-    signal_history.csv   # persistent signal state across days (auto-managed)
-  alerts/
-    alerts_YYYYMMDD.csv  # actionable alerts for each run
-    report_YYYYMMDD.txt  # human-readable daily report
+  out/
+    screener_outputs/      # drop daily top-N CSVs here
+    signal_db/
+      signal_history.csv   # persistent signal state across days (auto-managed)
+    alerts/
+      alerts_YYYYMMDD.csv  # actionable alerts for each run
+      report_YYYYMMDD.txt  # human-readable daily report
 ```
 
-### Run (single run)
-```bash
-python auto_pipeline.py
-```
+## 3) Operational services and schedule
 
-### Run (daily scheduler)
-Runs once per day at market close time (default **16:05 ET**):
+This repository is run as three operational services:
 
-```bash
-python auto_pipeline.py --schedule
-```
+- **`main.py`**
+  - Builds swing universe, runs screener, runs pipeline, and sends report.
+  - Typical schedule: **once daily after market close**.
 
-### Debug a single ticker
-```bash
-python auto_pipeline.py --ticker CNQ.TO
-```
+- **`virtual_buy.py`**
+  - Executes virtual buys from the candidate queue and updates funds/positions files.
+  - Typical schedule: **once daily after the pipeline/report step**.
 
-### Key CLI options
-```bash
-python auto_pipeline.py --base-dir .
-python auto_pipeline.py --account 100000
-python auto_pipeline.py --risk 1.0
-python auto_pipeline.py --min-days 1
-python auto_pipeline.py --max-tickers 40
-python auto_pipeline.py --schedule --schedule-time 16:05
-```
+- **`position_monitor.py`**
+  - Monitors open positions and can execute virtual sells in pre-close mode.
+  - Typical schedule:
+    - **Pre-close** run for actionable intraday exits.
+    - **Post-close** run for informational end-of-day monitoring.
 
 ---
 

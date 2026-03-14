@@ -33,6 +33,7 @@ Dependencies:
 from __future__ import annotations
 
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -43,7 +44,9 @@ import pandas as pd
 import yfinance as yf
 from colorama import Fore, Style, init
 
-from config import CACHE_PATH, LOGS_PATH, REPORT_PATH, OWN_PATH, FUNDS_PATH
+from concurrent_utils import acquire_lock
+from config import CACHE_PATH, LOGS_PATH, REPORT_PATH, OWN_PATH, FUNDS_PATH, PositionMonitorMode
+from log_utils import log
 from report_html import append_positions_report
 from time_utils import date_to_iso_basic, market_now, market_today
 
@@ -575,14 +578,25 @@ def _append_shared_report(shared_report_file: str, out_df: pd.DataFrame) -> None
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    mode: int = PositionMonitorMode.PRE_CLOSE
+    service = "position_monitor"
+    run_id = uuid.uuid4().hex
+
+    try:
+        lock_path, lock_file = acquire_lock(service)
+    except BlockingIOError:
+        log(service, run_id, "skip_already_running")
+        sys.exit(0)
+
+    log(service, run_id, "start", mode=mode)
+
     positions_path = Path(OWN_PATH)
     funds_path = Path(FUNDS_PATH)
-    force_intraday = True
     dry_run = False
-    execute_sells = True
 
     # ── Determine run mode ────────────────────────────────────────────────────
-    use_intraday = force_intraday or is_market_open()
+    use_intraday = mode == PositionMonitorMode.PRE_CLOSE
+    execute_sells = mode == PositionMonitorMode.PRE_CLOSE
 
     print(f"\n{'=' * 65}")
     print(f"  {Fore.YELLOW}📊  Position Monitor{Style.RESET_ALL}")
@@ -601,10 +615,12 @@ def main() -> None:
     except FileNotFoundError:
         print(f"{Fore.RED}Positions file not found: {positions_path.resolve()}{Style.RESET_ALL}")
         print("  Run virtual_buy.py first to populate positions.")
+        lock_file.close()
         sys.exit(0)
 
     if not positions:
         print("No positions found — nothing to monitor.")
+        lock_file.close()
         sys.exit(0)
 
     print(f"  Loaded {len(positions)} open position(s) from {positions_path}\n")
@@ -711,6 +727,8 @@ def main() -> None:
 
     # ── Append to shared HTML report ──────────────────────────────────────────
     _append_shared_report(REPORT_PATH, out_df)
+    log(service, run_id, "completed", positions=len(positions), mode=mode)
+    lock_file.close()
 
 
 if __name__ == "__main__":

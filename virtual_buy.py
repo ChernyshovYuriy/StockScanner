@@ -49,6 +49,8 @@ Output CSV columns
 
 from __future__ import annotations
 
+import sys
+import uuid
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -57,7 +59,9 @@ import pandas as pd
 import yfinance as yf
 from colorama import Fore, Style, init
 
+from concurrent_utils import acquire_lock
 from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH
+from log_utils import log
 from time_utils import market_today
 
 init(autoreset=True)
@@ -67,9 +71,6 @@ init(autoreset=True)
 # ─────────────────────────────────────────────────────────────────────────────
 
 POSITIONS_COLS = ["ticker", "entry_date", "entry_price", "shares"]
-
-
-# yfinance: how many calendar days back to fetch to get at least one trading day
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,7 +338,13 @@ def run_virtual_buy(
         positions_path: Path,
         top_n: Optional[int],
         dry_run: bool,
+        run_id: Optional[str] = None,
 ) -> None:
+    service = "virtual_buy"
+    run_id = run_id or uuid.uuid4().hex
+    log(service, run_id, "start", signals_path=str(signals_path), funds_path=str(funds_path),
+        positions_path=str(positions_path), dry_run=dry_run)
+
     print(f"\n{'=' * 60}")
     print(f"  {Fore.YELLOW}💸  Virtual Buy Runner{Style.RESET_ALL}")
     print(f"{'=' * 60}\n")
@@ -458,13 +465,28 @@ def run_virtual_buy(
     print(f"{'─' * 60}\n")
 
     print(f"{Fore.RED}⚠  VIRTUAL TRANSACTIONS ONLY — not financial advice.{Style.RESET_ALL}\n")
+    log(service, run_id, "completed", bought=len(buy_records))
 
 
 if __name__ == "__main__":
-    run_virtual_buy(
-        signals_path=Path(CANDIDATES_QUEUE_PATH),
-        funds_path=Path(FUNDS_PATH),
-        positions_path=Path(OWN_PATH),
-        top_n=10,
-        dry_run=False,
-    )
+    service = "virtual_buy"
+    run_id = uuid.uuid4().hex
+
+    try:
+        lock_path, lock_file = acquire_lock(service)
+    except BlockingIOError:
+        log(service, run_id, "skip_already_running")
+        sys.exit(0)
+
+    log(service, run_id, "lock_acquired", lock_file=str(lock_path))
+    try:
+        run_virtual_buy(
+            signals_path=Path(CANDIDATES_QUEUE_PATH),
+            funds_path=Path(FUNDS_PATH),
+            positions_path=Path(OWN_PATH),
+            top_n=10,
+            dry_run=False,
+            run_id=run_id,
+        )
+    finally:
+        lock_file.close()

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from pip._internal.utils.misc import enum
+
 # repo root
 ROOT_DIR = Path(__file__).resolve().parent
 
@@ -19,3 +21,9 @@ SCREENER_OUT_PATH = OUT_PATH / "screener_out"
 REPORT_PATH = OUT_PATH / "report.html"
 ALERTS_PATH = OUT_PATH / "alerts"
 LOGS_PATH = Path(OUT_PATH / "logs")
+LOCKS_PATH = Path(OUT_PATH / "locks")
+
+
+class PositionMonitorMode(enum):
+    PRE_CLOSE = 1
+    POST_CLOSE = 2
