@@ -32,7 +32,6 @@ Dependencies:
 
 from __future__ import annotations
 
-import argparse
 import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -44,7 +43,7 @@ import pandas as pd
 import yfinance as yf
 from colorama import Fore, Style, init
 
-from config import CACHE_PATH, LOGS_PATH
+from config import CACHE_PATH, LOGS_PATH, REPORT_PATH, OWN_PATH, FUNDS_PATH
 from report_html import append_positions_report
 from time_utils import date_to_iso_basic, market_now, market_today
 
@@ -576,56 +575,14 @@ def _append_shared_report(shared_report_file: str, out_df: pd.DataFrame) -> None
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Position Monitor — HOLD/SELL signals with optional virtual sell execution.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument(
-        "--positions", "-p",
-        default="positions-csv",
-        help=f"Path to positions CSV",
-    )
-    parser.add_argument(
-        "--funds", "-f",
-        default="funds-path",
-        help=f"Path to funds plain-text file)",
-    )
-    parser.add_argument(
-        "--execute-sells",
-        action="store_true",
-        help=(
-            "Execute SELL signals: remove sold positions from the positions file "
-            "and add proceeds back to the funds file. "
-            "Intended for the pre-close run (~3:30 PM ET). "
-            "Without this flag the run is read-only (informational only)."
-        ),
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="With --execute-sells: print what would happen without writing anything.",
-    )
-    parser.add_argument(
-        "--force-intraday",
-        action="store_true",
-        help=(
-            "Always fetch live intraday 5-min data regardless of market hours. "
-            "Useful for testing outside regular session."
-        ),
-    )
-    parser.add_argument(
-        "--shared-report-file",
-        default="report/report.html",
-        help="Optional HTML report file that monitor appends its section to.",
-    )
-    args = parser.parse_args()
-
-    positions_path = Path(args.positions)
-    funds_path = Path(args.funds)
+    positions_path = Path(OWN_PATH)
+    funds_path = Path(FUNDS_PATH)
+    force_intraday = True
+    dry_run = False
+    execute_sells = True
 
     # ── Determine run mode ────────────────────────────────────────────────────
-    use_intraday = args.force_intraday or is_market_open()
+    use_intraday = force_intraday or is_market_open()
 
     print(f"\n{'=' * 65}")
     print(f"  {Fore.YELLOW}📊  Position Monitor{Style.RESET_ALL}")
@@ -633,8 +590,8 @@ def main() -> None:
         print(f"  {Fore.CYAN}Mode: PRE-CLOSE  (live 5-min intraday data){Style.RESET_ALL}")
     else:
         print(f"  {Fore.WHITE}Mode: POST-CLOSE  (completed daily bars){Style.RESET_ALL}")
-    if args.execute_sells:
-        tag = "[DRY RUN] " if args.dry_run else ""
+    if execute_sells:
+        tag = "[DRY RUN] " if dry_run else ""
         print(f"  {Fore.RED}{tag}Sell execution: ENABLED{Style.RESET_ALL}")
     print(f"{'=' * 65}\n")
 
@@ -727,7 +684,7 @@ def main() -> None:
     print(f"Log saved → {log_path.resolve()}")
 
     # ── Execute sells if requested ────────────────────────────────────────────
-    if args.execute_sells:
+    if execute_sells:
         sell_rows = [
             r for r in rows
             if r.get("status") == "SELL"
@@ -740,7 +697,7 @@ def main() -> None:
                 sell_rows=sell_rows,
                 positions_path=positions_path,
                 funds_path=funds_path,
-                dry_run=args.dry_run,
+                dry_run=dry_run,
             )
         else:
             print(f"\n  {Fore.GREEN}✅  No SELL signals — all positions held.{Style.RESET_ALL}")
@@ -753,8 +710,7 @@ def main() -> None:
             )
 
     # ── Append to shared HTML report ──────────────────────────────────────────
-    if args.shared_report_file:
-        _append_shared_report(args.shared_report_file, out_df)
+    _append_shared_report(REPORT_PATH, out_df)
 
 
 if __name__ == "__main__":
