@@ -1,0 +1,97 @@
+"""
+Shared schema and record field keys used across pipeline, virtual buy,
+position monitor, and HTML report modules.
+"""
+
+# Signal/pipeline schema keys
+SIGNAL_COL_TICKER = "ticker"
+SIGNAL_COL_PATTERN = "pattern"
+SIGNAL_COL_STATE = "state"
+SIGNAL_COL_FIRST_SEEN = "first_seen"
+SIGNAL_COL_LAST_SEEN = "last_seen"
+SIGNAL_COL_DAYS_IN_STATE = "days_in_state"
+SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS = "consecutive_screener_days"
+SIGNAL_COL_ENTRY = "entry"
+SIGNAL_COL_STOP = "stop"
+SIGNAL_COL_TARGET_2R = "target_2r"
+SIGNAL_COL_TARGET_3R = "target_3r"
+SIGNAL_COL_RISK_PCT = "risk_pct"
+SIGNAL_COL_PIVOT_PRICE = "pivot_price"
+SIGNAL_COL_DETAIL = "detail"
+SIGNAL_COL_ALERT_SENT = "alert_sent"
+SIGNAL_COL_SCREENER_DAYS = "screener_days"
+
+SIGNAL_DB_COLS = [
+    SIGNAL_COL_TICKER,
+    SIGNAL_COL_PATTERN,
+    SIGNAL_COL_STATE,
+    SIGNAL_COL_FIRST_SEEN,
+    SIGNAL_COL_LAST_SEEN,
+    SIGNAL_COL_DAYS_IN_STATE,
+    SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS,
+    SIGNAL_COL_ENTRY,
+    SIGNAL_COL_STOP,
+    SIGNAL_COL_TARGET_2R,
+    SIGNAL_COL_TARGET_3R,
+    SIGNAL_COL_RISK_PCT,
+    SIGNAL_COL_PIVOT_PRICE,
+    SIGNAL_COL_DETAIL,
+    SIGNAL_COL_ALERT_SENT,
+]
+
+# Candidate/intent queue schema keys
+INTENT_COL_SIGNAL_DATE = "signal_date"
+INTENT_COL_ALERT_STATE = "alert_state"
+INTENT_COL_PRIORITY = "priority"
+INTENT_COL_ENTRY_PRICE_PLANNED = "entry_price_planned"
+INTENT_COL_STOP_PRICE = "stop_price"
+INTENT_COL_TARGET_PRICE = "target_price"
+INTENT_COL_RR = "rr"
+INTENT_COL_STATUS = "intent_status"
+INTENT_COL_REASON = "intent_reason"
+INTENT_COL_CREATED_AT = "created_at"
+INTENT_COL_EXECUTED_PRICE = "executed_price"
+INTENT_COL_EXECUTED_SHARES = "executed_shares"
+INTENT_COL_PROCESSED_AT = "processed_at"
+
+INTENT_REQUIRED_COLS = [
+    SIGNAL_COL_TICKER,
+    INTENT_COL_SIGNAL_DATE,
+    INTENT_COL_ALERT_STATE,
+    INTENT_COL_PRIORITY,
+    SIGNAL_COL_PATTERN,
+    INTENT_COL_ENTRY_PRICE_PLANNED,
+    INTENT_COL_STOP_PRICE,
+    INTENT_COL_TARGET_PRICE,
+    INTENT_COL_RR,
+    INTENT_COL_STATUS,
+    INTENT_COL_REASON,
+    INTENT_COL_CREATED_AT,
+]
+
+# Positions and position monitor/report schema keys
+POSITION_COL_ENTRY_DATE = "entry_date"
+POSITION_COL_ENTRY_PRICE = "entry_price"
+POSITION_COL_SHARES = "shares"
+POSITION_COL_LAST_DATE = "last_date"
+POSITION_COL_PRICE_SOURCE = "price_source"
+POSITION_COL_LAST_CLOSE = "last_close"
+POSITION_COL_LAST_LOW = "last_low"
+POSITION_COL_PNL_PCT = "pnl_%"
+POSITION_COL_PNL_DOLLARS = "pnl_$"
+POSITION_COL_MAX_PNL_PCT = "max_pnl_%"
+POSITION_COL_ATR14 = "ATR14"
+POSITION_COL_INITIAL_STOP = "initial_stop"
+POSITION_COL_CHANDELIER_STOP = "chandelier_stop"
+POSITION_COL_STOP_PRICE = "stop_price"
+POSITION_COL_TRADING_DAYS = "tdays"
+POSITION_COL_R_MULT = "R_mult"
+POSITION_COL_STATUS = "status"
+POSITION_COL_REASON = "reason"
+
+POSITIONS_COLS = [
+    SIGNAL_COL_TICKER,
+    POSITION_COL_ENTRY_DATE,
+    POSITION_COL_ENTRY_PRICE,
+    POSITION_COL_SHARES,
+]

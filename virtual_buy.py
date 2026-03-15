@@ -62,6 +62,9 @@ from colorama import Fore, Style, init
 from concurrent_utils import acquire_lock
 from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH
 from log_utils import log
+from schema_keys import INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT, INTENT_COL_REASON, \
+    INTENT_COL_STATUS, INTENT_REQUIRED_COLS, POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_SHARES, \
+    POSITIONS_COLS, SIGNAL_COL_TICKER
 from time_utils import market_today
 
 init(autoreset=True)
@@ -69,9 +72,6 @@ init(autoreset=True)
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
-
-POSITIONS_COLS = ["ticker", "entry_date", "entry_price", "shares"]
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FUNDS FILE
@@ -123,13 +123,6 @@ def write_funds(path: Path, amount: float) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # SIGNALS FILE
 # ─────────────────────────────────────────────────────────────────────────────
-
-INTENT_REQUIRED_COLS = [
-    "ticker", "signal_date", "alert_state", "priority", "pattern",
-    "entry_price_planned", "stop_price", "target_price", "rr",
-    "intent_status", "intent_reason", "created_at",
-]
-
 
 def load_intents_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -224,10 +217,10 @@ def append_position(path: Path, ticker: str, entry_date: date,
     path.parent.mkdir(parents=True, exist_ok=True)
 
     new_row = pd.DataFrame([{
-        "ticker": ticker,
-        "entry_date": entry_date.isoformat(),
-        "entry_price": round(entry_price, 4),
-        "shares": shares,
+        SIGNAL_COL_TICKER: ticker,
+        POSITION_COL_ENTRY_DATE: entry_date.isoformat(),
+        POSITION_COL_ENTRY_PRICE: round(entry_price, 4),
+        POSITION_COL_SHARES: shares,
     }])
 
     write_header = not path.exists() or path.stat().st_size == 0
@@ -264,14 +257,14 @@ def run_virtual_buy(
         return
 
     intents_df = intents_df.copy()
-    intents_df["ticker"] = intents_df["ticker"].astype(str).str.strip().str.upper()
-    intents_df["intent_status"] = intents_df["intent_status"].astype(str).str.strip().str.lower()
-    intents_df["intent_reason"] = intents_df["intent_reason"].fillna("").astype(str)
-    for optional_col in ("executed_price", "executed_shares", "processed_at"):
+    intents_df[SIGNAL_COL_TICKER] = intents_df[SIGNAL_COL_TICKER].astype(str).str.strip().str.upper()
+    intents_df[INTENT_COL_STATUS] = intents_df[INTENT_COL_STATUS].astype(str).str.strip().str.lower()
+    intents_df[INTENT_COL_REASON] = intents_df[INTENT_COL_REASON].fillna("").astype(str)
+    for optional_col in (INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT):
         if optional_col not in intents_df.columns:
             intents_df[optional_col] = ""
 
-    pending_df = intents_df[intents_df["intent_status"] == "pending"].copy()
+    pending_df = intents_df[intents_df[INTENT_COL_STATUS] == "pending"].copy()
     if top_n is not None and top_n > 0:
         pending_df = pending_df.head(top_n)
     if pending_df.empty:
@@ -279,16 +272,16 @@ def run_virtual_buy(
         return
 
     pending_indices = pending_df.index.tolist()
-    pending_tickers = pending_df["ticker"].tolist()
+    pending_tickers = pending_df[SIGNAL_COL_TICKER].tolist()
 
     print(f"  Signals file : {signals_path}")
     print(f"  Pending intents found: {', '.join(pending_tickers)}\n")
 
     positions_df = load_positions(positions_path)
     owned_tickers = set()
-    if not positions_df.empty and "ticker" in positions_df.columns:
+    if not positions_df.empty and SIGNAL_COL_TICKER in positions_df.columns:
         owned_tickers = {
-            t.strip().upper() for t in positions_df["ticker"].dropna().astype(str).tolist() if t.strip()
+            t.strip().upper() for t in positions_df[SIGNAL_COL_TICKER].dropna().astype(str).tolist() if t.strip()
         }
 
     duplicate_seen: set[str] = set()
@@ -297,32 +290,32 @@ def run_virtual_buy(
     processed_at = market_today().isoformat()
     skipped_count = 0
     for idx in pending_indices:
-        ticker = str(intents_df.at[idx, "ticker"]).strip().upper()
+        ticker = str(intents_df.at[idx, SIGNAL_COL_TICKER]).strip().upper()
         if not ticker or ticker == "NAN":
-            intents_df.at[idx, "intent_status"] = "skipped"
-            intents_df.at[idx, "intent_reason"] = "invalid_ticker"
-            intents_df.at[idx, "processed_at"] = processed_at
+            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
+            intents_df.at[idx, INTENT_COL_REASON] = "invalid_ticker"
+            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             skipped_count += 1
             continue
         if ticker in duplicate_seen:
-            intents_df.at[idx, "intent_status"] = "skipped"
-            intents_df.at[idx, "intent_reason"] = "duplicate_pending"
-            intents_df.at[idx, "processed_at"] = processed_at
+            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
+            intents_df.at[idx, INTENT_COL_REASON] = "duplicate_pending"
+            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             skipped_count += 1
             continue
         duplicate_seen.add(ticker)
 
         if ticker in owned_tickers:
-            intents_df.at[idx, "intent_status"] = "skipped"
-            intents_df.at[idx, "intent_reason"] = "already_owned"
-            intents_df.at[idx, "processed_at"] = processed_at
+            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
+            intents_df.at[idx, INTENT_COL_REASON] = "already_owned"
+            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             skipped_count += 1
             continue
 
         if ticker in run_seen:
-            intents_df.at[idx, "intent_status"] = "skipped"
-            intents_df.at[idx, "intent_reason"] = "duplicate_run"
-            intents_df.at[idx, "processed_at"] = processed_at
+            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
+            intents_df.at[idx, INTENT_COL_REASON] = "duplicate_run"
+            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             skipped_count += 1
             continue
 
@@ -357,15 +350,15 @@ def run_virtual_buy(
     buy_records: list[dict] = []
 
     for idx in actionable_indices:
-        ticker = str(intents_df.at[idx, "ticker"]).strip().upper()
+        ticker = str(intents_df.at[idx, SIGNAL_COL_TICKER]).strip().upper()
         print(f"  {Fore.CYAN}{ticker:<14}{Style.RESET_ALL}", end=" ", flush=True)
 
         price = fetch_latest_price(ticker)
         if price is None or price <= 0:
             print(f"{Fore.RED}no price data — skipped{Style.RESET_ALL}")
-            intents_df.at[idx, "intent_status"] = "skipped"
-            intents_df.at[idx, "intent_reason"] = "no_price_data"
-            intents_df.at[idx, "processed_at"] = processed_at
+            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
+            intents_df.at[idx, INTENT_COL_REASON] = "no_price_data"
+            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             continue
 
         shares = int(allocation_per_ticker / price)  # whole shares only
@@ -374,9 +367,9 @@ def run_virtual_buy(
                 f"{Fore.YELLOW}price ${price:.2f} exceeds allocation "
                 f"${allocation_per_ticker:,.2f} — skipped{Style.RESET_ALL}"
             )
-            intents_df.at[idx, "intent_status"] = "skipped"
-            intents_df.at[idx, "intent_reason"] = "allocation_too_small"
-            intents_df.at[idx, "processed_at"] = processed_at
+            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
+            intents_df.at[idx, INTENT_COL_REASON] = "allocation_too_small"
+            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             continue
 
         cost = shares * price
@@ -388,10 +381,10 @@ def run_virtual_buy(
 
         buy_records.append({
             "intent_index": idx,
-            "ticker": ticker,
-            "entry_date": today,
-            "entry_price": price,
-            "shares": shares,
+            SIGNAL_COL_TICKER: ticker,
+            POSITION_COL_ENTRY_DATE: today,
+            POSITION_COL_ENTRY_PRICE: price,
+            POSITION_COL_SHARES: shares,
         })
 
     # ── 4. Write to positions CSV ────────────────────────────────────────────
@@ -408,23 +401,23 @@ def run_virtual_buy(
         for rec in buy_records:
             append_position(
                 positions_path,
-                rec["ticker"],
-                rec["entry_date"],
-                rec["entry_price"],
-                rec["shares"],
+                rec[SIGNAL_COL_TICKER],
+                rec[POSITION_COL_ENTRY_DATE],
+                rec[POSITION_COL_ENTRY_PRICE],
+                rec[POSITION_COL_SHARES],
             )
-            intents_df.at[rec["intent_index"], "intent_status"] = "executed"
-            intents_df.at[rec["intent_index"], "intent_reason"] = ""
-            intents_df.at[rec["intent_index"], "executed_price"] = str(round(rec["entry_price"], 4))
-            intents_df.at[rec["intent_index"], "executed_shares"] = str(rec["shares"])
-            intents_df.at[rec["intent_index"], "processed_at"] = processed_at
+            intents_df.at[rec["intent_index"], INTENT_COL_STATUS] = "executed"
+            intents_df.at[rec["intent_index"], INTENT_COL_REASON] = ""
+            intents_df.at[rec["intent_index"], INTENT_COL_EXECUTED_PRICE] = str(round(rec[POSITION_COL_ENTRY_PRICE], 4))
+            intents_df.at[rec["intent_index"], INTENT_COL_EXECUTED_SHARES] = str(rec[POSITION_COL_SHARES])
+            intents_df.at[rec["intent_index"], INTENT_COL_PROCESSED_AT] = processed_at
         print(
             f"{Fore.GREEN}✓ Appended {len(buy_records)} record(s) → {positions_path.resolve()}{Style.RESET_ALL}"
         )
 
     # ── 5. Update funds file & print summary ────────────────────────────────
     print(f"\n{'─' * 60}")
-    total_invested = sum(r["shares"] * r["entry_price"] for r in buy_records)
+    total_invested = sum(r[POSITION_COL_SHARES] * r[POSITION_COL_ENTRY_PRICE] for r in buy_records)
     remaining = total_funds - total_invested
 
     if dry_run:
@@ -450,10 +443,10 @@ def run_virtual_buy(
     print(f"  Cash remaining : ${remaining:,.2f}")
     print(f"  {'─' * 56}")
     for rec in buy_records:
-        cost = rec["shares"] * rec["entry_price"]
+        cost = rec[POSITION_COL_SHARES] * rec[POSITION_COL_ENTRY_PRICE]
         print(
-            f"  {rec['ticker']:<14} {rec['shares']:>6} shares @ "
-            f"${rec['entry_price']:.4f}  =  ${cost:,.2f}"
+            f"  {rec[SIGNAL_COL_TICKER]:<14} {rec[POSITION_COL_SHARES]:>6} shares @ "
+            f"${rec[POSITION_COL_ENTRY_PRICE]:.4f}  =  ${cost:,.2f}"
         )
     print(f"{'─' * 60}\n")
 

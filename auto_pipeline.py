@@ -51,6 +51,12 @@ from tabulate import tabulate
 
 from config import ALERTS_PATH, SCREENER_OUT_PATH, OUT_PATH
 from report_html import write_pipeline_report
+from schema_keys import SIGNAL_DB_COLS, SIGNAL_COL_ALERT_SENT, SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS, SIGNAL_COL_DETAIL, \
+    SIGNAL_COL_DAYS_IN_STATE, SIGNAL_COL_ENTRY, SIGNAL_COL_FIRST_SEEN, SIGNAL_COL_LAST_SEEN, SIGNAL_COL_PATTERN, \
+    SIGNAL_COL_PIVOT_PRICE, SIGNAL_COL_RISK_PCT, SIGNAL_COL_SCREENER_DAYS, SIGNAL_COL_STATE, SIGNAL_COL_STOP, \
+    SIGNAL_COL_TARGET_2R, SIGNAL_COL_TARGET_3R, SIGNAL_COL_TICKER, INTENT_COL_ALERT_STATE, INTENT_COL_CREATED_AT, \
+    INTENT_COL_ENTRY_PRICE_PLANNED, INTENT_COL_PRIORITY, INTENT_COL_REASON, INTENT_COL_RR, INTENT_COL_SIGNAL_DATE, \
+    INTENT_COL_STATUS, INTENT_COL_STOP_PRICE, INTENT_COL_TARGET_PRICE, INTENT_REQUIRED_COLS
 from time_utils import market_today, date_to_iso_extended, date_to_iso_basic, market_now
 
 warnings.filterwarnings("ignore")
@@ -280,19 +286,11 @@ def build_ticker_persistence(history: Dict[datetime, List[str]],
 # SIGNAL DB — persistent state across daily runs
 # ─────────────────────────────────────────────────────────────────────────────
 
-SIGNAL_DB_COLS = [
-    "ticker", "pattern", "state", "first_seen", "last_seen",
-    "days_in_state", "consecutive_screener_days",
-    "entry", "stop", "target_2r", "target_3r",
-    "risk_pct", "pivot_price", "detail", "alert_sent",
-]
-
-
 def load_signal_db(db_path: Path) -> pd.DataFrame:
     if db_path.exists():
         try:
             db = pd.read_csv(db_path)
-            for col in ("first_seen", "last_seen"):
+            for col in (SIGNAL_COL_FIRST_SEEN, SIGNAL_COL_LAST_SEEN):
                 if col in db.columns:
                     # Keep seen columns as calendar dates (no time/tz semantics).
                     # This avoids tz-aware/naive mixing while matching the business
@@ -322,16 +320,16 @@ def expire_missing_tickers(db: pd.DataFrame,
     # TODO: Review this hack with date:
     today_date = today.date() if isinstance(today, datetime) else today
     for idx, row in db.iterrows():
-        if row["ticker"] not in active_tickers and row["state"] not in (STATE_ACTIVE, STATE_EXPIRED, STATE_FAILED):
-            last = row["last_seen"]
+        if row[SIGNAL_COL_TICKER] not in active_tickers and row[SIGNAL_COL_STATE] not in (STATE_ACTIVE, STATE_EXPIRED, STATE_FAILED):
+            last = row[SIGNAL_COL_LAST_SEEN]
             if pd.isna(last):
                 continue
             # TODO: Review this hack with date:
             last_date = last.date() if isinstance(last, datetime) else last
             gap = (today_date - last_date).days
             if gap > 2:
-                db.at[idx, "state"] = STATE_EXPIRED
-                db.at[idx, "detail"] = f"Left screener after {gap}d"
+                db.at[idx, SIGNAL_COL_STATE] = STATE_EXPIRED
+                db.at[idx, SIGNAL_COL_DETAIL] = f"Left screener after {gap}d"
     return db
 
 
@@ -702,13 +700,13 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
             last_price = float(close.iloc[-1])
 
             # Check invalidation for existing signals
-            existing = db[db["ticker"] == ticker]
+            existing = db[db[SIGNAL_COL_TICKER] == ticker]
             for idx, ex_row in existing.iterrows():
-                if ex_row["state"] in (STATE_ACTIVE, STATE_AT_PIVOT, STATE_CONFIRMED):
+                if ex_row[SIGNAL_COL_STATE] in (STATE_ACTIVE, STATE_AT_PIVOT, STATE_CONFIRMED):
                     if invalidation_check(ticker, raw, ex_row):
-                        db.at[idx, "state"] = STATE_FAILED
-                        db.at[idx, "detail"] = "Invalidation rule triggered"
-                        db.at[idx, "last_seen"] = today
+                        db.at[idx, SIGNAL_COL_STATE] = STATE_FAILED
+                        db.at[idx, SIGNAL_COL_DETAIL] = "Invalidation rule triggered"
+                        db.at[idx, SIGNAL_COL_LAST_SEEN] = today
                         print(f"{Fore.RED}FAILED{Style.RESET_ALL} ", end="")
 
             # Run pattern detectors
@@ -740,51 +738,51 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
             rr = (levels["target_2r"] - levels["entry"]) / max(levels["entry"] - levels["stop"], 0.01)
 
             # ── Update or insert DB record ───────────────────────────────────
-            match = db[(db["ticker"] == ticker) & (db["pattern"] == pattern)]
+            match = db[(db[SIGNAL_COL_TICKER] == ticker) & (db[SIGNAL_COL_PATTERN] == pattern)]
 
             if match.empty:
                 # New signal
                 new_row = {
-                    "ticker": ticker,
-                    "pattern": pattern,
-                    "state": state,
-                    "first_seen": today,
-                    "last_seen": today,
-                    "days_in_state": 1,
-                    "consecutive_screener_days": dict(ticker_persistence).get(ticker, 1),
-                    "entry": levels["entry"],
-                    "stop": levels["stop"],
-                    "target_2r": levels["target_2r"],
-                    "target_3r": levels["target_3r"],
-                    "risk_pct": levels["risk_pct"],
-                    "pivot_price": pivot,
-                    "detail": detail,
-                    "alert_sent": False,
+                    SIGNAL_COL_TICKER: ticker,
+                    SIGNAL_COL_PATTERN: pattern,
+                    SIGNAL_COL_STATE: state,
+                    SIGNAL_COL_FIRST_SEEN: today,
+                    SIGNAL_COL_LAST_SEEN: today,
+                    SIGNAL_COL_DAYS_IN_STATE: 1,
+                    SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS: dict(ticker_persistence).get(ticker, 1),
+                    SIGNAL_COL_ENTRY: levels[SIGNAL_COL_ENTRY],
+                    SIGNAL_COL_STOP: levels[SIGNAL_COL_STOP],
+                    SIGNAL_COL_TARGET_2R: levels[SIGNAL_COL_TARGET_2R],
+                    SIGNAL_COL_TARGET_3R: levels[SIGNAL_COL_TARGET_3R],
+                    SIGNAL_COL_RISK_PCT: levels[SIGNAL_COL_RISK_PCT],
+                    SIGNAL_COL_PIVOT_PRICE: pivot,
+                    SIGNAL_COL_DETAIL: detail,
+                    SIGNAL_COL_ALERT_SENT: False,
                 }
                 db = pd.concat([db, pd.DataFrame([new_row])], ignore_index=True)
                 transition = f"NEW {state}"
                 print(f"{Fore.GREEN}NEW {state}{Style.RESET_ALL}", end="")
             else:
                 idx = match.index[0]
-                old_state = db.at[idx, "state"]
+                old_state = db.at[idx, SIGNAL_COL_STATE]
                 transition = state_transition_label(old_state, state)
 
-                db.at[idx, "state"] = state
-                db.at[idx, "last_seen"] = today
-                db.at[idx, "detail"] = detail
-                db.at[idx, "entry"] = levels["entry"]
-                db.at[idx, "stop"] = levels["stop"]
-                db.at[idx, "target_2r"] = levels["target_2r"]
-                db.at[idx, "target_3r"] = levels["target_3r"]
-                db.at[idx, "risk_pct"] = levels["risk_pct"]
-                db.at[idx, "pivot_price"] = pivot
-                db.at[idx, "consecutive_screener_days"] = dict(ticker_persistence).get(ticker, 1)
+                db.at[idx, SIGNAL_COL_STATE] = state
+                db.at[idx, SIGNAL_COL_LAST_SEEN] = today
+                db.at[idx, SIGNAL_COL_DETAIL] = detail
+                db.at[idx, SIGNAL_COL_ENTRY] = levels[SIGNAL_COL_ENTRY]
+                db.at[idx, SIGNAL_COL_STOP] = levels[SIGNAL_COL_STOP]
+                db.at[idx, SIGNAL_COL_TARGET_2R] = levels[SIGNAL_COL_TARGET_2R]
+                db.at[idx, SIGNAL_COL_TARGET_3R] = levels[SIGNAL_COL_TARGET_3R]
+                db.at[idx, SIGNAL_COL_RISK_PCT] = levels[SIGNAL_COL_RISK_PCT]
+                db.at[idx, SIGNAL_COL_PIVOT_PRICE] = pivot
+                db.at[idx, SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS] = dict(ticker_persistence).get(ticker, 1)
 
                 if old_state == state:
-                    db.at[idx, "days_in_state"] = int(db.at[idx, "days_in_state"] or 1) + 1
+                    db.at[idx, SIGNAL_COL_DAYS_IN_STATE] = int(db.at[idx, SIGNAL_COL_DAYS_IN_STATE] or 1) + 1
                 else:
-                    db.at[idx, "days_in_state"] = 1
-                    db.at[idx, "alert_sent"] = False  # re-alert on state change
+                    db.at[idx, SIGNAL_COL_DAYS_IN_STATE] = 1
+                    db.at[idx, SIGNAL_COL_ALERT_SENT] = False  # re-alert on state change
 
                 col = Fore.GREEN if state == STATE_CONFIRMED else (
                     Fore.YELLOW if state == STATE_AT_PIVOT else Fore.WHITE)
@@ -798,22 +796,22 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
                 # the user would never know a setup was approaching its pivot.
                 if rr >= cfg.min_rr or state in (STATE_CONFIRMED, STATE_AT_PIVOT):
                     alerts.append({
-                        "ticker": ticker,
-                        "pattern": pattern,
-                        "state": state,
+                        SIGNAL_COL_TICKER: ticker,
+                        SIGNAL_COL_PATTERN: pattern,
+                        SIGNAL_COL_STATE: state,
                         "emoji": ALERT_EMOJI.get(state, ""),
                         "transition": transition,
                         "price": f"${last_price:.2f}",
-                        "entry": f"${levels['entry']:.2f}",
-                        "stop": f"${levels['stop']:.2f}",
-                        "risk_pct": f"{levels['risk_pct']:.1f}%",
+                        SIGNAL_COL_ENTRY: f"${levels[SIGNAL_COL_ENTRY]:.2f}",
+                        SIGNAL_COL_STOP: f"${levels[SIGNAL_COL_STOP]:.2f}",
+                        SIGNAL_COL_RISK_PCT: f"{levels[SIGNAL_COL_RISK_PCT]:.1f}%",
                         "target_2R": f"${levels['target_2r']:.2f}",
                         "target_3R": f"${levels['target_3r']:.2f}",
                         "R:R": f"{rr:.1f}",
                         "shares": sizing["shares"],
                         "position_$": f"${sizing['position_$']:,.0f}",
-                        "screener_days": dict(ticker_persistence).get(ticker, 1),
-                        "detail": detail,
+                        SIGNAL_COL_SCREENER_DAYS: dict(ticker_persistence).get(ticker, 1),
+                        SIGNAL_COL_DETAIL: detail,
                     })
 
             print()  # newline after ticker status
@@ -831,8 +829,8 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     if not df_alerts.empty:
         # Sort: CONFIRMED first, then AT_PIVOT, then FORMING; within group by screener_days desc
         state_order = {STATE_CONFIRMED: 0, STATE_AT_PIVOT: 1, STATE_FORMING: 2}
-        df_alerts["_sort"] = df_alerts["state"].map(state_order).fillna(3)
-        df_alerts = df_alerts.sort_values(["_sort", "screener_days"],
+        df_alerts["_sort"] = df_alerts[SIGNAL_COL_STATE].map(state_order).fillna(3)
+        df_alerts = df_alerts.sort_values(["_sort", SIGNAL_COL_SCREENER_DAYS],
                                           ascending=[True, False])
         df_alerts = df_alerts.drop(columns=["_sort"])
 
@@ -843,17 +841,17 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     candidates_queue_path = cfg.candidates_queue_path
     if candidates_queue_path:
         candidates_queue = []
-        confirmed = df_alerts[df_alerts["state"] == STATE_CONFIRMED]
+        confirmed = df_alerts[df_alerts[SIGNAL_COL_STATE] == STATE_CONFIRMED]
         for index, row in confirmed.iterrows():
             candidates_queue.append({
-                "ticker": row.get("ticker", ""),
-                "alert_state": row.get("state", ""),
-                "priority": len(candidates_queue) + 1,
-                "pattern": row.get("pattern", ""),
-                "entry_price_planned": row.get("entry", ""),
-                "stop_price": row.get("stop", ""),
-                "target_price": row.get("target_2R", ""),
-                "rr": row.get("R:R", ""),
+                SIGNAL_COL_TICKER: row.get(SIGNAL_COL_TICKER, ""),
+                INTENT_COL_ALERT_STATE: row.get(SIGNAL_COL_STATE, ""),
+                INTENT_COL_PRIORITY: len(candidates_queue) + 1,
+                SIGNAL_COL_PATTERN: row.get(SIGNAL_COL_PATTERN, ""),
+                INTENT_COL_ENTRY_PRICE_PLANNED: row.get(SIGNAL_COL_ENTRY, ""),
+                INTENT_COL_STOP_PRICE: row.get(SIGNAL_COL_STOP, ""),
+                INTENT_COL_TARGET_PRICE: row.get("target_2R", ""),
+                INTENT_COL_RR: row.get("R:R", ""),
             })
         _write_candidates_queue(candidates_queue, candidates_queue_path)
         print(f"  Queue   → {candidates_queue_path} ({len(candidates_queue)} ticker(s))")
@@ -881,16 +879,16 @@ def _print_summary(df_alerts: pd.DataFrame, today: datetime, n_tracked: int):
         return
 
     display_cols = [
-        "emoji", "ticker", "pattern", "state",
-        "price", "entry", "stop", "risk_pct",
-        "target_2R", "R:R", "shares", "screener_days",
+        "emoji", SIGNAL_COL_TICKER, SIGNAL_COL_PATTERN, SIGNAL_COL_STATE,
+        "price", SIGNAL_COL_ENTRY, SIGNAL_COL_STOP, SIGNAL_COL_RISK_PCT,
+        "target_2R", "R:R", "shares", SIGNAL_COL_SCREENER_DAYS,
     ]
     available = [c for c in display_cols if c in df_alerts.columns]
     print(tabulate(df_alerts[available], headers="keys",
                    tablefmt="rounded_outline", showindex=False))
 
-    confirmed = df_alerts[df_alerts["state"] == STATE_CONFIRMED]
-    at_pivot = df_alerts[df_alerts["state"] == STATE_AT_PIVOT]
+    confirmed = df_alerts[df_alerts[SIGNAL_COL_STATE] == STATE_CONFIRMED]
+    at_pivot = df_alerts[df_alerts[SIGNAL_COL_STATE] == STATE_AT_PIVOT]
 
     print(f"\n  {Fore.RED}🔴 CONFIRMED (enter tomorrow open): {len(confirmed)}{Style.RESET_ALL}")
     print(f"  {Fore.YELLOW}🟡 AT PIVOT  (place buy-stop):       {len(at_pivot)}{Style.RESET_ALL}")
@@ -901,7 +899,7 @@ def _print_summary(df_alerts: pd.DataFrame, today: datetime, n_tracked: int):
     print(f"\n{Fore.YELLOW}Detail:{Style.RESET_ALL}")
     for _, row in df_alerts.iterrows():
         em = row.get("emoji", "")
-        print(f"  {em} {row['ticker']:<12} {row['pattern']:<10} {row['detail']}")
+        print(f"  {em} {row[SIGNAL_COL_TICKER]:<12} {row[SIGNAL_COL_PATTERN]:<10} {row[SIGNAL_COL_DETAIL]}")
 
 
 def _write_candidates_queue(intents: List[Dict[str, object]], output_path: str) -> None:
@@ -914,24 +912,20 @@ def _write_candidates_queue(intents: List[Dict[str, object]], output_path: str) 
     rows = []
     for priority, intent in enumerate(intents, start=1):
         rows.append({
-            "ticker": intent.get("ticker", ""),
-            "signal_date": signal_date,
-            "alert_state": intent.get("alert_state", STATE_CONFIRMED),
-            "priority": intent.get("priority", priority),
-            "pattern": intent.get("pattern", ""),
-            "entry_price_planned": intent.get("entry_price_planned", ""),
-            "stop_price": intent.get("stop_price", ""),
-            "target_price": intent.get("target_price", ""),
-            "rr": intent.get("rr", ""),
-            "intent_status": "pending",
-            "intent_reason": "",
-            "created_at": created_at,
+            SIGNAL_COL_TICKER: intent.get(SIGNAL_COL_TICKER, ""),
+            INTENT_COL_SIGNAL_DATE: signal_date,
+            INTENT_COL_ALERT_STATE: intent.get(INTENT_COL_ALERT_STATE, STATE_CONFIRMED),
+            INTENT_COL_PRIORITY: intent.get(INTENT_COL_PRIORITY, priority),
+            SIGNAL_COL_PATTERN: intent.get(SIGNAL_COL_PATTERN, ""),
+            INTENT_COL_ENTRY_PRICE_PLANNED: intent.get(INTENT_COL_ENTRY_PRICE_PLANNED, ""),
+            INTENT_COL_STOP_PRICE: intent.get(INTENT_COL_STOP_PRICE, ""),
+            INTENT_COL_TARGET_PRICE: intent.get(INTENT_COL_TARGET_PRICE, ""),
+            INTENT_COL_RR: intent.get(INTENT_COL_RR, ""),
+            INTENT_COL_STATUS: "pending",
+            INTENT_COL_REASON: "",
+            INTENT_COL_CREATED_AT: created_at,
         })
-    pd.DataFrame(rows, columns=[
-        "ticker", "signal_date", "alert_state", "priority", "pattern",
-        "entry_price_planned", "stop_price", "target_price", "rr",
-        "intent_status", "intent_reason", "created_at",
-    ]).to_csv(out, index=False)
+    pd.DataFrame(rows, columns=INTENT_REQUIRED_COLS).to_csv(out, index=False)
 
 
 def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
@@ -953,29 +947,29 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
             ("AT PIVOT — Place buy-stop above pivot", STATE_AT_PIVOT),
             ("FORMING — Watch, check tomorrow", STATE_FORMING),
         ]:
-            subset = df_alerts[df_alerts["state"] == state]
+            subset = df_alerts[df_alerts[SIGNAL_COL_STATE] == state]
             if subset.empty:
                 continue
             lines.append(f"\n{state_label}:")
             lines.append("-" * 50)
             for _, row in subset.iterrows():
                 lines.append(
-                    f"  {row['ticker']:<12} {row['pattern']:<8} "
-                    f"Entry:{row['entry']}  Stop:{row['stop']}  "
+                    f"  {row[SIGNAL_COL_TICKER]:<12} {row[SIGNAL_COL_PATTERN]:<8} "
+                    f"Entry:{row[SIGNAL_COL_ENTRY]}  Stop:{row[SIGNAL_COL_STOP]}  "
                     f"T1:{row['target_2R']}  R:R:{row['R:R']}  "
-                    f"Shares:{row['shares']}  ({row['screener_days']}d in screener)"
+                    f"Shares:{row['shares']}  ({row[SIGNAL_COL_SCREENER_DAYS]}d in screener)"
                 )
-                lines.append(f"    → {row['detail']}")
+                lines.append(f"    → {row[SIGNAL_COL_DETAIL]}")
 
     lines.append("\n" + "=" * 65)
     lines.append("FULL SIGNAL DB STATE:")
     lines.append("-" * 50)
     if not db.empty:
-        for _, row in db.sort_values("state").iterrows():
+        for _, row in db.sort_values(SIGNAL_COL_STATE).iterrows():
             lines.append(
-                f"  {row['ticker']:<12} {row['pattern']:<10} "
-                f"[{row['state']}]  last:{str(row.get('last_seen', ''))[:10]}"
-                f"  days_in_state:{int(row.get('days_in_state', 1) or 1)}"
+                f"  {row[SIGNAL_COL_TICKER]:<12} {row[SIGNAL_COL_PATTERN]:<10} "
+                f"[{row[SIGNAL_COL_STATE]}]  last:{str(row.get(SIGNAL_COL_LAST_SEEN, ''))[:10]}"
+                f"  days_in_state:{int(row.get(SIGNAL_COL_DAYS_IN_STATE, 1) or 1)}"
             )
 
     lines.append("\nINVALIDATION RULES:")

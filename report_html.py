@@ -12,6 +12,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 import os
 
+from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, POSITION_COL_PNL_DOLLARS, \
+    POSITION_COL_PNL_PCT, POSITION_COL_REASON, POSITION_COL_STATUS, SIGNAL_COL_DAYS_IN_STATE, SIGNAL_COL_DETAIL, \
+    SIGNAL_COL_ENTRY, SIGNAL_COL_LAST_SEEN, SIGNAL_COL_PATTERN, SIGNAL_COL_RISK_PCT, SIGNAL_COL_STATE, SIGNAL_COL_STOP, \
+    SIGNAL_COL_TICKER
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PALETTE  — light theme, high contrast
 # ─────────────────────────────────────────────────────────────────────────────
@@ -269,13 +274,13 @@ def _td(content: str, bg: str = "", align: str = "left",
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PIPELINE_COLS = [
-    ("Ticker",    "ticker",        "left"),
-    ("Pattern",   "pattern",       "left"),
-    ("State",     "state",         "left"),
+    ("Ticker",    SIGNAL_COL_TICKER,        "left"),
+    ("Pattern",   SIGNAL_COL_PATTERN,       "left"),
+    ("State",     SIGNAL_COL_STATE,         "left"),
     ("Price",     "price",         "right"),
-    ("Entry",     "entry",         "right"),
-    ("Stop",      "stop",          "right"),
-    ("Risk",      "risk_pct",      "right"),
+    ("Entry",     SIGNAL_COL_ENTRY,         "right"),
+    ("Stop",      SIGNAL_COL_STOP,          "right"),
+    ("Risk",      SIGNAL_COL_RISK_PCT,      "right"),
     ("Target 2R", "target_2R",     "right"),
     ("R:R",       "R:R",           "right"),
     ("Shares",    "shares",        "right"),
@@ -291,14 +296,14 @@ def _pipeline_table(alerts: List[Dict[str, Any]]) -> str:
              "</tr></thead>")
     rows = []
     for a in alerts:
-        state = str(a.get("state", ""))
+        state = str(a.get(SIGNAL_COL_STATE, ""))
         bg    = _row_bg(state)
         cells = []
         for _lbl, key, al in _PIPELINE_COLS:
             raw = str(a.get(key) or "&mdash;")
-            if key == "state":
+            if key == SIGNAL_COL_STATE:
                 cells.append(_td(_state_badge(state), bg, al))
-            elif key == "ticker":
+            elif key == SIGNAL_COL_TICKER:
                 cells.append(_td(raw, bg, al, bold=True))
             elif key == "R:R":
                 try:
@@ -313,7 +318,7 @@ def _pipeline_table(alerts: List[Dict[str, Any]]) -> str:
                 cells.append(_td(raw, bg, al))
         rows.append(f"<tr>{''.join(cells)}</tr>")
 
-        detail = str(a.get("detail", ""))
+        detail = str(a.get(SIGNAL_COL_DETAIL, ""))
         if detail:
             n = len(_PIPELINE_COLS)
             rows.append(
@@ -334,14 +339,14 @@ def _pipeline_table(alerts: List[Dict[str, Any]]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _DB_COLS = [
-    ("Ticker",    "ticker",        "left"),
-    ("Pattern",   "pattern",       "left"),
-    ("State",     "state",         "left"),
-    ("Last Seen", "last_seen",     "left"),
-    ("Days",      "days_in_state", "right"),
-    ("Entry",     "entry",         "right"),
-    ("Stop",      "stop",          "right"),
-    ("Detail",    "detail",        "left"),
+    ("Ticker",    SIGNAL_COL_TICKER,        "left"),
+    ("Pattern",   SIGNAL_COL_PATTERN,       "left"),
+    ("State",     SIGNAL_COL_STATE,         "left"),
+    ("Last Seen", SIGNAL_COL_LAST_SEEN,     "left"),
+    ("Days",      SIGNAL_COL_DAYS_IN_STATE, "right"),
+    ("Entry",     SIGNAL_COL_ENTRY,         "right"),
+    ("Stop",      SIGNAL_COL_STOP,          "right"),
+    ("Detail",    SIGNAL_COL_DETAIL,        "left"),
 ]
 
 
@@ -354,7 +359,7 @@ def _db_table(db_rows: List[Dict[str, Any]]) -> str:
              "</tr></thead>")
     rows = []
     for rec in db_rows:
-        state = str(rec.get("state", ""))
+        state = str(rec.get(SIGNAL_COL_STATE, ""))
         bg    = _row_bg(state) if state in ("CONFIRMED","AT_PIVOT","FORMING") else C["card_bg"]
         cells = []
         for _lbl, key, al in _DB_COLS:
@@ -362,9 +367,9 @@ def _db_table(db_rows: List[Dict[str, Any]]) -> str:
             if raw is None or str(raw) in ("nan","NaT","None"):
                 raw = "&mdash;"
             raw = str(raw)
-            if key == "state":
+            if key == SIGNAL_COL_STATE:
                 cells.append(_td(_state_badge(state), bg, al))
-            elif key == "ticker":
+            elif key == SIGNAL_COL_TICKER:
                 cells.append(_td(raw, bg, al, bold=True))
             else:
                 cells.append(_td(raw, bg, al))
@@ -379,19 +384,19 @@ def _db_table(db_rows: List[Dict[str, Any]]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _POS_COLS = [
-    ("Ticker",     "ticker",      "left"),
-    ("Entry Date", "entry_date",  "left"),
-    ("Entry $",    "entry_price", "right"),
-    ("Last $",     "last_close",  "right"),
-    ("PnL %",      "pnl_%",       "right"),
-    ("PnL $",      "pnl_$",       "right"),
+    ("Ticker",     SIGNAL_COL_TICKER,      "left"),
+    ("Entry Date", POSITION_COL_ENTRY_DATE,  "left"),
+    ("Entry $",    POSITION_COL_ENTRY_PRICE, "right"),
+    ("Last $",     POSITION_COL_LAST_CLOSE,  "right"),
+    ("PnL %",      POSITION_COL_PNL_PCT,       "right"),
+    ("PnL $",      POSITION_COL_PNL_DOLLARS,       "right"),
     ("Max PnL%",   "max_pnl_%",   "right"),
     ("Stop",       "stop_price",  "right"),
     ("ATR14",      "ATR14",       "right"),
     ("Rx",         "R_mult",      "right"),
     ("Days",       "tdays",       "right"),
-    ("Status",     "status",      "left"),
-    ("Reason",     "reason",      "left"),
+    ("Status",     POSITION_COL_STATUS,      "left"),
+    ("Reason",     POSITION_COL_REASON,      "left"),
 ]
 
 
@@ -404,18 +409,18 @@ def _positions_table(rows: List[Dict[str, Any]]) -> str:
              "</tr></thead>")
     body_rows = []
     for rec in rows:
-        status = str(rec.get("status","HOLD")).upper()
+        status = str(rec.get(POSITION_COL_STATUS,"HOLD")).upper()
         bg     = C["sell_bg"] if status == "SELL" else C["card_bg"]
         cells  = []
         for _lbl, key, al in _POS_COLS:
             raw = rec.get(key)
             if raw is None or str(raw) in ("nan","None"):
                 raw = "&mdash;"
-            if key == "ticker":
+            if key == SIGNAL_COL_TICKER:
                 cells.append(_td(str(raw), bg, al, bold=True))
-            elif key == "status":
+            elif key == POSITION_COL_STATUS:
                 cells.append(_td(_status_badge(status), bg, al))
-            elif key == "pnl_%":
+            elif key == POSITION_COL_PNL_PCT:
                 try:
                     v = float(str(raw))
                     col = C["forming"] if v > 0 else C["confirmed"]
@@ -424,7 +429,7 @@ def _positions_table(rows: List[Dict[str, Any]]) -> str:
                         bg, al))
                 except (ValueError, TypeError):
                     cells.append(_td(str(raw), bg, al))
-            elif key == "pnl_$":
+            elif key == POSITION_COL_PNL_DOLLARS:
                 try:
                     v = float(str(raw).replace("$","").replace(",",""))
                     col = C["forming"] if v > 0 else C["confirmed"]

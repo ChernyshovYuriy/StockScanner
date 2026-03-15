@@ -48,6 +48,8 @@ from concurrent_utils import acquire_lock
 from config import CACHE_PATH, LOGS_PATH, REPORT_PATH, OWN_PATH, FUNDS_PATH, PositionMonitorMode
 from log_utils import log
 from report_html import append_positions_report
+from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, POSITION_COL_PNL_DOLLARS, \
+    POSITION_COL_PNL_PCT, POSITION_COL_REASON, POSITION_COL_SHARES, POSITION_COL_STATUS, POSITIONS_COLS, SIGNAL_COL_TICKER
 from time_utils import date_to_iso_basic, market_now, market_today
 
 init(autoreset=True)
@@ -392,9 +394,6 @@ def compute_signals(
 # POSITIONS FILE HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-POSITIONS_COLS = ["ticker", "entry_date", "entry_price", "shares"]
-
-
 def parse_positions_csv(path: Path) -> list[Position]:
     if not path.exists():
         raise FileNotFoundError(f"Cannot find {path.resolve()}")
@@ -406,14 +405,14 @@ def parse_positions_csv(path: Path) -> list[Position]:
 
     positions: list[Position] = []
     for _, row in df.iterrows():
-        ticker = str(row["ticker"]).strip()
+        ticker = str(row[SIGNAL_COL_TICKER]).strip()
         if not ticker:
             continue
         positions.append(Position(
             ticker=ticker,
-            entry_date=pd.to_datetime(row["entry_date"]).date(),
-            entry_price=float(row["entry_price"]),
-            shares=float(row["shares"]),
+            entry_date=pd.to_datetime(row[POSITION_COL_ENTRY_DATE]).date(),
+            entry_price=float(row[POSITION_COL_ENTRY_PRICE]),
+            shares=float(row[POSITION_COL_SHARES]),
         ))
     return positions
 
@@ -489,13 +488,13 @@ def execute_virtual_sells(
     sold_records: List[Dict] = []
 
     for row in sell_rows:
-        ticker = row["ticker"]
-        sell_price = float(row["last_close"])
-        shares = float(row["shares"])
+        ticker = row[SIGNAL_COL_TICKER]
+        sell_price = float(row[POSITION_COL_LAST_CLOSE])
+        shares = float(row[POSITION_COL_SHARES])
         proceeds = round(sell_price * shares, 2)
-        pnl_dollars = round(float(row.get("pnl_$", 0)), 2)
-        pnl_pct = round(float(row.get("pnl_%", 0)), 2)
-        reason = row.get("reason", "")
+        pnl_dollars = round(float(row.get(POSITION_COL_PNL_DOLLARS, 0)), 2)
+        pnl_pct = round(float(row.get(POSITION_COL_PNL_PCT, 0)), 2)
+        reason = row.get(POSITION_COL_REASON, "")
 
         color = Fore.GREEN if pnl_dollars >= 0 else Fore.RED
         sign = "+" if pnl_dollars >= 0 else ""
@@ -509,16 +508,16 @@ def execute_virtual_sells(
 
         total_proceeds += proceeds
         sold_records.append({
-            "ticker": ticker,
-            "entry_date": row.get("entry_date", ""),
-            "entry_price": row.get("entry_price", ""),
-            "shares": shares,
+            SIGNAL_COL_TICKER: ticker,
+            POSITION_COL_ENTRY_DATE: row.get(POSITION_COL_ENTRY_DATE, ""),
+            POSITION_COL_ENTRY_PRICE: row.get(POSITION_COL_ENTRY_PRICE, ""),
+            POSITION_COL_SHARES: shares,
             "sell_date": market_now(TSX_TZ).date().isoformat(),
             "sell_price": sell_price,
             "proceeds": proceeds,
-            "pnl_$": pnl_dollars,
-            "pnl_%": pnl_pct,
-            "reason": reason,
+            POSITION_COL_PNL_DOLLARS: pnl_dollars,
+            POSITION_COL_PNL_PCT: pnl_pct,
+            POSITION_COL_REASON: reason,
         })
 
     print(f"\n  Total proceeds : ${total_proceeds:,.2f}")
@@ -528,8 +527,8 @@ def execute_virtual_sells(
         return
 
     # ── Remove sold tickers from positions CSV ────────────────────────────────
-    sold_tickers = {r["ticker"] for r in sell_rows}
-    remaining_df = pos_df[~pos_df["ticker"].isin(sold_tickers)]
+    sold_tickers = {r[SIGNAL_COL_TICKER] for r in sell_rows}
+    remaining_df = pos_df[~pos_df[SIGNAL_COL_TICKER].isin(sold_tickers)]
     remaining_df.to_csv(positions_path, index=False)
 
     print(
@@ -641,16 +640,16 @@ def main() -> None:
 
         if df.empty or len(df) < MIN_BARS_REQUIRED:
             print(f"{Fore.YELLOW}insufficient data ({len(df)} bars){Style.RESET_ALL}")
-            rows.append({"ticker": pos.ticker, "status": "NO_DATA",
-                         "reason": f"Insufficient bars ({len(df)})"})
+            rows.append({SIGNAL_COL_TICKER: pos.ticker, POSITION_COL_STATUS: "NO_DATA",
+                         POSITION_COL_REASON: f"Insufficient bars ({len(df)})"})
             continue
 
         needed = {"High", "Low", "Close"}
         if not needed.issubset(df.columns):
             missing = sorted(needed - set(df.columns))
             print(f"{Fore.RED}missing columns: {missing}{Style.RESET_ALL}")
-            rows.append({"ticker": pos.ticker, "status": "BAD_DATA",
-                         "reason": f"Missing columns: {missing}"})
+            rows.append({SIGNAL_COL_TICKER: pos.ticker, POSITION_COL_STATUS: "BAD_DATA",
+                         POSITION_COL_REASON: f"Missing columns: {missing}"})
             continue
 
         # Fetch live intraday snapshot when market is open
@@ -666,7 +665,7 @@ def main() -> None:
 
         result = compute_signals(pos, df, today_bar=today_bar)
 
-        status = result.get("status", "")
+        status = result.get(POSITION_COL_STATUS, "")
         color = Fore.RED if status == "SELL" else Fore.GREEN
         print(
             f"{color}{status}{Style.RESET_ALL}  "
@@ -703,9 +702,9 @@ def main() -> None:
     if execute_sells:
         sell_rows = [
             r for r in rows
-            if r.get("status") == "SELL"
-               and r.get("last_close") is not None
-               and r.get("shares") is not None
+            if r.get(POSITION_COL_STATUS) == "SELL"
+               and r.get(POSITION_COL_LAST_CLOSE) is not None
+               and r.get(POSITION_COL_SHARES) is not None
         ]
 
         if sell_rows:
@@ -718,7 +717,7 @@ def main() -> None:
         else:
             print(f"\n  {Fore.GREEN}✅  No SELL signals — all positions held.{Style.RESET_ALL}")
     else:
-        sell_count = len([r for r in rows if r.get("status") == "SELL"])
+        sell_count = len([r for r in rows if r.get(POSITION_COL_STATUS) == "SELL"])
         if sell_count:
             print(
                 f"\n  {Fore.YELLOW}⚠  {sell_count} SELL signal(s) detected. "
