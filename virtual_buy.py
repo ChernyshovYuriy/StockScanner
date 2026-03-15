@@ -28,16 +28,16 @@ Usage
 
 Arguments
 ---------
-  --signals    Path to the screener/pipeline output CSV (must have a
-               'ticker' or 'Ticker' column; optionally 'composite_score').
+  --signals    Path to the structured entry-intent CSV emitted by the
+               pipeline (requires intent_status and related intent columns).
   --funds      Path to a plain-text file whose first non-blank line is the
                total available capital in CAD (e.g. "50000" or "50000.00").
                Funds are split equally across all purchased tickers.
   --positions  Path to the output positions CSV.  The file is APPENDED to
                (never overwritten) so it accumulates across multiple runs.
                Created with a header row if it does not yet exist.
-  --top        (optional) Limit buys to the top-N tickers by score column.
-               Default: buy all tickers in the signals file.
+  --top        (optional) Limit processing to the first N pending intent rows.
+               Default: process all pending intents.
   --dry-run    Print what would be bought without writing anything.
 
 Output CSV columns
@@ -124,129 +124,35 @@ def write_funds(path: Path, amount: float) -> None:
 # SIGNALS FILE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def read_tickers(path: Path, top_n: Optional[int]) -> list[str]:
-    """
-    Read tickers from a signals file.  Two formats are supported:
+INTENT_REQUIRED_COLS = [
+    "ticker", "signal_date", "alert_state", "priority", "pattern",
+    "entry_price_planned", "stop_price", "target_price", "rr",
+    "intent_status", "intent_reason", "created_at",
+]
 
-    1. Plain text  — one ticker per line (blank lines and # comments ignored).
-       Example:
-           RY.TO
-           TD.TO
-           # skip this one
-           BNS.TO
 
-    2. CSV  — must contain a 'Ticker', 'ticker', 'symbol', or 'Symbol' column.
-       If a 'composite_score' column is present, rows are sorted descending
-       before the top-N limit is applied.
-
-    The format is detected automatically: if the first non-blank, non-comment
-    line contains a comma the file is treated as CSV, otherwise as plain text.
-    """
+def load_intents_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
-        print(f"{Fore.RED}Signals file not found: {path}{Style.RESET_ALL}")
-        return []
-
-    raw_text = path.read_text(encoding="utf-8")
-
-    # ── Detect format ────────────────────────────────────────────────────────
-    is_csv = False
-    for line in raw_text.splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            is_csv = "," in stripped
-            break
-
-    # ── Plain-text path ──────────────────────────────────────────────────────
-    if not is_csv:
-        tickers = []
-        for line in raw_text.splitlines():
-            t = line.strip()
-            if t and not t.startswith("#"):
-                tickers.append(t.upper())
-        if top_n is not None and top_n > 0:
-            tickers = tickers[:top_n]
-        return tickers
-
-    # ── CSV path ─────────────────────────────────────────────────────────────
+        return pd.DataFrame(columns=INTENT_REQUIRED_COLS)
     try:
-        df = pd.read_csv(path)
-    except Exception as e:
-        print(f"{Fore.RED}Could not read signals file: {e}{Style.RESET_ALL}")
-        return []
+        return pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame(columns=INTENT_REQUIRED_COLS)
 
-    ticker_col: Optional[str] = None
-    for candidate in ("Ticker", "ticker", "symbol", "Symbol", "TICKER"):
-        if candidate in df.columns:
-            ticker_col = candidate
-            break
 
-    if ticker_col is None:
+def persist_intent_updates(path: Path, df: pd.DataFrame) -> None:
+    df.to_csv(path, index=False)
+
+
+def validate_intents_csv(df: pd.DataFrame, path: Path) -> bool:
+    missing = [col for col in INTENT_REQUIRED_COLS if col not in df.columns]
+    if missing:
         print(
-            f"{Fore.YELLOW}No ticker column found in {path}. "
-            f"Columns: {list(df.columns)}{Style.RESET_ALL}"
+            f"{Fore.RED}Structured intents CSV missing required columns: {missing}. "
+            f"Found: {list(df.columns)} in {path}{Style.RESET_ALL}"
         )
-        return []
-
-    score_col: Optional[str] = None
-    for candidate in ("composite_score", "score", "Score"):
-        if candidate in df.columns:
-            score_col = candidate
-            break
-
-    if score_col:
-        df = df.sort_values(score_col, ascending=False)
-
-    tickers = (
-        df[ticker_col]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .str.upper()
-        .tolist()
-    )
-    tickers = [t for t in tickers if t and t != "NAN"]
-
-    if top_n is not None and top_n > 0:
-        tickers = tickers[:top_n]
-
-    return tickers
-
-
-def remove_tickers_from_queue(path: Path, bought_tickers: list[str]) -> int:
-    """
-    Remove bought tickers from a plain-text queue file (one ticker per line).
-
-    Returns the number of queue rows removed.
-    Notes:
-      - Matching is case-insensitive.
-      - Blank lines and comment lines (#...) are preserved.
-      - If the queue file is missing, no-op.
-    """
-    if not path.exists() or not bought_tickers:
-        return 0
-
-    bought = {t.strip().upper() for t in bought_tickers if t and t.strip()}
-    if not bought:
-        return 0
-
-    lines = path.read_text(encoding="utf-8").splitlines()
-    kept_lines: list[str] = []
-    removed = 0
-
-    for raw in lines:
-        stripped = raw.strip()
-        if not stripped or stripped.startswith("#"):
-            kept_lines.append(raw)
-            continue
-
-        if stripped.upper() in bought:
-            removed += 1
-            continue
-
-        kept_lines.append(raw)
-
-    path.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
-    return removed
+        return False
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -349,14 +255,79 @@ def run_virtual_buy(
     print(f"  {Fore.YELLOW}💸  Virtual Buy Runner{Style.RESET_ALL}")
     print(f"{'=' * 60}\n")
 
-    # ── 1. Read tickers ──────────────────────────────────────────────────────
-    tickers = read_tickers(signals_path, top_n)
-    if not tickers:
-        print(f"{Fore.YELLOW}No tickers found in signals file — nothing to buy.{Style.RESET_ALL}")
+    # ── 1. Read intents ──────────────────────────────────────────────────────
+    intents_df = load_intents_csv(signals_path)
+    if intents_df.empty:
+        print(f"{Fore.YELLOW}No intents found in signals file — nothing to buy.{Style.RESET_ALL}")
+        return
+    if not validate_intents_csv(intents_df, signals_path):
         return
 
+    intents_df = intents_df.copy()
+    intents_df["ticker"] = intents_df["ticker"].astype(str).str.strip().str.upper()
+    intents_df["intent_status"] = intents_df["intent_status"].astype(str).str.strip().str.lower()
+    intents_df["intent_reason"] = intents_df["intent_reason"].fillna("").astype(str)
+    for optional_col in ("executed_price", "executed_shares", "processed_at"):
+        if optional_col not in intents_df.columns:
+            intents_df[optional_col] = ""
+
+    pending_df = intents_df[intents_df["intent_status"] == "pending"].copy()
+    if top_n is not None and top_n > 0:
+        pending_df = pending_df.head(top_n)
+    if pending_df.empty:
+        print(f"{Fore.YELLOW}No pending intents in signals file — nothing to buy.{Style.RESET_ALL}")
+        return
+
+    pending_indices = pending_df.index.tolist()
+    pending_tickers = pending_df["ticker"].tolist()
+
     print(f"  Signals file : {signals_path}")
-    print(f"  Tickers found: {', '.join(tickers)}\n")
+    print(f"  Pending intents found: {', '.join(pending_tickers)}\n")
+
+    positions_df = load_positions(positions_path)
+    owned_tickers = set()
+    if not positions_df.empty and "ticker" in positions_df.columns:
+        owned_tickers = {
+            t.strip().upper() for t in positions_df["ticker"].dropna().astype(str).tolist() if t.strip()
+        }
+
+    duplicate_seen: set[str] = set()
+    run_seen: set[str] = set()
+    actionable_indices: list[int] = []
+    processed_at = market_today().isoformat()
+    skipped_count = 0
+    for idx in pending_indices:
+        ticker = str(intents_df.at[idx, "ticker"]).strip().upper()
+        if not ticker or ticker == "NAN":
+            intents_df.at[idx, "intent_status"] = "skipped"
+            intents_df.at[idx, "intent_reason"] = "invalid_ticker"
+            intents_df.at[idx, "processed_at"] = processed_at
+            skipped_count += 1
+            continue
+        if ticker in duplicate_seen:
+            intents_df.at[idx, "intent_status"] = "skipped"
+            intents_df.at[idx, "intent_reason"] = "duplicate_pending"
+            intents_df.at[idx, "processed_at"] = processed_at
+            skipped_count += 1
+            continue
+        duplicate_seen.add(ticker)
+
+        if ticker in owned_tickers:
+            intents_df.at[idx, "intent_status"] = "skipped"
+            intents_df.at[idx, "intent_reason"] = "already_owned"
+            intents_df.at[idx, "processed_at"] = processed_at
+            skipped_count += 1
+            continue
+
+        if ticker in run_seen:
+            intents_df.at[idx, "intent_status"] = "skipped"
+            intents_df.at[idx, "intent_reason"] = "duplicate_run"
+            intents_df.at[idx, "processed_at"] = processed_at
+            skipped_count += 1
+            continue
+
+        run_seen.add(ticker)
+        actionable_indices.append(idx)
 
     # ── 2. Read available funds ──────────────────────────────────────────────
     total_funds = read_funds(funds_path)
@@ -364,25 +335,37 @@ def run_virtual_buy(
         print(
             f"{Fore.YELLOW}Available funds is ${total_funds:,.2f} — nothing to buy.{Style.RESET_ALL}"
         )
+        if not dry_run:
+            persist_intent_updates(signals_path, intents_df)
         return
 
     print(f"  Funds file   : {funds_path}")
     print(f"  Total funds  : ${total_funds:,.2f}")
 
     # Equal allocation across all tickers
-    allocation_per_ticker = total_funds / len(tickers)
-    print(f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({len(tickers)} ticker(s))\n")
+    if not actionable_indices:
+        print(f"{Fore.YELLOW}No actionable pending intents — nothing to buy.{Style.RESET_ALL}")
+        if not dry_run:
+            persist_intent_updates(signals_path, intents_df)
+        return
+
+    allocation_per_ticker = total_funds / len(actionable_indices)
+    print(f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({len(actionable_indices)} ticker(s))\n")
 
     # ── 3. Fetch prices & compute shares ────────────────────────────────────
     today = market_today().date()
     buy_records: list[dict] = []
 
-    for ticker in tickers:
+    for idx in actionable_indices:
+        ticker = str(intents_df.at[idx, "ticker"]).strip().upper()
         print(f"  {Fore.CYAN}{ticker:<14}{Style.RESET_ALL}", end=" ", flush=True)
 
         price = fetch_latest_price(ticker)
         if price is None or price <= 0:
             print(f"{Fore.RED}no price data — skipped{Style.RESET_ALL}")
+            intents_df.at[idx, "intent_status"] = "skipped"
+            intents_df.at[idx, "intent_reason"] = "no_price_data"
+            intents_df.at[idx, "processed_at"] = processed_at
             continue
 
         shares = int(allocation_per_ticker / price)  # whole shares only
@@ -391,6 +374,9 @@ def run_virtual_buy(
                 f"{Fore.YELLOW}price ${price:.2f} exceeds allocation "
                 f"${allocation_per_ticker:,.2f} — skipped{Style.RESET_ALL}"
             )
+            intents_df.at[idx, "intent_status"] = "skipped"
+            intents_df.at[idx, "intent_reason"] = "allocation_too_small"
+            intents_df.at[idx, "processed_at"] = processed_at
             continue
 
         cost = shares * price
@@ -401,6 +387,7 @@ def run_virtual_buy(
         )
 
         buy_records.append({
+            "intent_index": idx,
             "ticker": ticker,
             "entry_date": today,
             "entry_price": price,
@@ -411,6 +398,8 @@ def run_virtual_buy(
     print()
     if not buy_records:
         print(f"{Fore.YELLOW}No valid buy records generated — positions file unchanged.{Style.RESET_ALL}")
+        if not dry_run:
+            persist_intent_updates(signals_path, intents_df)
         return
 
     if dry_run:
@@ -424,6 +413,11 @@ def run_virtual_buy(
                 rec["entry_price"],
                 rec["shares"],
             )
+            intents_df.at[rec["intent_index"], "intent_status"] = "executed"
+            intents_df.at[rec["intent_index"], "intent_reason"] = ""
+            intents_df.at[rec["intent_index"], "executed_price"] = str(round(rec["entry_price"], 4))
+            intents_df.at[rec["intent_index"], "executed_shares"] = str(rec["shares"])
+            intents_df.at[rec["intent_index"], "processed_at"] = processed_at
         print(
             f"{Fore.GREEN}✓ Appended {len(buy_records)} record(s) → {positions_path.resolve()}{Style.RESET_ALL}"
         )
@@ -442,14 +436,13 @@ def run_virtual_buy(
             f"(${remaining:,.2f} remaining){Style.RESET_ALL}"
         )
 
-    removed = remove_tickers_from_queue(
-        signals_path,
-        [rec["ticker"] for rec in buy_records],
-    )
-    if removed:
+    if dry_run:
+        print(f"{Fore.CYAN}[DRY RUN] Would update intent statuses in {signals_path}{Style.RESET_ALL}")
+    else:
+        persist_intent_updates(signals_path, intents_df)
         print(
-            f"{Fore.GREEN}✓ Queue updated → removed {removed} bought ticker(s) "
-            f"from {signals_path.resolve()}{Style.RESET_ALL}"
+            f"{Fore.GREEN}✓ Intent queue updated → statuses persisted in "
+            f"{signals_path.resolve()}{Style.RESET_ALL}"
         )
 
     print(f"  Tickers bought : {len(buy_records)}")
@@ -465,7 +458,7 @@ def run_virtual_buy(
     print(f"{'─' * 60}\n")
 
     print(f"{Fore.RED}⚠  VIRTUAL TRANSACTIONS ONLY — not financial advice.{Style.RESET_ALL}\n")
-    log(service, run_id, "completed", bought=len(buy_records))
+    log(service, run_id, "completed", bought=len(buy_records), skipped=skipped_count)
 
 
 if __name__ == "__main__":

@@ -845,7 +845,16 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
         candidates_queue = []
         confirmed = df_alerts[df_alerts["state"] == STATE_CONFIRMED]
         for index, row in confirmed.iterrows():
-            candidates_queue.append(row["ticker"])
+            candidates_queue.append({
+                "ticker": row.get("ticker", ""),
+                "alert_state": row.get("state", ""),
+                "priority": len(candidates_queue) + 1,
+                "pattern": row.get("pattern", ""),
+                "entry_price_planned": row.get("entry", ""),
+                "stop_price": row.get("stop", ""),
+                "target_price": row.get("target_2R", ""),
+                "rr": row.get("R:R", ""),
+            })
         _write_candidates_queue(candidates_queue, candidates_queue_path)
         print(f"  Queue   → {candidates_queue_path} ({len(candidates_queue)} ticker(s))")
 
@@ -895,13 +904,34 @@ def _print_summary(df_alerts: pd.DataFrame, today: datetime, n_tracked: int):
         print(f"  {em} {row['ticker']:<12} {row['pattern']:<10} {row['detail']}")
 
 
-def _write_candidates_queue(tickers: List[str], output_path: str) -> None:
-    """Write one ticker per line to a queue file."""
+def _write_candidates_queue(intents: List[Dict[str, object]], output_path: str) -> None:
+    """Write structured entry intents to the queue CSV file."""
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "w", encoding="utf-8") as f:
-        for ticker in tickers:
-            f.write(f"{ticker}\n")
+    now = market_now()
+    created_at = now.isoformat()
+    signal_date = now.date().isoformat()
+    rows = []
+    for priority, intent in enumerate(intents, start=1):
+        rows.append({
+            "ticker": intent.get("ticker", ""),
+            "signal_date": signal_date,
+            "alert_state": intent.get("alert_state", STATE_CONFIRMED),
+            "priority": intent.get("priority", priority),
+            "pattern": intent.get("pattern", ""),
+            "entry_price_planned": intent.get("entry_price_planned", ""),
+            "stop_price": intent.get("stop_price", ""),
+            "target_price": intent.get("target_price", ""),
+            "rr": intent.get("rr", ""),
+            "intent_status": "pending",
+            "intent_reason": "",
+            "created_at": created_at,
+        })
+    pd.DataFrame(rows, columns=[
+        "ticker", "signal_date", "alert_state", "priority", "pattern",
+        "entry_price_planned", "stop_price", "target_price", "rr",
+        "intent_status", "intent_reason", "created_at",
+    ]).to_csv(out, index=False)
 
 
 def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,

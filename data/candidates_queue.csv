@@ -1,0 +1,2 @@
+ticker,signal_date,alert_state,priority,pattern,entry_price_planned,stop_price,target_price,rr,intent_status,intent_reason,created_at,executed_price,executed_shares,processed_at
+SAP.TO,2026-03-14,CONFIRMED,1,PB-EMA21,$42.64,$41.11,$42.72,0.1,executed,,2026-03-14T22:32:57-04:00,42.48,235,2026-03-14T00:00:00-04:00

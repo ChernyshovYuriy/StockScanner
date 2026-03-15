@@ -10,7 +10,7 @@ CACHE_PATH = ROOT_DIR / "cache"
 
 CAN_TICKERS_PATH = DATA_PATH / "can_tickers"
 CAN_TICKERS_UNIVERSE_PATH = DATA_PATH / "can_tickers_universe"
-CANDIDATES_QUEUE_PATH = DATA_PATH / "candidates_queue"
+CANDIDATES_QUEUE_PATH = DATA_PATH / "candidates_queue.csv"
 FUNDS_PATH = DATA_PATH / "funds"
 OWN_PATH = DATA_PATH / "own.csv"
 
