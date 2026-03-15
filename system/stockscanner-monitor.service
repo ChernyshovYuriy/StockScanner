@@ -1,5 +1,5 @@
 [Unit]
-Description=StockScanner positions monitor
+Description=StockScanner position monitor
 After=network-online.target
 Wants=network-online.target
 
