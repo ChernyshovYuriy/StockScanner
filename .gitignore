@@ -5,5 +5,5 @@ logs
 cache
 out
 .env
-data/candidates_queue
+data/candidates_queue.csv
 data/own.csv
