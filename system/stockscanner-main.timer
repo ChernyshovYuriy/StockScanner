@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner main pipeline at 16:30 local time Mon-Fri
+
+[Timer]
+OnCalendar=Mon..Fri 16:30
+Persistent=true
+Unit=stockscanner-main.service
+
+[Install]
+WantedBy=timers.target
