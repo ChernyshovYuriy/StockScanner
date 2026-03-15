@@ -1,6 +1,5 @@
+from enum import Enum
 from pathlib import Path
-
-from pip._internal.utils.misc import enum
 
 # repo root
 ROOT_DIR = Path(__file__).resolve().parent
@@ -24,6 +23,6 @@ LOGS_PATH = Path(OUT_PATH / "logs")
 LOCKS_PATH = Path(OUT_PATH / "locks")
 
 
-class PositionMonitorMode(enum):
+class PositionMonitorMode(Enum):
     PRE_CLOSE = 1
     POST_CLOSE = 2

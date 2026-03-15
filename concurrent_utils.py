@@ -1,5 +1,6 @@
 import fcntl
 import os
+from pathlib import Path
 
 from config import LOCKS_PATH
 
