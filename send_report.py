@@ -240,8 +240,6 @@ def send_email(msg: MIMEMultipart, dry_run: bool = False) -> None:
 
 
 def send_report(cfg: SendConfig):
-    alerts_dir = Path(cfg.alerts_dir)
-
     print("─" * 55)
     print("  TSX Pipeline — Gmail Sender")
     print("─" * 55)
@@ -271,6 +269,7 @@ def send_report(cfg: SendConfig):
                 print(f"❌  File not found: {report_path}", file=sys.stderr)
                 sys.exit(1)
         else:
+            alerts_dir = Path(cfg.alerts_dir)
             report_path = find_report(alerts_dir, cfg.date)
     except FileNotFoundError as e:
         print(f"❌  {e}", file=sys.stderr)

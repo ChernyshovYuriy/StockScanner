@@ -45,11 +45,14 @@ import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import CACHE_PATH, LOGS_PATH, REPORT_PATH, OWN_PATH, FUNDS_PATH, PositionMonitorMode
+from config import CACHE_PATH, LOGS_PATH, OWN_PATH, FUNDS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, ALERTS_PATH
 from log_utils import log
 from report_html import append_positions_report
-from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, POSITION_COL_PNL_DOLLARS, \
-    POSITION_COL_PNL_PCT, POSITION_COL_REASON, POSITION_COL_SHARES, POSITION_COL_STATUS, POSITIONS_COLS, SIGNAL_COL_TICKER
+from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, \
+    POSITION_COL_PNL_DOLLARS, \
+    POSITION_COL_PNL_PCT, POSITION_COL_REASON, POSITION_COL_SHARES, POSITION_COL_STATUS, POSITIONS_COLS, \
+    SIGNAL_COL_TICKER
+from send_report import send_report, SendConfig
 from time_utils import date_to_iso_basic, market_now, market_today
 
 init(autoreset=True)
@@ -461,7 +464,7 @@ def execute_virtual_sells(
         positions_path: Path,
         funds_path: Path,
         dry_run: bool = False,
-) -> None:
+) -> Dict[str, float]:
     """
     For each SELL signal:
       1. Remove the position row from the positions CSV.
@@ -470,7 +473,7 @@ def execute_virtual_sells(
       4. Append the closed trade to logs/sells_YYYYMMDD.csv.
     """
     if not sell_rows:
-        return
+        return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": 0.0}
 
     print(f"\n{'─' * 60}")
     print(f"  {Fore.RED}💸  Virtual Sell Execution{Style.RESET_ALL}")
@@ -479,7 +482,7 @@ def execute_virtual_sells(
     # ── Load current positions ────────────────────────────────────────────────
     if not positions_path.exists():
         print(f"{Fore.RED}Positions file not found: {positions_path}{Style.RESET_ALL}")
-        return
+        return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": 0.0}
 
     pos_df = pd.read_csv(positions_path)
 
@@ -524,7 +527,7 @@ def execute_virtual_sells(
 
     if dry_run:
         print(f"\n  {Fore.CYAN}[DRY RUN] No files written.{Style.RESET_ALL}\n")
-        return
+        return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": total_proceeds}
 
     # ── Remove sold tickers from positions CSV ────────────────────────────────
     sold_tickers = {r[SIGNAL_COL_TICKER] for r in sell_rows}
@@ -560,16 +563,66 @@ def execute_virtual_sells(
     print(f"  {Fore.GREEN}✓ Sells logged → {sells_log.resolve()}{Style.RESET_ALL}")
     print(f"{'─' * 60}\n")
 
+    return {
+        "funds_before": current_funds,
+        "funds_after": new_funds,
+        "funds_gained": total_proceeds,
+    }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REPORT HELPER
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _append_shared_report(shared_report_file: str, out_df: pd.DataFrame) -> None:
+def _funds_summary_html(funds_before: float, funds_after: float, funds_gained: float) -> str:
+    if funds_gained > 0:
+        action_html = (
+            f"<li><b>Sold (gained)</b>: ${funds_gained:,.2f}</li>"
+            f"<li><b>Funds after sells</b>: ${funds_after:,.2f}</li>"
+        )
+    else:
+        action_html = f"<li><b>Funds remaining</b>: ${funds_after:,.2f}</li>"
+
+    return (
+        "<div style='margin:16px 0;padding:14px 16px;border:1px solid #dde1ea;"
+        "background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#1a1d2e'>"
+        "<div style='font-size:13px;font-weight:bold;margin-bottom:8px;'>Funds State</div>"
+        f"<ul style='margin:0;padding-left:18px;line-height:1.6'>"
+        f"<li><b>Funds before monitor</b>: ${funds_before:,.2f}</li>"
+        f"{action_html}"
+        "</ul>"
+        "</div>"
+    )
+
+
+def _write_position_report(report_file: str, out_df: pd.DataFrame,
+                           funds_before: float, funds_after: float,
+                           funds_gained: float) -> None:
     date_str = date_to_iso_basic(market_today())
     rows = out_df.to_dict("records") if not out_df.empty else []
-    append_positions_report(path=shared_report_file, date_str=date_str, rows=rows)
-    print(f"Appended HTML positions section → {Path(shared_report_file).resolve()}")
+    append_positions_report(path=report_file, date_str=date_str, rows=rows)
+
+    path = Path(report_file)
+    content = path.read_text(encoding="utf-8")
+    funds_block = _funds_summary_html(funds_before=funds_before, funds_after=funds_after, funds_gained=funds_gained)
+    if "</body>" in content:
+        content = content.replace("</body>", funds_block + "</body>")
+    else:
+        content += funds_block
+    path.write_text(content, encoding="utf-8")
+
+    print(f"Wrote position monitor HTML report → {path.resolve()}")
+
+
+def __run_send_report():
+    cfg = SendConfig(
+        file=REPORT_POSITION_PATH,
+        date=None,
+        dry_run=False,
+        alerts_dir=ALERTS_PATH
+    )
+
+    send_report(cfg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -592,6 +645,9 @@ def main() -> None:
     positions_path = Path(OWN_PATH)
     funds_path = Path(FUNDS_PATH)
     dry_run = False
+    funds_before = read_funds(funds_path)
+    funds_after = funds_before
+    funds_gained = 0.0
 
     # ── Determine run mode ────────────────────────────────────────────────────
     use_intraday = mode == PositionMonitorMode.PRE_CLOSE
@@ -708,12 +764,15 @@ def main() -> None:
         ]
 
         if sell_rows:
-            execute_virtual_sells(
+            funds_state = execute_virtual_sells(
                 sell_rows=sell_rows,
                 positions_path=positions_path,
                 funds_path=funds_path,
                 dry_run=dry_run,
             )
+            funds_before = funds_state.get("funds_before", funds_before)
+            funds_after = funds_state.get("funds_after", funds_after)
+            funds_gained = funds_state.get("funds_gained", 0.0)
         else:
             print(f"\n  {Fore.GREEN}✅  No SELL signals — all positions held.{Style.RESET_ALL}")
     else:
@@ -724,8 +783,19 @@ def main() -> None:
                 f"Re-run with --execute-sells to act on them.{Style.RESET_ALL}"
             )
 
-    # ── Append to shared HTML report ──────────────────────────────────────────
-    _append_shared_report(REPORT_PATH, out_df)
+    # ── Write standalone position monitor HTML report ────────────────────────
+    report_file = str(Path(REPORT_POSITION_PATH))
+    _write_position_report(
+        report_file=report_file,
+        out_df=out_df,
+        funds_before=funds_before,
+        funds_after=funds_after,
+        funds_gained=funds_gained,
+    )
+
+    # ── Send HTML report via email ─────────────────────────────────────────────
+    __run_send_report()
+
     log(service, run_id, "completed", positions=len(positions), mode=mode)
     lock_file.close()
 

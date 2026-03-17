@@ -18,6 +18,7 @@ CAN_TICKERS_ONE_LINE_PATH = OUT_PATH / "can_tickers_one_line"
 CAN_TICKERS_REJECTED_PATH = OUT_PATH / "can_tickers_rejected.csv"
 SCREENER_OUT_PATH = OUT_PATH / "screener_out"
 REPORT_PATH = OUT_PATH / "report.html"
+REPORT_POSITION_PATH = OUT_PATH / "position_monitor_report.html"
 ALERTS_PATH = OUT_PATH / "alerts"
 LOGS_PATH = Path(OUT_PATH / "logs")
 LOCKS_PATH = Path(OUT_PATH / "locks")
