@@ -87,10 +87,23 @@ BENCHMARK = "XIU.TO"
 class DataManager:
     """Handles data downloading, caching, and preprocessing"""
 
-    def __init__(self, tickers_file: str, cache_dir: str = CACHE_PATH):
+    def __init__(self, tickers_file: str, cache_dir: str = CACHE_PATH,
+                 provider=None):
+        """
+        Parameters
+        ----------
+        tickers_file : path to the plain-text ticker list
+        cache_dir    : directory used for the daily parquet cache (live mode only)
+        provider     : optional MarketDataProvider.
+                       None  (default) → live mode: uses yfinance + parquet cache,
+                       identical to the original behaviour.
+                       MarketDataProvider instance → backtest mode: all data comes
+                       from the provider; cache and yfinance are bypassed entirely.
+        """
         self.tickers = self._load_tickers(tickers_file)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
+        self._provider = provider   # None = live mode
 
     def _load_tickers(self, filepath: str) -> List[str]:
         """Load tickers from file"""
@@ -103,9 +116,22 @@ class DataManager:
             return ["RY.TO", "TD.TO", "BNS.TO", "BMO.TO", "CM.TO",
                     "ENB.TO", "SU.TO", "CNQ.TO", "CP.TO", "CNR.TO"]
 
-    def download_data(self, days: int, force_refresh: bool = False) -> Dict[str, pd.DataFrame]:
-        """Download data with caching"""
+    def download_data(self, days: int, force_refresh: bool = False,
+                      as_of=None) -> Dict[str, pd.DataFrame]:
+        """Download data with caching.
+
+        Parameters
+        ----------
+        days          : lookback window in calendar days
+        force_refresh : ignore on-disk cache and re-download (live mode only)
+        as_of         : backtest cutoff date (pd.Timestamp).  Passed through to
+                        the provider when self._provider is set; ignored in live mode.
+        """
         all_tickers = list(set(self.tickers + [BENCHMARK]))
+
+        # ── Backtest mode: delegate entirely to the injected provider ─────────
+        if self._provider is not None:
+            return self._provider.download(all_tickers, days=days, as_of=as_of)
         cache_file = self.cache_dir / f"data_{date_to_iso_basic(market_now())}.parquet"
 
         # Try to load from cache

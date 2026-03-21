@@ -1196,3 +1196,261 @@ class TestPortfolioState:
             shares = int(alloc / price)
             p.buy(tkr, date(2024, 6, 1), price, shares)
         assert p.cash >= 0, "Cash went negative — allocation bug"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 4 — Backtest Runner
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.phase4
+class TestBacktestRunner:
+    """
+    Tests for the BacktestRunner introduced in Phase 4.
+
+    All tests use only synthetic in-memory data — no network calls.
+    The HistoricalSliceProvider is constructed directly from pre-built
+    DataFrames so tests are fully deterministic and fast.
+    """
+
+    # ── fixture helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_provider(
+            tickers: list,
+            n: int = 600,
+            start: str = "2021-01-01",
+            seed: int = 42,
+    ):
+        """Return a HistoricalSliceProvider pre-loaded with synthetic data."""
+        from market_data import HistoricalSliceProvider
+        np.random.seed(seed)
+        data = {}
+        for i, tkr in enumerate(tickers):
+            idx = pd.bdate_range(start, periods=n)
+            prices = 20.0 + i * 5 + np.arange(n) * 0.05 + np.random.randn(n) * 0.1
+            close = pd.Series(prices, index=idx)
+            high = close + np.abs(np.random.randn(n)) * 0.3
+            low = close - np.abs(np.random.randn(n)) * 0.3
+            vol = pd.Series(np.ones(n) * 300_000, index=idx, dtype=float)
+            data[tkr] = pd.DataFrame({
+                "Open": close * 0.999, "High": high,
+                "Low": low, "Close": close, "Volume": vol,
+            })
+        return HistoricalSliceProvider(data)
+
+    @staticmethod
+    def _make_cfg(provider, tickers, start="2022-06-01", end="2022-09-01"):
+        """Return a BacktestConfig wired to a synthetic provider."""
+        from backtest_runner import BacktestConfig
+        return BacktestConfig(
+            tickers=tickers,
+            benchmark="XIU.TO",
+            start_date=start,
+            end_date=end,
+            initial_cash=50_000.0,
+            risk_pct=1.0,
+            top_n_buys=2,
+            min_score=0.0,  # accept all to ensure buys happen
+            lookback_days=252,
+            _provider=provider,
+        )
+
+    # ── import tests ──────────────────────────────────────────────────────────
+
+    def test_backtest_runner_importable(self):
+        from backtest_runner import BacktestRunner  # noqa: F401
+
+    def test_backtest_config_importable(self):
+        from backtest_runner import BacktestConfig  # noqa: F401
+
+    def test_backtest_results_importable(self):
+        from backtest_runner import BacktestResults  # noqa: F401
+
+    # ── clock safety ─────────────────────────────────────────────────────────
+
+    def test_clock_restored_after_run(self):
+        """BacktestRunner.run() must always restore the live clock, even on error."""
+        from backtest_runner import BacktestRunner
+        from time_utils import is_backtest_mode
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers)
+        cfg = self._make_cfg(provider, tickers,
+                             start="2022-06-01", end="2022-06-10")
+        runner = BacktestRunner(cfg)
+        runner.run(verbose=False)
+        assert not is_backtest_mode(), \
+            "BacktestRunner left clock pinned after run() completed"
+
+    # ── no lookahead ─────────────────────────────────────────────────────────
+
+    def test_no_lookahead_in_screener_step(self):
+        """
+        _run_screener_step must never receive bars beyond sim_date.
+        Verified by inspecting the sliced DataFrames returned by the provider.
+        """
+        from backtest_runner import _run_screener_step, BacktestConfig
+
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        sim_date = pd.Timestamp("2022-06-15")
+
+        cfg = BacktestConfig(
+            tickers=tickers, benchmark="XIU.TO",
+            start_date="2022-06-01", end_date="2022-09-01",
+            initial_cash=50_000.0, lookback_days=252, min_score=0.0,
+            _provider=provider,
+        )
+
+        from time_utils import set_backtest_clock, TSX_TZ
+        from datetime import datetime
+        set_backtest_clock(datetime(2022, 6, 15, 16, 5, tzinfo=TSX_TZ))
+        try:
+            df = _run_screener_step(cfg, provider, sim_date)
+        finally:
+            set_backtest_clock(None)
+
+        # All provider slices for this sim_date must end on or before sim_date
+        for tkr in tickers:
+            try:
+                sliced = provider.get(tkr, as_of=sim_date)
+                assert sliced.index.max() <= sim_date, \
+                    f"Lookahead: {tkr} slice extends beyond {sim_date.date()}"
+            except KeyError:
+                pass
+
+    # ── equity curve ─────────────────────────────────────────────────────────
+
+    def test_equity_curve_length_matches_trading_days(self):
+        """equity_curve_df must have one row per simulated trading day."""
+        from backtest_runner import BacktestRunner, _trading_days
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers,
+                             start="2022-06-01", end="2022-09-01")
+        results = BacktestRunner(cfg).run(verbose=False)
+        eq = results.equity_curve_df()
+        expected = len(_trading_days("2022-06-01", "2022-09-01"))
+        assert len(eq) == expected, \
+            f"Expected {expected} equity rows, got {len(eq)}"
+
+    def test_equity_curve_starts_at_initial_cash(self):
+        """On day 0 (before any buys) total_equity should equal initial_cash."""
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers,
+                             start="2022-06-01", end="2022-09-01")
+        results = BacktestRunner(cfg).run(verbose=False)
+        eq = results.equity_curve_df()
+        # Day 0: no buys executed yet, cash = initial_cash, open_value = 0
+        first_equity = float(eq["total_equity"].iloc[0])
+        assert first_equity == pytest.approx(cfg.initial_cash, rel=0.01)
+
+    def test_equity_curve_columns(self):
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers)
+        results = BacktestRunner(cfg).run(verbose=False)
+        eq = results.equity_curve_df()
+        for col in ("date", "cash", "open_value", "total_equity",
+                    "realized_pnl", "open_count"):
+            assert col in eq.columns, f"Missing equity curve column: {col}"
+
+    def test_cash_never_goes_negative(self):
+        """Cash balance must never go below zero — allocation rule must hold."""
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "ENB.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers,
+                             start="2022-06-01", end="2022-12-01")
+        results = BacktestRunner(cfg).run(verbose=False)
+        eq = results.equity_curve_df()
+        assert (eq["cash"] >= -0.01).all(), \
+            f"Cash went negative: min={eq['cash'].min():.2f}"
+
+    # ── trade log ─────────────────────────────────────────────────────────────
+
+    def test_trade_log_df_columns(self):
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers)
+        results = BacktestRunner(cfg).run(verbose=False)
+        tl = results.trade_log_df()
+        for col in ("ticker", "entry_date", "sell_date", "entry_price",
+                    "sell_price", "shares", "pnl", "pnl_pct", "holding_days"):
+            assert col in tl.columns, f"Missing trade log column: {col}"
+
+    def test_trade_log_sell_after_entry(self):
+        """Every closed trade must have sell_date >= entry_date."""
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "ENB.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers,
+                             start="2022-06-01", end="2022-12-01")
+        results = BacktestRunner(cfg).run(verbose=False)
+        tl = results.trade_log_df()
+        if not tl.empty:
+            assert (tl["sell_date"] >= tl["entry_date"]).all(), \
+                "Trade log contains sell_date < entry_date"
+
+    # ── summary ───────────────────────────────────────────────────────────────
+
+    def test_summary_returns_string(self):
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers)
+        results = BacktestRunner(cfg).run(verbose=False)
+        s = results.summary()
+        assert isinstance(s, str)
+        assert "Total return" in s
+        assert "Win rate" in s
+
+    def test_summary_contains_initial_capital(self):
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers)
+        results = BacktestRunner(cfg).run(verbose=False)
+        assert "50,000" in results.summary()
+
+    # ── capital flow correctness ──────────────────────────────────────────────
+
+    def test_realized_pnl_matches_trade_log(self):
+        """
+        portfolio.realized_pnl must equal the sum of all closed-trade pnl values.
+        This verifies the PortfolioState accounting is internally consistent.
+        """
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "ENB.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600)
+        cfg = self._make_cfg(provider, tickers,
+                             start="2022-06-01", end="2022-12-01")
+        results = BacktestRunner(cfg).run(verbose=False)
+        eq = results.equity_curve_df()
+        tl = results.trade_log_df()
+
+        runner_pnl = float(eq["realized_pnl"].iloc[-1])
+        trade_log_pnl = float(tl["pnl"].sum()) if not tl.empty else 0.0
+        assert runner_pnl == pytest.approx(trade_log_pnl, abs=0.05), \
+            f"Realized PnL mismatch: equity_curve={runner_pnl:.2f}, trade_log={trade_log_pnl:.2f}"
+
+    def test_deterministic_on_repeated_runs(self):
+        """
+        Running the same config twice must produce identical equity curves.
+        Any non-determinism indicates hidden state mutation.
+        """
+        from backtest_runner import BacktestRunner
+        tickers = ["RY.TO", "TD.TO", "XIU.TO"]
+        provider = self._make_provider(tickers, n=600, seed=7)
+        cfg = self._make_cfg(provider, tickers,
+                             start="2022-06-01", end="2022-09-01")
+
+        r1 = BacktestRunner(cfg).run(verbose=False)
+        r2 = BacktestRunner(cfg).run(verbose=False)
+
+        eq1 = r1.equity_curve_df()["total_equity"].tolist()
+        eq2 = r2.equity_curve_df()["total_equity"].tolist()
+        assert eq1 == eq2, "Backtest is non-deterministic — hidden state mutation"
