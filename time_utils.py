@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 # Centralized formats
@@ -9,8 +10,46 @@ ISO_DATE_BASIC = "%Y%m%d"
 ISO_DATE_BASIC_MINUTES = ISO_DATE_BASIC + "T%H%M"
 ISO_DATE_EXTENDED = "%Y-%m-%d"
 
+# ── Backtest clock ────────────────────────────────────────────────────────────
+# In live/paper mode this is always None and market_now() returns the real wall
+# clock — identical to the original behaviour.
+# In backtest mode, call set_backtest_clock(sim_datetime) before each simulated
+# day; all callers of market_now() / market_today() will see the injected time
+# without any other changes required.
+_backtest_now: Optional[datetime] = None
+
+
+def set_backtest_clock(dt: Optional[datetime]) -> None:
+    """
+    Set the simulated "current time" for backtest mode.
+
+    Pass a timezone-aware datetime to fix the clock at a historical moment.
+    Pass None (default) to restore live wall-clock behaviour.
+
+    Example:
+        from time_utils import set_backtest_clock, TSX_TZ
+        from datetime import datetime
+        set_backtest_clock(datetime(2025, 3, 15, 16, 5, tzinfo=TSX_TZ))
+        # ... run one simulated day ...
+        set_backtest_clock(None)  # restore live mode
+    """
+    global _backtest_now
+    if dt is not None and dt.tzinfo is None:
+        raise ValueError(
+            "set_backtest_clock() requires a timezone-aware datetime. "
+            "Use e.g. datetime(..., tzinfo=TSX_TZ)."
+        )
+    _backtest_now = dt
+
+
+def is_backtest_mode() -> bool:
+    """Return True when the clock is pinned to a historical datetime."""
+    return _backtest_now is not None
+
 
 def market_now(tz: ZoneInfo = TSX_TZ) -> datetime:
+    if _backtest_now is not None:
+        return _backtest_now.astimezone(tz).replace(microsecond=0)
     return datetime.now(timezone.utc).astimezone(tz).replace(microsecond=0)
 
 

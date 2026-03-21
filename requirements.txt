@@ -6,3 +6,4 @@ yfinance
 pandas
 numpy
 pydantic
+pytest
