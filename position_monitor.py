@@ -83,6 +83,35 @@ TIME_STOP_MIN_PROFIT_PCT = 0.5  # require +0.5% by day 7
 #   "close" -> fire if today's close < stop  (more conservative, EOD-only)
 STOP_TRIGGER = "low"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXIT PARAMS — injectable overrides for backtesting
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class ExitParams:
+    """
+    Exit-rule parameters for compute_signals().
+
+    Defaults match the module-level constants so live behaviour is unchanged
+    when ExitParams is not passed.  In backtest mode, pass a custom instance
+    to tune parameters without touching production code.
+    """
+    initial_stop_atr_k: float = INITIAL_STOP_ATR_K
+    chand_trail_atr_k: float = CHAND_TRAIL_ATR_K
+    giveback_activate_pct: float = GIVEBACK_ACTIVATE_PCT
+    giveback_allow_pct: float = GIVEBACK_ALLOW_PCT
+    time_stop_days: int = TIME_STOP_DAYS
+    time_stop_min_profit: float = TIME_STOP_MIN_PROFIT_PCT
+    stop_trigger: str = STOP_TRIGGER  # "low" or "close"
+
+    def summary(self) -> str:
+        return (f"stop={self.initial_stop_atr_k}×ATR  "
+                f"trail={self.chand_trail_atr_k}×ATR  "
+                f"time_stop={self.time_stop_days}d@{self.time_stop_min_profit}%  "
+                f"trigger={self.stop_trigger}")
+
+
 # Cache daily bars locally to avoid redundant downloads
 ENABLE_CACHE = True
 
@@ -272,18 +301,22 @@ def compute_signals(
         pos: Position,
         df: pd.DataFrame,
         today_bar: Optional[TodayBar] = None,
+        exit_params: Optional["ExitParams"] = None,
 ) -> Dict[str, object]:
     """
     Compute stops and exit signals for a single position.
 
     Parameters
     ----------
-    pos       : the open position
-    df        : daily OHLCV history (used for ATR, chandelier, max-PnL history)
-    today_bar : optional live intraday snapshot; when provided, last_low and
-                last_close are taken from this instead of the last daily bar.
-                This is what makes the pre-close run see today's intraday move.
+    pos         : the open position
+    df          : daily OHLCV history (used for ATR, chandelier, max-PnL history)
+    today_bar   : optional live intraday snapshot; when provided, last_low and
+                  last_close are taken from this instead of the last daily bar.
+    exit_params : optional ExitParams override.  None = use module-level defaults
+                  (live behaviour unchanged).  Pass a custom ExitParams in backtest
+                  mode to tune stop/time-stop parameters.
     """
+    ep = exit_params if exit_params is not None else ExitParams()
     entry_dt = pd.Timestamp(pos.entry_date)
 
     df = df.copy().dropna(subset=["High", "Low", "Close"])
@@ -311,8 +344,8 @@ def compute_signals(
     # ── Stop levels ───────────────────────────────────────────────────────────
     # Chandelier anchors to the highest HIGH since entry (uses daily wicks, intentional)
     hh_since_entry = float(after_entry["High"].max())
-    initial_stop = pos.entry_price - INITIAL_STOP_ATR_K * atr_latest
-    chandelier_stop = hh_since_entry - CHAND_TRAIL_ATR_K * atr_latest
+    initial_stop = pos.entry_price - ep.initial_stop_atr_k * atr_latest
+    chandelier_stop = hh_since_entry - ep.chand_trail_atr_k * atr_latest
     stop_price = max(initial_stop, chandelier_stop)
 
     # ── Price data: prefer live intraday snapshot over last daily bar ─────────
@@ -341,7 +374,7 @@ def compute_signals(
     sell = False
 
     # 1. Stop hit
-    if STOP_TRIGGER.lower() == "low":
+    if ep.stop_trigger.lower() == "low":
         if last_low <= stop_price:
             sell = True
             reasons.append(f"STOP_HIT(low {last_low:.2f} <= stop {stop_price:.2f})")
@@ -351,13 +384,13 @@ def compute_signals(
             reasons.append(f"STOP_HIT(close {last_close:.2f} < stop {stop_price:.2f})")
 
     # 2. Profit giveback
-    if max_pnl_pct >= GIVEBACK_ACTIVATE_PCT:
-        if pnl_pct <= (max_pnl_pct - GIVEBACK_ALLOW_PCT):
+    if max_pnl_pct >= ep.giveback_activate_pct:
+        if pnl_pct <= (max_pnl_pct - ep.giveback_allow_pct):
             sell = True
             reasons.append(f"GIVEBACK(peak {max_pnl_pct:.1f}% → now {pnl_pct:.1f}%)")
 
     # 3. Time stop
-    if tdays >= TIME_STOP_DAYS and pnl_pct < TIME_STOP_MIN_PROFIT_PCT:
+    if tdays >= ep.time_stop_days and pnl_pct < ep.time_stop_min_profit:
         sell = True
         reasons.append(f"TIME_STOP({tdays}d, pnl {pnl_pct:.1f}%)")
 

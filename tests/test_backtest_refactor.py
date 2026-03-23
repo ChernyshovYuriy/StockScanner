@@ -1454,3 +1454,534 @@ class TestBacktestRunner:
         eq1 = r1.equity_curve_df()["total_equity"].tolist()
         eq2 = r2.equity_curve_df()["total_equity"].tolist()
         assert eq1 == eq2, "Backtest is non-deterministic — hidden state mutation"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 5 — Backtest Report
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.phase5
+class TestBacktestReport:
+    """
+    Tests for the backtest_report.write_backtest_report() introduced in Phase 5.
+    All tests use synthetic BacktestResults — no network calls.
+    """
+
+    @staticmethod
+    def _make_results(n_days: int = 120, n_trades: int = 4,
+                      seed: int = 42) -> "BacktestResults":
+        """Build a synthetic BacktestResults for report testing."""
+        from backtest_runner import BacktestResults, BacktestConfig, DayLog
+        from portfolio import ClosedTrade
+        np.random.seed(seed)
+
+        cfg = BacktestConfig(
+            tickers=["RY.TO", "TD.TO", "XIU.TO"],
+            start_date="2023-01-02",
+            end_date="2023-06-30",
+            initial_cash=100_000.0,
+        )
+
+        start = pd.Timestamp("2023-01-02")
+        idx = pd.bdate_range(start, periods=n_days)
+        equity = 100_000.0 + np.cumsum(np.random.randn(n_days) * 200)
+        equity = np.maximum(equity, 1)
+
+        day_logs = [
+            DayLog(
+                sim_date=d.date(),
+                cash=float(equity[i]) * 0.6,
+                open_value=float(equity[i]) * 0.4,
+                total_equity=float(equity[i]),
+                realized_pnl=float(equity[i]) - 100_000.0,
+                open_tickers=["RY.TO"],
+                buys_today=[],
+                sells_today=[],
+            )
+            for i, d in enumerate(idx)
+        ]
+
+        trades = []
+        tickers = ["RY.TO", "TD.TO", "ENB.TO", "CNQ.TO"]
+        for k in range(n_trades):
+            entry_date = idx[k * (n_days // n_trades)].date()
+            sell_date = idx[min(k * (n_days // n_trades) + 15, n_days - 1)].date()
+            ep = 50.0 + k * 10
+            sp = ep * (1 + (0.05 if k % 2 == 0 else -0.03))
+            shares = 100
+            pnl = (sp - ep) * shares
+            trades.append(ClosedTrade(
+                ticker=tickers[k % len(tickers)],
+                entry_date=entry_date,
+                sell_date=sell_date,
+                entry_price=ep,
+                sell_price=round(sp, 2),
+                shares=shares,
+                pnl=round(pnl, 2),
+                pnl_pct=round((sp / ep - 1) * 100, 2),
+            ))
+
+        return BacktestResults(cfg=cfg, day_logs=day_logs, trades=trades)
+
+    # ── importable ────────────────────────────────────────────────────────────
+
+    def test_module_importable(self):
+        from backtest_report import write_backtest_report  # noqa: F401
+
+    # ── file creation ─────────────────────────────────────────────────────────
+
+    def test_creates_html_file(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "report.html"
+        write_backtest_report(results, str(out))
+        assert out.exists(), "Report file was not created"
+
+    def test_output_is_valid_html(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "report.html"
+        write_backtest_report(results, str(out))
+        content = out.read_text(encoding="utf-8")
+        assert content.startswith("<!DOCTYPE html")
+        assert "</html>" in content
+
+    def test_creates_parent_directories(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "nested" / "deep" / "report.html"
+        write_backtest_report(results, str(out))
+        assert out.exists()
+
+    # ── content checks ────────────────────────────────────────────────────────
+
+    def test_contains_period_dates(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        content = out.read_text()
+        assert "2023-01-02" in content
+        assert "2023-06-30" in content
+
+    def test_contains_initial_capital(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        assert "100,000" in out.read_text()
+
+    def test_contains_equity_svg(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        content = out.read_text()
+        assert "<svg" in content
+        assert "Equity Curve" in content
+
+    def test_contains_drawdown_section(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        assert "Drawdown" in out.read_text()
+
+    def test_contains_trade_log_section(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        content = out.read_text()
+        assert "Trade Log" in content
+        # All tickers from trades should appear
+        for tkr in ["RY.TO", "TD.TO"]:
+            assert tkr in content
+
+    def test_contains_per_ticker_stats(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        assert "Per-Ticker" in out.read_text()
+
+    def test_contains_monthly_heatmap(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        assert "Monthly Returns" in out.read_text()
+
+    def test_no_trade_log_renders_gracefully(self, tmp_path):
+        """Report must render without errors when there are no trades."""
+        from backtest_report import write_backtest_report
+        results = self._make_results(n_trades=0)
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))  # must not raise
+        content = out.read_text()
+        assert "No closed trades" in content
+
+    def test_with_benchmark_overlay(self, tmp_path):
+        """Benchmark series must be rendered without errors."""
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        idx = pd.bdate_range("2023-01-02", periods=120)
+        bench = pd.Series(100 + np.arange(120) * 0.05, index=idx)
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out), benchmark_equity=bench)
+        content = out.read_text()
+        assert "Benchmark" in content
+
+    def test_stat_pills_contain_win_rate(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        assert "Win Rate" in out.read_text()
+
+    def test_disclaimer_present(self, tmp_path):
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        assert "Not financial advice" in out.read_text()
+
+    def test_self_contained_no_external_scripts(self, tmp_path):
+        """
+        Report must not reference external JS CDNs or stylesheets.
+        Ensures it renders offline and in email clients.
+        """
+        from backtest_report import write_backtest_report
+        results = self._make_results()
+        out = tmp_path / "r.html"
+        write_backtest_report(results, str(out))
+        content = out.read_text()
+        for bad in ["<script src=", "cdn.jsdelivr", "cdnjs.cloudflare",
+                    "<link rel='stylesheet'"]:
+            assert bad not in content, \
+                f"Report references external resource: {bad}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 6 — CLI entry point (run_backtest.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.phase6
+class TestRunBacktest:
+    """
+    Tests for run_backtest.py — the CLI entry point.
+    All tests use synthetic data; no network calls.
+    """
+
+    @staticmethod
+    def _make_provider_and_tickers(seed: int = 0):
+        """Shared fixture: synthetic provider + ticker list."""
+        from market_data import HistoricalSliceProvider
+        np.random.seed(seed)
+        tickers = ["RY.TO", "TD.TO", "ENB.TO", "XIU.TO"]
+        n = 700
+        data = {}
+        for i, tkr in enumerate(tickers):
+            idx = pd.bdate_range("2020-01-01", periods=n)
+            prices = 20 + i * 5 + np.arange(n) * 0.06 + np.random.randn(n) * 0.2
+            close = pd.Series(prices, index=idx)
+            high = close + np.abs(np.random.randn(n)) * 0.4
+            low = close - np.abs(np.random.randn(n)) * 0.4
+            vol = pd.Series(np.ones(n) * 400_000, index=idx, dtype=float)
+            data[tkr] = pd.DataFrame({
+                "Open": close, "High": high, "Low": low,
+                "Close": close, "Volume": vol,
+            })
+        return HistoricalSliceProvider(data), tickers
+
+    # ── importable ────────────────────────────────────────────────────────────
+
+    def test_module_importable(self):
+        import run_backtest  # noqa: F401
+
+    def test_load_tickers_importable(self):
+        from run_backtest import _load_tickers  # noqa: F401
+
+    def test_run_single_importable(self):
+        from run_backtest import _run_single  # noqa: F401
+
+    def test_run_sweep_importable(self):
+        from run_backtest import _run_sweep  # noqa: F401
+
+    # ── _load_tickers ─────────────────────────────────────────────────────────
+
+    def test_load_tickers_reads_file(self, tmp_path):
+        from run_backtest import _load_tickers
+        f = tmp_path / "tickers.txt"
+        f.write_text("RY.TO\nTD.TO\nENB.TO\n")
+        assert _load_tickers(str(f)) == ["RY.TO", "TD.TO", "ENB.TO"]
+
+    def test_load_tickers_skips_comments(self, tmp_path):
+        from run_backtest import _load_tickers
+        f = tmp_path / "tickers.txt"
+        f.write_text("# comment\nRY.TO\n# another\nTD.TO\n")
+        assert _load_tickers(str(f)) == ["RY.TO", "TD.TO"]
+
+    def test_load_tickers_skips_blank_lines(self, tmp_path):
+        from run_backtest import _load_tickers
+        f = tmp_path / "tickers.txt"
+        f.write_text("\nRY.TO\n\nTD.TO\n\n")
+        assert _load_tickers(str(f)) == ["RY.TO", "TD.TO"]
+
+    def test_load_tickers_missing_file_raises(self, tmp_path):
+        from run_backtest import _load_tickers
+        with pytest.raises(FileNotFoundError):
+            _load_tickers(str(tmp_path / "nonexistent.txt"))
+
+    # ── argument parser defaults ──────────────────────────────────────────────
+
+    def test_parser_default_start(self):
+        from run_backtest import _build_parser
+        args = _build_parser().parse_args([])
+        assert args.start == "2022-01-01"
+
+    def test_parser_default_end(self):
+        from run_backtest import _build_parser
+        args = _build_parser().parse_args([])
+        assert args.end == "2024-01-01"
+
+    def test_parser_default_capital(self):
+        from run_backtest import _build_parser
+        args = _build_parser().parse_args([])
+        assert args.capital == pytest.approx(100_000.0)
+
+    def test_parser_default_min_score_zero(self):
+        """min_score default must be 0.0 — not 55.0 (wrong for small universes)."""
+        from run_backtest import _build_parser
+        args = _build_parser().parse_args([])
+        assert args.min_score == pytest.approx(0.0)
+
+    def test_parser_custom_args(self):
+        from run_backtest import _build_parser
+        args = _build_parser().parse_args([
+            "--start", "2021-01-01",
+            "--end", "2023-06-01",
+            "--capital", "50000",
+            "--risk", "0.5",
+            "--top-n", "2",
+        ])
+        assert args.start == "2021-01-01"
+        assert args.end == "2023-06-01"
+        assert args.capital == pytest.approx(50_000.0)
+        assert args.risk == pytest.approx(0.5)
+        assert args.top_n == 2
+
+    def test_parser_sweep_flag(self):
+        from run_backtest import _build_parser
+        args = _build_parser().parse_args(["--sweep"])
+        assert args.sweep is True
+
+    def test_parser_quiet_flag(self):
+        from run_backtest import _build_parser
+        args = _build_parser().parse_args(["--quiet"])
+        assert args.quiet is True
+
+    # ── _run_single ───────────────────────────────────────────────────────────
+
+    def test_run_single_creates_html_report(self, tmp_path):
+        """_run_single must write an HTML report to out/."""
+        from run_backtest import _run_single, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01",
+            "--end", "2022-09-01",
+            "--quiet",
+        ])
+
+        # Redirect OUT_PATH to tmp_path for this test
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp_path
+        try:
+            _run_single(args, tickers, provider, bench_series=None)
+        finally:
+            rb.OUT_PATH = original
+
+        html_files = list(tmp_path.glob("backtest_*.html"))
+        assert len(html_files) == 1, f"Expected 1 HTML report, got {html_files}"
+
+    def test_run_single_creates_csv_files(self, tmp_path):
+        """_run_single must write equity and trades CSVs."""
+        from run_backtest import _run_single, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01",
+            "--end", "2022-09-01",
+            "--quiet",
+        ])
+
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp_path
+        try:
+            _run_single(args, tickers, provider, bench_series=None)
+        finally:
+            rb.OUT_PATH = original
+
+        assert len(list(tmp_path.glob("backtest_equity*.csv"))) == 1
+        assert len(list(tmp_path.glob("backtest_trades*.csv"))) == 1
+
+    def test_run_single_with_benchmark_overlay(self, tmp_path):
+        """benchmark_equity series must not cause errors in _run_single."""
+        from run_backtest import _run_single, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        idx = pd.bdate_range("2022-06-01", periods=65)
+        bench = pd.Series(100 + np.arange(65) * 0.05, index=idx)
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
+        ])
+
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp_path
+        try:
+            _run_single(args, tickers, provider, bench_series=bench)
+        finally:
+            rb.OUT_PATH = original
+
+        html_files = list(tmp_path.glob("backtest_*.html"))
+        assert len(html_files) == 1
+        content = html_files[0].read_text()
+        assert "Benchmark" in content
+
+    # ── _run_sweep ────────────────────────────────────────────────────────────
+
+    def test_run_sweep_creates_sweep_csv(self, tmp_path):
+        """_run_sweep must write a sweep results CSV."""
+        from run_backtest import _run_sweep, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
+        ])
+
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp_path
+        try:
+            _run_sweep(args, tickers, provider, bench_series=None)
+        finally:
+            rb.OUT_PATH = original
+
+        sweep_files = list(tmp_path.glob("backtest_sweep_*.csv"))
+        assert len(sweep_files) == 1
+
+    def test_run_sweep_csv_has_expected_columns(self, tmp_path):
+        """Sweep CSV must contain risk_%, top_n, ret_%, sharpe."""
+        from run_backtest import _run_sweep, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
+        ])
+
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp_path
+        try:
+            _run_sweep(args, tickers, provider, bench_series=None)
+        finally:
+            rb.OUT_PATH = original
+
+        sweep_df = pd.read_csv(list(tmp_path.glob("backtest_sweep_*.csv"))[0])
+        for col in ("risk_%", "top_n", "ret_%", "max_dd_%", "sharpe", "trades"):
+            assert col in sweep_df.columns, f"Missing sweep column: {col}"
+
+    def test_run_sweep_row_count(self, tmp_path):
+        """Sweep must produce one row per parameter combination (4 × 4 = 16)."""
+        from run_backtest import _run_sweep, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
+        ])
+
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp_path
+        try:
+            _run_sweep(args, tickers, provider, bench_series=None)
+        finally:
+            rb.OUT_PATH = original
+
+        sweep_df = pd.read_csv(list(tmp_path.glob("backtest_sweep_*.csv"))[0])
+        assert len(sweep_df) == 16, f"Expected 16 sweep rows, got {len(sweep_df)}"
+
+    def test_run_sweep_also_writes_best_html(self, tmp_path):
+        """Sweep must write a full HTML report for the best Sharpe combo."""
+        from run_backtest import _run_sweep, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
+        ])
+
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp_path
+        try:
+            _run_sweep(args, tickers, provider, bench_series=None)
+        finally:
+            rb.OUT_PATH = original
+
+        html_files = list(tmp_path.glob("backtest_*.html"))
+        assert len(html_files) >= 1, "Sweep must write at least one HTML report"
+
+    # ── BacktestConfig new fields ─────────────────────────────────────────────
+
+    def test_config_screener_frequency_default(self):
+        """screener_frequency must default to 5 (weekly)."""
+        from backtest_runner import BacktestConfig
+        cfg = BacktestConfig(tickers=["RY.TO", "XIU.TO"])
+        assert cfg.screener_frequency == 5
+
+    def test_config_min_score_default(self):
+        """min_score must default to 0.0 after the fix."""
+        from backtest_runner import BacktestConfig
+        cfg = BacktestConfig(tickers=["RY.TO", "XIU.TO"])
+        assert cfg.min_score == pytest.approx(0.0)
+
+    def test_screener_frequency_reduces_screener_calls(self):
+        """
+        With screener_frequency=N, the screener should run ceil(days/N) times,
+        not once per day.  Verify via a short run that the cached df is reused.
+        """
+        from backtest_runner import BacktestConfig, BacktestRunner
+        provider, tickers = self._make_provider_and_tickers()
+
+        screener_calls = []
+        import backtest_runner as br_mod
+        original_fn = br_mod._run_screener_step
+
+        def counting_screener(*args, **kwargs):
+            screener_calls.append(1)
+            return original_fn(*args, **kwargs)
+
+        br_mod._run_screener_step = counting_screener
+        try:
+            cfg = BacktestConfig(
+                tickers=tickers, benchmark="XIU.TO",
+                start_date="2022-06-01", end_date="2022-09-01",
+                initial_cash=50_000.0, min_score=0.0,
+                lookback_days=252, screener_frequency=5,
+                _provider=provider,
+            )
+            BacktestRunner(cfg).run(verbose=False)
+        finally:
+            br_mod._run_screener_step = original_fn
+
+        from backtest_runner import _trading_days
+        n_days = len(_trading_days("2022-06-01", "2022-09-01"))
+        max_expected_calls = n_days // 5 + 1  # ceil(days / frequency)
+        assert len(screener_calls) <= max_expected_calls, (
+            f"Screener ran {len(screener_calls)} times for {n_days} days "
+            f"with frequency=5 (expected ≤ {max_expected_calls})"
+        )

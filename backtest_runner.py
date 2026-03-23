@@ -63,6 +63,7 @@ import pandas as pd
 
 from market_data import HistoricalSliceProvider
 from portfolio import ClosedTrade, OpenPosition, PortfolioState
+from position_monitor import ExitParams
 from time_utils import TSX_TZ, set_backtest_clock
 
 warnings.filterwarnings("ignore")
@@ -91,9 +92,17 @@ class BacktestConfig:
     # Screener / pipeline params
     lookback_days: int = 504  # bars fed to screener
     top_n_buys: int = 3  # max concurrent positions opened per day
-    min_score: float = 55.0  # min composite_score to be eligible for buy
+    min_score: float = 0.0  # min composite_score to be eligible for buy.
+    # NOTE: 55.0 is appropriate for 100+ ticker universes where RS percentile
+    # ranking is meaningful. For small universes (< 20 tickers) use 0.0 and
+    # let pattern detection (CONFIRMED state) be the real filter.
     min_avg_volume: int = 100_000
     min_price: float = 2.0
+
+    # Screener frequency: run full scoring every N trading days.
+    # Pattern detection still runs every day; only scoring is throttled.
+    # Default=5 (weekly). Use 1 to score every day (slower, large universes).
+    screener_frequency: int = 5
 
     # Pipeline detection params (mirrors PipelineConfig defaults)
     atr_period: int = 14
@@ -106,10 +115,19 @@ class BacktestConfig:
     next_open_hour: int = 9
     next_open_min: int = 31
 
+    # Exit rule overrides — None = use position_monitor.py defaults (live behaviour).
+    # Pass an ExitParams instance to tune stops/time-stop for backtesting.
+    exit_params: Optional[ExitParams] = field(default=None, repr=False)
+
     # Data provider override (optional — for tests or pre-loaded data)
     _provider: Optional[HistoricalSliceProvider] = field(
         default=None, repr=False
     )
+
+    # Pre-computed screener cache: {trading_day_index: pd.DataFrame}
+    # Injected by the sweep runner to avoid recomputing scores per combo.
+    # None = compute fresh each run (default, single-run mode).
+    _screener_cache: Optional[Dict] = field(default=None, repr=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -339,7 +357,7 @@ def _run_screener_step(
     try:
         screener_cfg = ScreenerConfig(
             lookback_days=cfg.lookback_days,
-            top_n=len(cfg.tickers),
+            top_n=min(len(cfg.tickers), 50),  # ScreenerConfig max is 50
             min_avg_volume=cfg.min_avg_volume,
             min_price=cfg.min_price,
             weights={
@@ -621,6 +639,7 @@ def _run_monitor_step(
         provider: HistoricalSliceProvider,
         sim_date: pd.Timestamp,
         cfg: BacktestConfig,
+        exit_params: Optional["ExitParams"] = None,
 ) -> List[str]:
     """
     Run position_monitor.compute_signals on each open position using
@@ -649,7 +668,7 @@ def _run_monitor_step(
             shares=float(pos.shares),
         )
 
-        result = compute_signals(pm_pos, df)  # no today_bar — backtest uses EOD
+        result = compute_signals(pm_pos, df, exit_params=exit_params)  # no today_bar
         if result.get("status") == "SELL":
             sell_price = _day_close_price(ticker, provider, sim_date)
             if sell_price is None or sell_price <= 0:
@@ -708,9 +727,25 @@ class BacktestRunner:
 
         # ── 3. Day loop ───────────────────────────────────────────────────────
         pending_intents: List[Dict] = []  # intents from D, executed at D+1 open
+        cached_screener_df: pd.DataFrame = pd.DataFrame()  # reused between screener runs
+        last_screener_day: int = -cfg.screener_frequency  # force run on day 0
+        n_days = len(trading_days)
+        progress_every = max(1, n_days // 20)  # ~20 progress lines across the run
 
         for i, day in enumerate(trading_days):
             sim_ts = pd.Timestamp(day)
+
+            # ── Progress output ───────────────────────────────────────────────
+            if verbose and (i % progress_every == 0 or i == n_days - 1):
+                pct = (i + 1) / n_days * 100
+                open_val_now = _mark_to_market(
+                    portfolio.open_positions, provider, sim_ts)
+                eq_now = portfolio.cash + open_val_now
+                ret = (eq_now / cfg.initial_cash - 1) * 100
+                print(f"  [{pct:5.1f}%] {day}  "
+                      f"equity=${eq_now:>10,.0f}  ret={ret:+.1f}%  "
+                      f"open={len(portfolio.open_positions)}  "
+                      f"trades={len(all_trades)}")
 
             # ── 3a. Execute pending buy intents from yesterday ────────────────
             if pending_intents:
@@ -719,7 +754,6 @@ class BacktestRunner:
                              cfg.next_open_hour, cfg.next_open_min,
                              tzinfo=TSX_TZ)
                 )
-                # The "after" anchor is midnight of the previous day
                 prev_day = trading_days[i - 1] if i > 0 else day
                 prev_ts = pd.Timestamp(prev_day)
 
@@ -732,7 +766,7 @@ class BacktestRunner:
                     cfg=cfg,
                 )
                 if verbose and bought:
-                    print(f"  {day}  BUY  {bought}")
+                    print(f"    -> BUY  {bought}")
                 pending_intents = []
 
             # ── 3b. Monitor existing positions (EOD) ─────────────────────────
@@ -742,26 +776,35 @@ class BacktestRunner:
                          tzinfo=TSX_TZ)
             )
 
-            sold = _run_monitor_step(portfolio, provider, sim_ts, cfg)
+            sold = _run_monitor_step(portfolio, provider, sim_ts, cfg, cfg.exit_params)
             if verbose and sold:
-                print(f"  {day}  SELL {sold}")
+                print(f"    -> SELL {sold}")
 
-            # Collect trades that were just closed
             for trade in portfolio.trade_log[-len(sold):] if sold else []:
                 all_trades.append(trade)
 
-            # ── 3c. Run screener + pipeline (after close) ─────────────────────
-            screener_df = _run_screener_step(cfg, provider, sim_ts)
+            # ── 3c. Screener (every screener_frequency days) ──────────────────
+            if cfg._screener_cache is not None:
+                # Sweep mode: use pre-computed scores (key = day index rounded
+                # down to nearest screener_frequency boundary)
+                cache_key = (i // cfg.screener_frequency) * cfg.screener_frequency
+                cached_screener_df = cfg._screener_cache.get(
+                    cache_key, cached_screener_df)
+            elif i - last_screener_day >= cfg.screener_frequency:
+                cached_screener_df = _run_screener_step(cfg, provider, sim_ts)
+                last_screener_day = i
+
+            # ── 3d. Pipeline: pattern detection (every day) ───────────────────
             new_intents, signal_db = _run_pipeline_step(
-                screener_df, provider, sim_ts, cfg, signal_db
+                cached_screener_df, provider, sim_ts, cfg, signal_db
             )
             pending_intents = new_intents
 
             if verbose and new_intents:
-                confirmed = [i["ticker"] for i in new_intents]
-                print(f"  {day}  SIGNAL confirmed={confirmed}")
+                confirmed = [intent["ticker"] for intent in new_intents]
+                print(f"    -> SIGNAL confirmed={confirmed}")
 
-            # ── 3d. Log equity ────────────────────────────────────────────────
+            # ── 3e. Log equity ────────────────────────────────────────────────
             open_val = _mark_to_market(portfolio.open_positions, provider, sim_ts)
             day_logs.append(DayLog(
                 sim_date=day,
@@ -770,7 +813,7 @@ class BacktestRunner:
                 total_equity=portfolio.cash + open_val,
                 realized_pnl=portfolio.realized_pnl,
                 open_tickers=list(portfolio.open_positions.keys()),
-                buys_today=[],  # updated next iteration
+                buys_today=[],
                 sells_today=sold,
             ))
 
