@@ -1892,11 +1892,11 @@ class TestRunBacktest:
             rb.OUT_PATH = original
 
         sweep_df = pd.read_csv(list(tmp_path.glob("backtest_sweep_*.csv"))[0])
-        for col in ("risk_%", "top_n", "ret_%", "max_dd_%", "sharpe", "trades"):
+        for col in ("time_stop_d", "stop_atr", "ret_%", "max_dd_%", "sharpe", "trades"):
             assert col in sweep_df.columns, f"Missing sweep column: {col}"
 
     def test_run_sweep_row_count(self, tmp_path):
-        """Sweep must produce one row per parameter combination (4 × 4 = 16)."""
+        """Sweep must produce one row per parameter combination: time_stop_days(4) × stop_atr(4) = 16."""
         from run_backtest import _run_sweep, _build_parser
         import run_backtest as rb
 

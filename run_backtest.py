@@ -124,6 +124,8 @@ def _run_single(
         screener_frequency = args.screener_freq,
         min_rr             = args.min_rr,
         atr_stop_mult      = args.atr_mult,
+        max_tracked_tickers= args.max_tickers,
+        regime_filter      = args.regime_filter,
         exit_params        = ep,
         _provider          = provider,
     )
@@ -135,6 +137,8 @@ def _run_single(
           f"top_n={args.top_n}   min_score={args.min_score}")
     print(f"  Tickers  : {len(tickers) - 1} + benchmark")
     print(f"  Exit     : {ep.summary()}")
+    regime_str = "ON  (buys blocked when XIU.TO < 200d SMA)" if args.regime_filter else "OFF"
+    print(f"  Regime   : {regime_str}")
     print(f"{'─'*60}\n")
 
     results = BacktestRunner(cfg).run(verbose=not args.quiet)
@@ -170,25 +174,28 @@ def _run_sweep(
     bench_series: pd.Series | None,
 ) -> None:
     """
-    Run a parameter grid over risk_pct × top_n_buys and print a summary table.
+    Sweep the two parameters that actually change outcomes:
+      time_stop_days × stop_atr  (4 × 4 = 16 combinations)
 
-    Screener scores are pre-computed ONCE across all trading days, then injected
-    into every combination.  This reduces sweep time from O(combos × days) to
-    O(days + combos × days_monitor_only) — roughly 16× faster for a 4×4 grid.
+    risk_pct and top_n_buys are held constant at their CLI values because
+    equal-allocation sizing means risk_pct has no effect on share count, and
+    top_n=1 (one position at a time) consistently outperforms on this strategy.
+
+    Screener scores are pre-computed once and injected into every combo via
+    _screener_cache, so sweep time ≈ pre-compute + 16 × per-combo-monitor-only.
     """
     import itertools
     from backtest_runner import _run_screener_step, _trading_days, BacktestConfig
     from time_utils import set_backtest_clock, TSX_TZ
     from datetime import datetime as _dt
 
-    risk_vals  = [0.5, 1.0, 1.5, 2.0]
-    top_n_vals = [1, 2, 3, 5]
+    time_stop_vals = [7, 10, 14, 21]       # trading days
+    stop_atr_vals  = [1.5, 2.0, 2.5, 3.0]  # ATR multiples for initial stop
 
-    combos  = list(itertools.product(risk_vals, top_n_vals))
+    combos  = list(itertools.product(time_stop_vals, stop_atr_vals))
     summary = []
 
-    # ── Pre-compute screener results once for all trading days ────────────────
-    # Scores depend only on price data, not on risk_pct or top_n_buys.
+    # ── Pre-compute screener results once ─────────────────────────────────────
     base_ep = ExitParams(
         initial_stop_atr_k   = args.stop_atr,
         chand_trail_atr_k    = args.trail_atr,
@@ -202,11 +209,13 @@ def _run_sweep(
         start_date         = args.start,
         end_date           = args.end,
         initial_cash       = args.capital,
-        risk_pct           = 1.0,
-        top_n_buys         = 3,
+        risk_pct           = args.risk,
+        top_n_buys         = args.top_n,
         min_score          = args.min_score,
         lookback_days      = args.lookback,
         screener_frequency = args.screener_freq,
+        max_tracked_tickers= args.max_tickers,
+        regime_filter      = args.regime_filter,
         min_rr             = args.min_rr,
         exit_params        = base_ep,
         _provider          = provider,
@@ -229,16 +238,14 @@ def _run_sweep(
           f"({len(screener_cache)} score snapshots)")
 
     print(f"\n  Parameter sweep: {len(combos)} combinations  "
-          f"(risk_pct × top_n_buys)\n")
+          f"(time_stop_days × stop_atr)  "
+          f"[top_n={args.top_n}  trigger={args.stop_trigger}  trail={args.trail_atr}×ATR]\n")
 
-    for k, (risk, top_n) in enumerate(combos, 1):
-        args.risk  = risk
-        args.top_n = top_n
-
+    for k, (ts_days, s_atr) in enumerate(combos, 1):
         ep_sweep = ExitParams(
-            initial_stop_atr_k   = args.stop_atr,
+            initial_stop_atr_k   = s_atr,
             chand_trail_atr_k    = args.trail_atr,
-            time_stop_days       = args.time_stop_days,
+            time_stop_days       = ts_days,
             time_stop_min_profit = args.time_stop_pct,
             stop_trigger         = args.stop_trigger,
         )
@@ -249,11 +256,13 @@ def _run_sweep(
             start_date         = args.start,
             end_date           = args.end,
             initial_cash       = args.capital,
-            risk_pct           = risk,
-            top_n_buys         = top_n,
+            risk_pct           = args.risk,
+            top_n_buys         = args.top_n,
             min_score          = args.min_score,
             lookback_days      = args.lookback,
             screener_frequency = args.screener_freq,
+            max_tracked_tickers= args.max_tickers,
+            regime_filter      = args.regime_filter,
             min_rr             = args.min_rr,
             atr_stop_mult      = args.atr_mult,
             exit_params        = ep_sweep,
@@ -261,7 +270,7 @@ def _run_sweep(
             _screener_cache    = screener_cache,
         )
 
-        print(f"  [{k:>2}/{len(combos)}] risk={risk}%  top_n={top_n}  … ",
+        print(f"  [{k:>2}/{len(combos)}] time_stop={ts_days:>2}d  stop={s_atr}×ATR  … ",
               end="", flush=True)
         t0 = time.perf_counter()
         results = BacktestRunner(cfg).run(verbose=False)
@@ -287,49 +296,58 @@ def _run_sweep(
              if n_trades > 0 and len(tl[tl["pnl"] <= 0]) > 0 else 0.0
         pf = gp / gl if gl > 0 else 0.0
 
-        # Annualised Sharpe from daily equity returns
         daily_ret = equity.pct_change().dropna()
         sharpe    = 0.0
         if len(daily_ret) > 10 and daily_ret.std() > 0:
             sharpe = float(daily_ret.mean() / daily_ret.std() * (252 ** 0.5))
 
+        # Calmar = annualised return / max drawdown depth
+        years  = len(trading_days) / 252
+        ann_ret = (end_eq / args.capital) ** (1 / max(years, 0.1)) - 1
+        calmar  = round(ann_ret / abs(max_dd / 100), 2) if max_dd < 0 else 0.0
+
         summary.append({
-            "risk_%":    risk,
-            "top_n":     top_n,
-            "ret_%":     round(ret_pct, 2),
-            "max_dd_%":  round(max_dd, 2),
-            "sharpe":    round(sharpe, 2),
-            "trades":    n_trades,
-            "win_rate%": round(win_rate, 1),
-            "pf":        round(pf, 2),
+            "time_stop_d":  ts_days,
+            "stop_atr":     s_atr,
+            "ret_%":        round(ret_pct, 2),
+            "max_dd_%":     round(max_dd, 2),
+            "calmar":       calmar,
+            "sharpe":       round(sharpe, 2),
+            "trades":       n_trades,
+            "win_rate%":    round(win_rate, 1),
+            "pf":           round(pf, 2),
         })
         sign = "+" if ret_pct >= 0 else ""
         print(f"ret={sign}{ret_pct:.1f}%  dd={max_dd:.1f}%  "
-              f"sharpe={sharpe:.2f}  trades={n_trades}  ({elapsed:.1f}s)")
+              f"sharpe={sharpe:.2f}  calmar={calmar:.2f}  "
+              f"trades={n_trades}  ({elapsed:.1f}s)")
 
-    # Print ranked table
+    # ── Print ranked table ────────────────────────────────────────────────────
     df_sw = pd.DataFrame(summary).sort_values("sharpe", ascending=False)
-    print(f"\n{'─'*70}")
-    print("  Sweep results ranked by Sharpe ratio")
-    print(f"{'─'*70}")
+    print(f"\n{'─'*75}")
+    print("  Sweep results ranked by Sharpe  "
+          f"(period {args.start} → {args.end}  "
+          f"top_n={args.top_n}  trigger={args.stop_trigger})")
+    print(f"{'─'*75}")
     print(df_sw.to_string(index=False))
 
-    # Save sweep CSV
+    # ── Save CSV ──────────────────────────────────────────────────────────────
     OUT_PATH.mkdir(parents=True, exist_ok=True)
-    ts       = datetime.now().strftime("%Y%m%dT%H%M")
-    sw_path  = OUT_PATH / f"backtest_sweep_{args.start}_{args.end}_{ts}.csv"
+    ts_str   = datetime.now().strftime("%Y%m%dT%H%M")
+    sw_path  = OUT_PATH / f"backtest_sweep_{args.start}_{args.end}_{ts_str}.csv"
     df_sw.to_csv(sw_path, index=False)
     print(f"\n  Sweep results → {sw_path.resolve()}")
 
-    # Run full report for the best Sharpe combo
+    # ── Full report for best Sharpe combo ─────────────────────────────────────
     best = df_sw.iloc[0]
-    print(f"\n  Best combo: risk={best['risk_%']}%  top_n={int(best['top_n'])}  "
+    best_ts   = int(best["time_stop_d"])
+    best_satr = float(best["stop_atr"])
+    print(f"\n  Best: time_stop={best_ts}d  stop={best_satr}×ATR  "
           f"(Sharpe={best['sharpe']})\n  Generating full report…")
-    args.risk  = float(best["risk_%"])
-    args.top_n = int(best["top_n"])
+    args.time_stop_days = best_ts
+    args.stop_atr       = best_satr
     _run_single(args, tickers, provider, bench_series,
-                suffix=f"_best_r{best['risk_%']}_n{int(best['top_n'])}")
-
+                suffix=f"_best_ts{best_ts}_sa{best_satr}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CLI
@@ -368,6 +386,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Screener lookback window in calendar days")
     p.add_argument("--screener-freq", dest="screener_freq", type=int, default=5,
                    help="Run full screener every N days (1=daily, 5=weekly)")
+    p.add_argument("--max-tickers", dest="max_tickers", type=int, default=40,
+                   help="Max tickers passed to pattern detection per day (default 40)")
     p.add_argument("--min-rr",   dest="min_rr", type=float, default=2.0,
                    help="Minimum risk:reward to accept a signal")
     p.add_argument("--atr-mult", dest="atr_mult", type=float, default=1.5,
@@ -387,8 +407,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Stop trigger: 'low' (intraday) or 'close' (EOD)  (default close)")
 
     # Modes
+    p.add_argument("--regime-filter", dest="regime_filter", action="store_true",
+                   help="Only open new positions when XIU.TO > 200-day SMA (regime filter)")
     p.add_argument("--sweep",  action="store_true",
-                   help="Run parameter sweep over risk_pct × top_n_buys grid")
+                   help="Sweep time_stop_days × stop_atr (4×4=16 combos); ranks by Sharpe")
     p.add_argument("--quiet",  action="store_true",
                    help="Suppress per-day progress output")
 

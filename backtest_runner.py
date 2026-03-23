@@ -104,6 +104,11 @@ class BacktestConfig:
     # Default=5 (weekly). Use 1 to score every day (slower, large universes).
     screener_frequency: int = 5
 
+    # Max tickers passed to pattern detection each day.
+    # Mirrors auto_pipeline.py max_tracked_tickers=40 (live default).
+    # Reducing this is the single biggest speed lever for large universes.
+    max_tracked_tickers: int = 40
+
     # Pipeline detection params (mirrors PipelineConfig defaults)
     atr_period: int = 14
     atr_stop_mult: float = 1.5
@@ -123,6 +128,12 @@ class BacktestConfig:
     _provider: Optional[HistoricalSliceProvider] = field(
         default=None, repr=False
     )
+
+    # Market regime filter — only open NEW positions when benchmark is in uptrend.
+    # When True: buys are blocked whenever benchmark_close < benchmark_sma200.
+    # When False (default): no filter, all confirmed signals are acted on.
+    # Sells / position management are NEVER blocked regardless of this setting.
+    regime_filter: bool = False
 
     # Pre-computed screener cache: {trading_day_index: pd.DataFrame}
     # Injected by the sweep runner to avoid recomputing scores per combo.
@@ -582,6 +593,29 @@ def _run_pipeline_step(
 # BUY STEP  (next open D+1)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _is_market_in_uptrend(
+        benchmark: str,
+        provider: HistoricalSliceProvider,
+        as_of: pd.Timestamp,
+        sma_period: int = 200,
+) -> bool:
+    """
+    Return True when benchmark last close >= its sma_period-day SMA.
+    Used by the regime filter to block new buys in downtrending markets.
+    Returns True (permissive) on any data error so live mode is unaffected.
+    """
+    try:
+        df = provider.get(benchmark, as_of=as_of)
+        if df.empty or len(df) < sma_period:
+            return True  # not enough data — allow trades
+        close = df["Close"].squeeze()
+        sma   = float(close.rolling(sma_period).mean().iloc[-1])
+        last  = float(close.iloc[-1])
+        return last >= sma
+    except Exception:
+        return True  # fail open — do not block trades on data errors
+
+
 def _execute_buys(
         intents: List[Dict],
         portfolio: PortfolioState,
@@ -597,10 +631,18 @@ def _execute_buys(
       allocation_per_ticker = cash / n_actionable
       shares = int(allocation / price)   — whole shares only
 
+    If cfg.regime_filter is True, buys are blocked when benchmark is below
+    its 200-day SMA.  Sells and position management are never blocked.
+
     Returns list of tickers actually bought.
     """
     if not intents or portfolio.cash <= 0:
         return []
+
+    # Regime filter — block new buys in downtrending markets
+    if cfg.regime_filter:
+        if not _is_market_in_uptrend(cfg.benchmark, provider, after):
+            return []   # market below 200d SMA — no new longs
 
     # Filter: skip tickers already held
     owned = set(portfolio.open_positions.keys())
@@ -795,8 +837,13 @@ class BacktestRunner:
                 last_screener_day = i
 
             # ── 3d. Pipeline: pattern detection (every day) ───────────────────
+            # Limit to top-N by score to match live system (max_tracked_tickers)
+            pipeline_df = (
+                cached_screener_df.head(cfg.max_tracked_tickers)
+                if not cached_screener_df.empty else cached_screener_df
+            )
             new_intents, signal_db = _run_pipeline_step(
-                cached_screener_df, provider, sim_ts, cfg, signal_db
+                pipeline_df, provider, sim_ts, cfg, signal_db
             )
             pending_intents = new_intents
 
