@@ -60,7 +60,7 @@ import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH
+from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH, MAX_POSITIONS
 from log_utils import log
 from schema_keys import INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT, INTENT_COL_REASON, \
     INTENT_COL_STATUS, INTENT_REQUIRED_COLS, POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_SHARES, \
@@ -335,16 +335,34 @@ def run_virtual_buy(
     print(f"  Funds file   : {funds_path}")
     print(f"  Total funds  : ${total_funds:,.2f}")
 
-    # Equal allocation across all tickers
+    # Slot - based allocation: reserve capacity for future opportunities.
+    # The portfolio is divided into MAX_POSITIONS slots. Only the remaining
+    # (unfilled) slots may be used for new buys, so capital is never fully
+    # committed when fewer tickers than slots are detected today.
     if not actionable_indices:
         print(f"{Fore.YELLOW}No actionable pending intents — nothing to buy.{Style.RESET_ALL}")
         if not dry_run:
             persist_intent_updates(signals_path, intents_df)
         return
 
-    allocation_per_ticker = total_funds / len(actionable_indices)
-    print(f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({len(actionable_indices)} ticker(s))\n")
+    current_position_count = len(owned_tickers)
+    remaining_slots = MAX_POSITIONS - current_position_count
+    if remaining_slots <= 0:
+        print(
+            f"{Fore.YELLOW}Portfolio full — {current_position_count} of "
+            f"{MAX_POSITIONS} positions occupied. Nothing to buy.{Style.RESET_ALL}"
+        )
+        if not dry_run:
+            persist_intent_updates(signals_path, intents_df)
+        return
 
+    # Cap the number of buys to available slots
+    if len(actionable_indices) > remaining_slots:
+        actionable_indices = actionable_indices[:remaining_slots]
+
+    allocation_per_ticker = total_funds / remaining_slots
+    print(f"  Positions    : {current_position_count} / {MAX_POSITIONS} occupied, {remaining_slots} slot(s) open")
+    print(f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({len(actionable_indices)} ticker(s) to buy)\n")
     # ── 3. Fetch prices & compute shares ────────────────────────────────────
     today = market_today().date()
     buy_records: list[dict] = []

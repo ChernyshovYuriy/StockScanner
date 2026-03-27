@@ -23,6 +23,11 @@ ALERTS_PATH = OUT_PATH / "alerts"
 LOGS_PATH = Path(OUT_PATH / "logs")
 LOCKS_PATH = Path(OUT_PATH / "locks")
 
+# Maximum number of positions the portfolio can hold simultaneously.
+# Available funds are divided by remaining open slots (MAX_POSITIONS minus
+# current holdings) so capital is always reserved for future opportunities.
+MAX_POSITIONS = 5
+
 
 class PositionMonitorMode(Enum):
     PRE_CLOSE = 1
