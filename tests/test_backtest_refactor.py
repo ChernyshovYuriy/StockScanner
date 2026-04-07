@@ -856,8 +856,9 @@ class TestVirtualBuy:
         total_cost = sum(int(alloc / p) * p for p in prices)
         assert total_cost <= total_funds
 
-    def test_run_virtual_buy_dry_run_writes_nothing(self):
+    def test_run_virtual_buy_dry_run_writes_nothing(self, monkeypatch):
         """dry_run=True must not touch positions or funds files."""
+        import yfinance as yf
         from virtual_buy import run_virtual_buy
         from schema_keys import INTENT_COL_STATUS, SIGNAL_COL_TICKER
         from schema_keys import INTENT_COL_SIGNAL_DATE, INTENT_COL_ALERT_STATE
@@ -891,6 +892,14 @@ class TestVirtualBuy:
             funds_path.write_text("50000.00\n")
 
             original_funds_content = funds_path.read_text()
+
+            class _DummyTicker:
+                fast_info = {"last_price": 130.0}
+
+                def __init__(self, _ticker):
+                    pass
+
+            monkeypatch.setattr(yf, "Ticker", _DummyTicker, raising=False)
 
             run_virtual_buy(
                 signals_path=signals_path,
