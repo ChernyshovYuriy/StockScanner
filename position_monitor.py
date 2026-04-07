@@ -319,7 +319,11 @@ def compute_signals(
     ep = exit_params if exit_params is not None else ExitParams()
     entry_dt = pd.Timestamp(pos.entry_date)
 
-    df = df.copy().dropna(subset=["High", "Low", "Close"])
+    df = df.copy()
+    _required = {"High", "Low", "Close"}
+    if df.empty or not _required.issubset(df.columns):
+        return {"ticker": pos.ticker, "status": "NO_DATA", "reason": "No OHLC data"}
+    df = df.dropna(subset=["High", "Low", "Close"])
     if df.empty:
         return {"ticker": pos.ticker, "status": "NO_DATA", "reason": "No OHLC data"}
 
@@ -556,11 +560,17 @@ def execute_virtual_sells(
             POSITION_COL_REASON: reason,
         })
 
+    total_pnl = round(sum(
+        float(r.get(POSITION_COL_PNL_DOLLARS, 0) or 0) for r in sell_rows
+    ), 2)
     print(f"\n  Total proceeds : ${total_proceeds:,.2f}")
+    pnl_sign = "+" if total_pnl >= 0 else ""
+    print(f"  Total P&L      : {pnl_sign}${total_pnl:,.2f}")
 
     if dry_run:
         print(f"\n  {Fore.CYAN}[DRY RUN] No files written.{Style.RESET_ALL}\n")
-        return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": total_proceeds}
+        return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": total_proceeds,
+                "realized_pnl": total_pnl}
 
     # ── Remove sold tickers from positions CSV ────────────────────────────────
     sold_tickers = {r[SIGNAL_COL_TICKER] for r in sell_rows}
@@ -600,6 +610,7 @@ def execute_virtual_sells(
         "funds_before": current_funds,
         "funds_after": new_funds,
         "funds_gained": total_proceeds,
+        "realized_pnl": total_pnl,
     }
 
 
@@ -607,10 +618,24 @@ def execute_virtual_sells(
 # REPORT HELPER
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _funds_summary_html(funds_before: float, funds_after: float, funds_gained: float) -> str:
+def _funds_summary_html(funds_before: float, funds_after: float, funds_gained: float,
+                        realized_pnl: float = 0.0) -> str:
+    """
+    Render a small HTML card summarising the funds state for this monitor run.
+
+    ``funds_gained`` is the gross sell *proceeds* (always positive when positions
+    are closed).  ``realized_pnl`` is the actual gain or loss on those sells
+    (entry cost subtracted).  We intentionally separate the two so the label
+    cannot mislead: a position sold at a loss will show a negative P&L.
+    """
     if funds_gained > 0:
+        pnl_sign = "+" if realized_pnl >= 0 else ""
+        pnl_color = "#0a7c4e" if realized_pnl >= 0 else "#c0152f"
+        pnl_word = "gain" if realized_pnl >= 0 else "loss"
         action_html = (
-            f"<li><b>Sold (gained)</b>: ${funds_gained:,.2f}</li>"
+            f"<li><b>Sold</b>: ${funds_gained:,.2f} proceeds &nbsp;"
+            f"(<span style='color:{pnl_color};font-weight:bold'>"
+            f"{pnl_sign}${realized_pnl:,.2f} {pnl_word}</span>)</li>"
             f"<li><b>Funds after sells</b>: ${funds_after:,.2f}</li>"
         )
     else:
@@ -630,15 +655,25 @@ def _funds_summary_html(funds_before: float, funds_after: float, funds_gained: f
 
 def _write_position_report(report_file: str, out_df: pd.DataFrame,
                            funds_before: float, funds_after: float,
-                           funds_gained: float) -> None:
+                           funds_gained: float, realized_pnl: float = 0.0) -> None:
     date_str = date_to_iso_basic(market_today())
     rows = out_df.to_dict("records") if not out_df.empty else []
     append_positions_report(path=report_file, date_str=date_str, rows=rows)
 
     path = Path(report_file)
     content = path.read_text(encoding="utf-8")
-    funds_block = _funds_summary_html(funds_before=funds_before, funds_after=funds_after, funds_gained=funds_gained)
-    if "</body>" in content:
+    funds_block = _funds_summary_html(
+        funds_before=funds_before,
+        funds_after=funds_after,
+        funds_gained=funds_gained,
+        realized_pnl=realized_pnl,
+    )
+    # Funds block is injected just before the report section end marker so it
+    # stays visually attached to the day's position table.
+    if "<!-- MONITOR_DAY_END -->" in content:
+        content = content.replace("<!-- MONITOR_DAY_END -->",
+                                  funds_block + "<!-- MONITOR_DAY_END -->", 1)
+    elif "</body>" in content:
         content = content.replace("</body>", funds_block + "</body>")
     else:
         content += funds_block
@@ -681,6 +716,7 @@ def main() -> None:
     funds_before = read_funds(funds_path)
     funds_after = funds_before
     funds_gained = 0.0
+    realized_pnl = 0.0
 
     # ── Determine run mode ────────────────────────────────────────────────────
     use_intraday = mode == PositionMonitorMode.PRE_CLOSE
@@ -806,6 +842,7 @@ def main() -> None:
             funds_before = funds_state.get("funds_before", funds_before)
             funds_after = funds_state.get("funds_after", funds_after)
             funds_gained = funds_state.get("funds_gained", 0.0)
+            realized_pnl = funds_state.get("realized_pnl", 0.0)
         else:
             print(f"\n  {Fore.GREEN}✅  No SELL signals — all positions held.{Style.RESET_ALL}")
     else:
@@ -824,6 +861,7 @@ def main() -> None:
         funds_before=funds_before,
         funds_after=funds_after,
         funds_gained=funds_gained,
+        realized_pnl=realized_pnl,
     )
 
     # ── Send HTML report via email ─────────────────────────────────────────────
