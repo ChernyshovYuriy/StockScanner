@@ -619,27 +619,43 @@ def execute_virtual_sells(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _funds_summary_html(funds_before: float, funds_after: float, funds_gained: float,
-                        realized_pnl: float = 0.0) -> str:
+                        realized_pnl: float = 0.0,
+                        unrealised_pnl: float = 0.0,
+                        unrealised_position_value: float = 0.0) -> str:
     """
     Render a small HTML card summarising the funds state for this monitor run.
 
-    ``funds_gained`` is the gross sell *proceeds* (always positive when positions
-    are closed).  ``realized_pnl`` is the actual gain or loss on those sells
-    (entry cost subtracted).  We intentionally separate the two so the label
-    cannot mislead: a position sold at a loss will show a negative P&L.
+    funds_gained: gross sell proceeds (always >= 0 when positions are closed)
+    realized_pnl: actual gain/loss from closed positions (can be negative)
+    unrealised_pnl: current paper gain/loss on all open (HOLD) positions
+    unrealised_position_value: current market value of all open (HOLD) positions
     """
+    def _fmt_pnl(pnl: float) -> str:
+        sign = "+" if pnl >= 0 else "-"
+        return f"{sign}${abs(pnl):,.2f}"
+
     if funds_gained > 0:
-        pnl_sign = "+" if realized_pnl >= 0 else ""
-        pnl_color = "#0a7c4e" if realized_pnl >= 0 else "#c0152f"
-        pnl_word = "gain" if realized_pnl >= 0 else "loss"
-        action_html = (
-            f"<li><b>Sold</b>: ${funds_gained:,.2f} proceeds &nbsp;"
-            f"(<span style='color:{pnl_color};font-weight:bold'>"
-            f"{pnl_sign}${realized_pnl:,.2f} {pnl_word}</span>)</li>"
+        rpnl_color = "#0a7c4e" if realized_pnl >= 0 else "#c0152f"
+        sell_section = (
+            f"<li><b>Sold proceeds</b>: ${funds_gained:,.2f}</li>"
+            f"<li><b>Realised P&L</b>: "
+            f"<span style='color:{rpnl_color};font-weight:bold'>"
+            f"{_fmt_pnl(realized_pnl)}</span></li>"
             f"<li><b>Funds after sells</b>: ${funds_after:,.2f}</li>"
         )
     else:
-        action_html = f"<li><b>Funds remaining</b>: ${funds_after:,.2f}</li>"
+        sell_section = f"<li><b>Funds remaining</b>: ${funds_after:,.2f}</li>"
+
+    total_funds_available = funds_after + unrealised_position_value
+    total_pnl = realized_pnl + unrealised_pnl
+    tpnl_color = "#0a7c4e" if total_pnl >= 0 else "#c0152f"
+    summary_section = (
+        f"<li><b>Total funds available</b>: ${total_funds_available:,.2f}"
+        f"<span style='font-size:10px;color:#888888'> (cash + open positions)</span></li>"
+        f"<li><b>Total gain/loss</b>: "
+        f"<span style='color:{tpnl_color};font-weight:bold'>"
+        f"{_fmt_pnl(total_pnl)}</span></li>"
+    )
 
     return (
         "<div style='margin:16px 0;padding:14px 16px;border:1px solid #dde1ea;"
@@ -647,7 +663,8 @@ def _funds_summary_html(funds_before: float, funds_after: float, funds_gained: f
         "<div style='font-size:13px;font-weight:bold;margin-bottom:8px;'>Funds State</div>"
         f"<ul style='margin:0;padding-left:18px;line-height:1.6'>"
         f"<li><b>Funds before monitor</b>: ${funds_before:,.2f}</li>"
-        f"{action_html}"
+        f"{sell_section}"
+        f"{summary_section}"
         "</ul>"
         "</div>"
     )
@@ -660,6 +677,24 @@ def _write_position_report(report_file: str, out_df: pd.DataFrame,
     rows = out_df.to_dict("records") if not out_df.empty else []
     append_positions_report(path=report_file, date_str=date_str, rows=rows)
 
+    # Compute unrealised P&L and open position value from remaining HOLD positions
+    unrealised_pnl = 0.0
+    unrealised_position_value = 0.0
+    if not out_df.empty and "status" in out_df.columns:
+        hold_mask = out_df["status"].astype(str).str.upper() == "HOLD"
+        hold_df = out_df[hold_mask]
+        if not hold_df.empty:
+            try:
+                unrealised_pnl = float(hold_df["pnl_$"].fillna(0).sum())
+            except Exception:
+                pass
+            try:
+                unrealised_position_value = float(
+                    (hold_df["shares"] * hold_df["last_close"]).fillna(0).sum()
+                )
+            except Exception:
+                pass
+
     path = Path(report_file)
     content = path.read_text(encoding="utf-8")
     funds_block = _funds_summary_html(
@@ -667,6 +702,8 @@ def _write_position_report(report_file: str, out_df: pd.DataFrame,
         funds_after=funds_after,
         funds_gained=funds_gained,
         realized_pnl=realized_pnl,
+        unrealised_pnl=unrealised_pnl,
+        unrealised_position_value=unrealised_position_value,
     )
     # Funds block is injected just before the report section end marker so it
     # stays visually attached to the day's position table.

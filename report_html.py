@@ -196,14 +196,14 @@ def _section_header(title: str, subtitle: str = "", bar_color: str = "") -> str:
     sub_html = ""
     if subtitle:
         sub_html = (f"<p style='margin:2px 0 0 0;padding:0;font-family:{FONT};"
-                    f"font-size:11px;color:{c("text_muted")}'>{subtitle}</p>")
+                    f"font-size:11px;color:{c('text_muted')}'>{subtitle}</p>")
     return (
         f"<table width='100%' cellpadding='0' cellspacing='0' border='0'"
         f" style='margin-bottom:12px'>"
         f"<tr>"
         f"<td width='4' bgcolor='{bar_color}'"
         f" style='width:4px;padding:0;background:{bar_color};font-size:1px'>&nbsp;</td>"
-        f"<td style='padding:2px 0 2px 10px;background:{c("card_bg")}'>"
+        f"<td style='padding:2px 0 2px 10px;background:{c('card_bg')}'>"
         f"<p style='margin:0;padding:0;font-family:{FONT};font-size:12px;"
         f"font-weight:bold;letter-spacing:0.07em;text-transform:uppercase;"
         f"color:{bar_color}'>{title}</p>"
@@ -220,13 +220,13 @@ def _stat_pill(label: str, value: str, color: str = "") -> str:
     """Single pill as two <td> elements (pill + spacer). Wrap in <table><tr>."""
     color = color or C["accent"]
     return (
-        f"<td bgcolor='{c("card_bg")}'"
-        f" style='background:{c("card_bg")};padding:10px 16px;"
-        f"text-align:center;border:1px solid {c("border")};vertical-align:middle'>"
+        f"<td bgcolor='{c('card_bg')}'"
+        f" style='background:{c('card_bg')};padding:10px 16px;"
+        f"text-align:center;border:1px solid {c('border')};vertical-align:middle'>"
         f"<p style='margin:0;padding:0;font-family:{FONT_MONO};"
         f"font-size:22px;font-weight:bold;color:{color};line-height:1'>{value}</p>"
         f"<p style='margin:4px 0 0 0;padding:0;font-family:{FONT};font-size:9px;"
-        f"letter-spacing:0.1em;text-transform:uppercase;color:{c("text_muted")}'>"
+        f"letter-spacing:0.1em;text-transform:uppercase;color:{c('text_muted')}'>"
         f"{label}</p>"
         f"</td>"
         f"<td style='padding:0;width:8px;font-size:1px'>&nbsp;</td>"
@@ -248,11 +248,11 @@ def _pills_row(*args: Tuple[str, str, str]) -> str:
 
 def _th(text: str, align: str = "left") -> str:
     return (
-        f"<th align='{align}' bgcolor='{c("page_bg")}'"
-        f" style='background:{c("page_bg")};padding:7px 12px;"
+        f"<th align='{align}' bgcolor='{c('page_bg')}'"
+        f" style='background:{c('page_bg')};padding:7px 12px;"
         f"font-family:{FONT};font-size:10px;font-weight:bold;"
-        f"letter-spacing:0.08em;text-transform:uppercase;color:{c("text_muted")};"
-        f"white-space:nowrap;border-bottom:2px solid {c("border_dark")};"
+        f"letter-spacing:0.08em;text-transform:uppercase;color:{c('text_muted')};"
+        f"white-space:nowrap;border-bottom:2px solid {c('border_dark')};"
         f"text-align:{align}'>{text}</th>"
     )
 
@@ -267,7 +267,7 @@ def _td(content: str, bg: str = "", align: str = "left",
         f" style='background:{bg};padding:8px 12px;"
         f"font-family:{FONT_MONO};font-size:12px;color:{color};"
         f"font-weight:{fw};white-space:nowrap;"
-        f"border-bottom:1px solid {c("border")};text-align:{align}'>"
+        f"border-bottom:1px solid {c('border')};text-align:{align}'>"
         f"{content}</td>"
     )
 
@@ -327,13 +327,13 @@ def _pipeline_table(alerts: List[Dict[str, Any]]) -> str:
             rows.append(
                 f"<tr><td colspan='{n}' bgcolor='{bg}'"
                 f" style='background:{bg};padding:2px 12px 8px 12px;"
-                f"font-family:{FONT};font-size:11px;color:{c("text_muted")};"
-                f"font-style:italic;border-bottom:1px solid {c("border")};"
+                f"font-family:{FONT};font-size:11px;color:{c('text_muted')};"
+                f"font-style:italic;border-bottom:1px solid {c('border')};"
                 f"white-space:normal'>&#8627; {detail}</td></tr>"
             )
 
     return (f"<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            f" style='border-collapse:collapse;border:1px solid {c("border")}'>"
+            f" style='border-collapse:collapse;border:1px solid {c('border')}'>"
             f"{thead}<tbody>{''.join(rows)}</tbody></table>")
 
 
@@ -356,7 +356,7 @@ _DB_COLS = [
 def _db_table(db_rows: List[Dict[str, Any]]) -> str:
     if not db_rows:
         return (f"<p style='font-family:{FONT};font-size:12px;"
-                f"color:{c("text_muted")};font-style:italic'>No signals in database.</p>")
+                f"color:{c('text_muted')};font-style:italic'>No signals in database.</p>")
     thead = ("<thead><tr>" +
              "".join(_th(lbl, al) for lbl, _, al in _DB_COLS) +
              "</tr></thead>")
@@ -378,7 +378,7 @@ def _db_table(db_rows: List[Dict[str, Any]]) -> str:
                 cells.append(_td(raw, bg, al))
         rows.append(f"<tr>{''.join(cells)}</tr>")
     return (f"<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            f" style='border-collapse:collapse;border:1px solid {c("border")}'>"
+            f" style='border-collapse:collapse;border:1px solid {c('border')}'>"
             f"{thead}<tbody>{''.join(rows)}</tbody></table>")
 
 
@@ -406,7 +406,7 @@ _POS_COLS = [
 def _positions_table(rows: List[Dict[str, Any]]) -> str:
     if not rows:
         return (f"<p style='font-family:{FONT};font-size:12px;"
-                f"color:{c("text_muted")};font-style:italic'>No positions found.</p>")
+                f"color:{c('text_muted')};font-style:italic'>No positions found.</p>")
     thead = ("<thead><tr>" +
              "".join(_th(lbl, al) for lbl, _, al in _POS_COLS) +
              "</tr></thead>")
@@ -454,7 +454,7 @@ def _positions_table(rows: List[Dict[str, Any]]) -> str:
                 cells.append(_td(str(raw), bg, al))
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
     return (f"<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            f" style='border-collapse:collapse;border:1px solid {c("border")}'>"
+            f" style='border-collapse:collapse;border:1px solid {c('border')}'>"
             f"{thead}<tbody>{''.join(body_rows)}</tbody></table>")
 
 
@@ -468,14 +468,14 @@ def _doc_open(title: str) -> str:
         f"  <meta charset='UTF-8'/>\n"
         f"  <meta name='viewport' content='width=device-width,initial-scale=1'/>\n"
         f"  <title>{title}</title>\n</head>\n"
-        f"<body style='margin:0;padding:0;background:{c("page_bg")}'>\n"
+        f"<body style='margin:0;padding:0;background:{c('page_bg')}'>\n"
         f"<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-        f" bgcolor='{c("page_bg")}'"
-        f" style='border-collapse:collapse;background:{c("page_bg")}'>\n"
-        f"<tr><td bgcolor='{c("page_bg")}' style='padding:24px 16px;background:{c("page_bg")}'>\n"
+        f" bgcolor='{c('page_bg')}'"
+        f" style='border-collapse:collapse;background:{c('page_bg')}'>\n"
+        f"<tr><td bgcolor='{c('page_bg')}' style='padding:24px 16px;background:{c('page_bg')}'>\n"
         f"<table width='100%' cellpadding='0' cellspacing='0' border='0'"
         f" style='border-collapse:collapse;max-width:960px;margin:0 auto'>\n"
-        f"<tr><td bgcolor='{c("page_bg")}' style='background:{c("page_bg")}'>\n"
+        f"<tr><td bgcolor='{c('page_bg')}' style='background:{c('page_bg')}'>\n"
     )
 
 
@@ -487,14 +487,14 @@ def _header_banner(title: str, subtitle: str) -> str:
     """Dark header band — this is the ONLY dark element; text is explicitly white."""
     return (
         f"<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-        f" bgcolor='{c("header_bg")}'"
-        f" style='border-collapse:collapse;background:{c("header_bg")};margin-bottom:16px'>"
-        f"<tr><td bgcolor='{c("header_bg")}'"
-        f" style='padding:20px 24px;background:{c("header_bg")}'>"
+        f" bgcolor='{c('header_bg')}'"
+        f" style='border-collapse:collapse;background:{c('header_bg')};margin-bottom:16px'>"
+        f"<tr><td bgcolor='{c('header_bg')}'"
+        f" style='padding:20px 24px;background:{c('header_bg')}'>"
         f"<p style='margin:0 0 4px 0;padding:0;font-family:{FONT};"
-        f"font-size:22px;font-weight:bold;color:{c("header_text")}'>{title}</p>"
+        f"font-size:22px;font-weight:bold;color:{c('header_text')}'>{title}</p>"
         f"<p style='margin:0;padding:0;font-family:{FONT};"
-        f"font-size:12px;color:{c("header_sub")}'>{subtitle}</p>"
+        f"font-size:12px;color:{c('header_sub')}'>{subtitle}</p>"
         f"</td></tr></table>"
     )
 
@@ -560,7 +560,7 @@ def write_pipeline_report(
     if not alerts:
         sections = _card(
             f"<p style='font-family:{FONT};font-size:14px;"
-            f"color:{c("text_muted")};font-style:italic;margin:0'>"
+            f"color:{c('text_muted')};font-style:italic;margin:0'>"
             f"No actionable signals today. Patterns still forming.</p>"
         )
 
@@ -583,10 +583,10 @@ def write_pipeline_report(
         rules_rows += (
             f"<tr>"
             f"<td style='padding:4px 14px 4px 0;font-family:{FONT_MONO};"
-            f"font-size:12px;color:{c("text")};font-weight:bold;white-space:nowrap;"
-            f"vertical-align:top;background:{c("card_bg")}'>{name}</td>"
+            f"font-size:12px;color:{c('text')};font-weight:bold;white-space:nowrap;"
+            f"vertical-align:top;background:{c('card_bg')}'>{name}</td>"
             f"<td style='padding:4px 0;font-family:{FONT};font-size:12px;"
-            f"color:{c("text_muted")};background:{c("card_bg")}'>&mdash; {desc}</td>"
+            f"color:{c('text_muted')};background:{c('card_bg')}'>&mdash; {desc}</td>"
             f"</tr>"
         )
     rules_card = _card(
@@ -597,7 +597,7 @@ def write_pipeline_report(
 
     disclaimer = (
         f"<p style='margin:0;padding:8px 0 0 0;font-family:{FONT};font-size:10px;"
-        f"color:{c("text_dim")};text-align:center'>"
+        f"color:{c('text_dim')};text-align:center'>"
         f"&#9888; Educational / research use only. This is not financial advice.</p>"
     )
 
