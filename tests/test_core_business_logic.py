@@ -85,42 +85,50 @@ def _make_daily_ohlcv(
 
 
 # ---------------------------------------------------------------------------
-# 1. Funds summary HTML — gain vs loss labelling
+# 1. Funds summary HTML — sell proceeds / realised P&L / totals
 # ---------------------------------------------------------------------------
 
 class TestFundsSummaryHtml:
     """
-    The original bug: 'funds_gained' was the gross sell *proceeds*, which is
-    always positive.  The label 'Sold (gained)' therefore appeared even for
-    losing trades.
+    Original bug: 'Sold (gained)' label appeared even when positions were closed
+    at a loss because it was based on gross proceeds, not actual P&L.
 
-    After the fix, 'realized_pnl' carries the actual P&L and the label is
-    chosen accordingly.
+    Current behaviour:
+    - 'Sold proceeds'   → gross cash returned (always positive when sells occurred)
+    - 'Realised P&L'    → separate line with actual profit or loss (can be negative)
+    - 'Total funds available' → cash + open-position market value (always shown)
+    - 'Total gain/loss'       → realised P&L + unrealised P&L (always shown)
     """
 
-    def _call(self, funds_before, funds_after, funds_gained, realized_pnl=0.0):
+    def _call(self, funds_before, funds_after, funds_gained, realized_pnl=0.0,
+              unrealised_pnl=0.0, unrealised_position_value=0.0):
         from position_monitor import _funds_summary_html
         return _funds_summary_html(
             funds_before=funds_before,
             funds_after=funds_after,
             funds_gained=funds_gained,
             realized_pnl=realized_pnl,
+            unrealised_pnl=unrealised_pnl,
+            unrealised_position_value=unrealised_position_value,
         )
 
-    def test_profitable_sell_shows_gain_word(self):
+    def test_profitable_sell_shows_positive_pnl(self):
+        """Profitable sell: 'Sold proceeds' and positive 'Realised P&L' must appear."""
         html = self._call(
             funds_before=1000.0,
             funds_after=1150.0,
-            funds_gained=1150.0,  # gross proceeds
-            realized_pnl=+150.0,  # actual gain
+            funds_gained=1150.0,
+            realized_pnl=+150.0,
         )
-        assert "gain" in html.lower()
-        assert "loss" not in html.lower()
+        assert "Sold proceeds" in html
+        assert "Realised P&L" in html
+        assert "+$150.00" in html
 
-    def test_losing_sell_shows_loss_word(self):
+    def test_losing_sell_shows_negative_pnl(self):
         """
-        BUG REGRESSION: previously showed 'gained' even for losing trades.
-        funds_gained is the gross proceeds (positive), but realized_pnl is negative.
+        BUG REGRESSION: previously 'Sold (gained)' appeared even for losing trades.
+        Now 'Realised P&L' must show a negative value and the word 'gained' must
+        not appear anywhere.
         """
         html = self._call(
             funds_before=1000.0,
@@ -128,8 +136,11 @@ class TestFundsSummaryHtml:
             funds_gained=850.0,  # gross proceeds (always > 0)
             realized_pnl=-150.0,  # actual loss
         )
-        assert "loss" in html.lower()
-        assert "gain" not in html.lower()
+        assert "Sold proceeds" in html
+        assert "Realised P&L" in html
+        assert "-$150.00" in html
+        # The old buggy label must never appear
+        assert "gained" not in html.lower()
 
     def test_no_sells_shows_funds_remaining(self):
         html = self._call(
@@ -142,15 +153,49 @@ class TestFundsSummaryHtml:
         # Should not show any sell line
         assert "Sold" not in html
 
-    def test_breakeven_sell_shows_gain_label(self):
-        """Exactly zero P&L: 0.0 >= 0 so it reads 'gain'."""
+    def test_breakeven_sell_shows_realised_pnl_label(self):
+        """Exactly zero P&L: 'Realised P&L' must appear with +$0.00."""
         html = self._call(
             funds_before=500.0,
             funds_after=500.0,
             funds_gained=500.0,
             realized_pnl=0.0,
         )
-        assert "gain" in html.lower()
+        assert "Realised P&L" in html
+        assert "+$0.00" in html
+
+    def test_total_funds_available_always_shown(self):
+        """'Total funds available' must appear for both sells and no-sells cases."""
+        html_sells = self._call(
+            funds_before=1000.0,
+            funds_after=1200.0,
+            funds_gained=1200.0,
+            realized_pnl=+200.0,
+            unrealised_position_value=500.0,
+        )
+        assert "Total funds available" in html_sells
+        assert "1,700.00" in html_sells  # 1200 cash + 500 open positions
+
+        html_no_sells = self._call(
+            funds_before=1000.0,
+            funds_after=1000.0,
+            funds_gained=0.0,
+            unrealised_position_value=300.0,
+        )
+        assert "Total funds available" in html_no_sells
+        assert "1,300.00" in html_no_sells  # 1000 cash + 300 open positions
+
+    def test_total_gain_loss_always_shown(self):
+        """'Total gain/loss' must combine realised and unrealised P&L."""
+        html = self._call(
+            funds_before=1000.0,
+            funds_after=1100.0,
+            funds_gained=1100.0,
+            realized_pnl=+100.0,
+            unrealised_pnl=+50.0,
+        )
+        assert "Total gain/loss" in html
+        assert "+$150.00" in html  # 100 realised + 50 unrealised
 
     def test_proceeds_dollar_amount_in_html(self):
         """The gross proceeds figure must appear in the output."""
