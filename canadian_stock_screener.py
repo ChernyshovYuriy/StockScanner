@@ -54,6 +54,7 @@ class ScreenerConfig(BaseModel):
     top_n: int = Field(10, ge=1, le=50)
     min_avg_volume: int = Field(100000, ge=10000)
     min_price: float = Field(2.0, ge=0.5)
+    min_composite_score: float = Field(60.0, ge=0.0, le=100.0)  # gate: skip mediocre setups
     weights: Dict[str, float]
 
     @validator('weights')
@@ -923,6 +924,14 @@ class StockScreener:
 
         df_results = df_results.drop("risk_metrics", axis=1)
 
+        # Apply minimum composite score gate — drop mediocre setups
+        before_gate = len(df_results)
+        df_results = df_results[df_results["composite_score"] >= self.config.min_composite_score]
+        dropped = before_gate - len(df_results)
+        if dropped:
+            print(f"  {Fore.YELLOW}Score gate ({self.config.min_composite_score:.0f}): "
+                  f"dropped {dropped} ticker(s) below threshold{Style.RESET_ALL}")
+
         return df_results
 
 
@@ -992,6 +1001,7 @@ def display_results(df_results: pd.DataFrame, config: ScreenerConfig,
     print(f"\n  Filters:")
     print(f"    Min Volume : {config.min_avg_volume:,}")
     print(f"    Min Price  : ${config.min_price}")
+    print(f"    Min Score  : {config.min_composite_score:.0f}")
     print(f"    Universe   : {len(data_manager.tickers)} tickers")
     print(f"    Passed     : {len(df_results)} stocks")
     print(f"    Run Date   : {market_now()}")

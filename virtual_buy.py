@@ -335,10 +335,10 @@ def run_virtual_buy(
     print(f"  Funds file   : {funds_path}")
     print(f"  Total funds  : ${total_funds:,.2f}")
 
-    # Slot - based allocation: reserve capacity for future opportunities.
-    # The portfolio is divided into MAX_POSITIONS slots. Only the remaining
-    # (unfilled) slots may be used for new buys, so capital is never fully
-    # committed when fewer tickers than slots are detected today.
+    # Equal-weight allocation across tickers being bought today.
+    # Capital is split only among the tickers we are actually buying now,
+    # ensuring available cash is deployed rather than held idle for slots
+    # that may never fill.  MAX_POSITIONS still caps the total open positions.
     if not actionable_indices:
         print(f"{Fore.YELLOW}No actionable pending intents — nothing to buy.{Style.RESET_ALL}")
         if not dry_run:
@@ -360,9 +360,10 @@ def run_virtual_buy(
     if len(actionable_indices) > remaining_slots:
         actionable_indices = actionable_indices[:remaining_slots]
 
-    allocation_per_ticker = total_funds / remaining_slots
+    n_buying = len(actionable_indices)
+    allocation_per_ticker = total_funds / n_buying
     print(f"  Positions    : {current_position_count} / {MAX_POSITIONS} occupied, {remaining_slots} slot(s) open")
-    print(f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({len(actionable_indices)} ticker(s) to buy)\n")
+    print(f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({n_buying} ticker(s) to buy, splitting all available cash)\n")
     # ── 3. Fetch prices & compute shares ────────────────────────────────────
     today = market_today().date()
     buy_records: list[dict] = []

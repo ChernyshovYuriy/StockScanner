@@ -71,17 +71,17 @@ INITIAL_STOP_ATR_K = 1.5
 CHAND_TRAIL_ATR_K = 2.5
 
 # Profit giveback rule
-GIVEBACK_ACTIVATE_PCT = 3.0  # arm the rule once max profit hits 3%
-GIVEBACK_ALLOW_PCT = 2.0  # tolerate up to 2% pullback from peak
+GIVEBACK_ACTIVATE_PCT = 2.0  # arm the rule once max profit hits 2%
+GIVEBACK_ALLOW_PCT = 1.0  # tolerate up to 1% pullback from peak
 
 # Time stop
-TIME_STOP_DAYS = 21  # trading days
-TIME_STOP_MIN_PROFIT_PCT = 0.5  # require +0.5% by day 7
+TIME_STOP_DAYS = 10  # trading days (~2 calendar weeks)
+TIME_STOP_MIN_PROFIT_PCT = 1.5  # require +1.5% by day 10 or exit
 
 # Stop trigger mode:
 #   "low"   -> fire if today's low  <= stop  (catches intraday breach)
 #   "close" -> fire if today's close < stop  (more conservative, EOD-only)
-STOP_TRIGGER = "close"
+STOP_TRIGGER = "low"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -88,8 +88,15 @@ class PipelineConfig:
     price_data_days: int = 400  # history window for pattern detection
 
     # Alert filtering
-    min_rr: float = 2.0  # minimum risk:reward to include in alerts
+    min_rr: float = 2.5  # minimum risk:reward to include in alerts (raised from 2.0)
     alert_on_forming: bool = True  # include FORMING signals (lower priority)
+
+    # Market regime filter — block new buys when TSX benchmark is below its
+    # 200-day SMA.  Uses XIU.TO as the TSX proxy.  Enabled by default so the
+    # pipeline does not generate buy signals into a downtrending market.
+    regime_filter: bool = True
+    regime_benchmark: str = "XIU.TO"
+    regime_sma_period: int = 200
 
     # Scheduling
     schedule_time: str = "16:30"  # HH:MM ET — after TSX close
@@ -613,6 +620,45 @@ def invalidation_check(ticker: str, df: pd.DataFrame, db_row: pd.Series) -> bool
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MARKET REGIME FILTER
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _is_market_in_uptrend(benchmark: str, sma_period: int = 200) -> bool:
+    """
+    Return True when benchmark last close >= its sma_period-day SMA.
+    Uses XIU.TO (TSX 60 ETF) as the TSX proxy by default.
+    Returns True (permissive) on any data failure so a bad Yahoo fetch never
+    blocks the whole pipeline.
+    """
+    try:
+        df = yf.download(
+            tickers=benchmark,
+            period=f"{sma_period + 20}d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+        )
+        if df is None or df.empty:
+            print(f"  {Fore.YELLOW}[regime] No data for {benchmark} — filter disabled{Style.RESET_ALL}")
+            return True
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        close = df["Close"].dropna()
+        if len(close) < sma_period:
+            print(f"  {Fore.YELLOW}[regime] Insufficient history for {benchmark} — filter disabled{Style.RESET_ALL}")
+            return True
+        sma = float(close.rolling(sma_period).mean().iloc[-1])
+        last = float(close.iloc[-1])
+        uptrend = last >= sma
+        status = f"{Fore.GREEN}UPTREND ✓" if uptrend else f"{Fore.RED}DOWNTREND ✗ — buy signals suppressed"
+        print(f"  [regime] {benchmark}: last={last:.2f}  SMA{sma_period}={sma:.2f}  → {status}{Style.RESET_ALL}")
+        return uptrend
+    except Exception as exc:
+        print(f"  {Fore.YELLOW}[regime] Error checking {benchmark}: {exc} — filter disabled{Style.RESET_ALL}")
+        return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CORE PIPELINE RUN
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -840,19 +886,30 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
 
     candidates_queue_path = cfg.candidates_queue_path
     if candidates_queue_path:
+        # ── Market regime check ──────────────────────────────────────────────
+        market_ok = True
+        if cfg.regime_filter:
+            print(f"\n  Checking market regime ({cfg.regime_benchmark} vs SMA{cfg.regime_sma_period})...")
+            market_ok = _is_market_in_uptrend(cfg.regime_benchmark, cfg.regime_sma_period)
+
         candidates_queue = []
-        confirmed = df_alerts[df_alerts[SIGNAL_COL_STATE] == STATE_CONFIRMED]
-        for index, row in confirmed.iterrows():
-            candidates_queue.append({
-                SIGNAL_COL_TICKER: row.get(SIGNAL_COL_TICKER, ""),
-                INTENT_COL_ALERT_STATE: row.get(SIGNAL_COL_STATE, ""),
-                INTENT_COL_PRIORITY: len(candidates_queue) + 1,
-                SIGNAL_COL_PATTERN: row.get(SIGNAL_COL_PATTERN, ""),
-                INTENT_COL_ENTRY_PRICE_PLANNED: row.get(SIGNAL_COL_ENTRY, ""),
-                INTENT_COL_STOP_PRICE: row.get(SIGNAL_COL_STOP, ""),
-                INTENT_COL_TARGET_PRICE: row.get("target_2R", ""),
-                INTENT_COL_RR: row.get("R:R", ""),
-            })
+        if market_ok:
+            confirmed = df_alerts[df_alerts[SIGNAL_COL_STATE] == STATE_CONFIRMED]
+            for index, row in confirmed.iterrows():
+                candidates_queue.append({
+                    SIGNAL_COL_TICKER: row.get(SIGNAL_COL_TICKER, ""),
+                    INTENT_COL_ALERT_STATE: row.get(SIGNAL_COL_STATE, ""),
+                    INTENT_COL_PRIORITY: len(candidates_queue) + 1,
+                    SIGNAL_COL_PATTERN: row.get(SIGNAL_COL_PATTERN, ""),
+                    INTENT_COL_ENTRY_PRICE_PLANNED: row.get(SIGNAL_COL_ENTRY, ""),
+                    INTENT_COL_STOP_PRICE: row.get(SIGNAL_COL_STOP, ""),
+                    INTENT_COL_TARGET_PRICE: row.get("target_2R", ""),
+                    INTENT_COL_RR: row.get("R:R", ""),
+                })
+        else:
+            print(f"  {Fore.RED}[regime] Market below SMA{cfg.regime_sma_period} — "
+                  f"candidates queue left empty (no new buys){Style.RESET_ALL}")
+
         _write_candidates_queue(candidates_queue, candidates_queue_path)
         print(f"  Queue   → {candidates_queue_path} ({len(candidates_queue)} ticker(s))")
 

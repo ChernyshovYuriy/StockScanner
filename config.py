@@ -24,9 +24,10 @@ LOGS_PATH = Path(OUT_PATH / "logs")
 LOCKS_PATH = Path(OUT_PATH / "locks")
 
 # Maximum number of positions the portfolio can hold simultaneously.
-# Available funds are divided by remaining open slots (MAX_POSITIONS minus
-# current holdings) so capital is always reserved for future opportunities.
-MAX_POSITIONS = 5
+# Available funds are divided by the number of tickers actually being bought
+# today (not by remaining slots), so capital is deployed immediately rather
+# than held idle waiting for a full set of signals.
+MAX_POSITIONS = 8
 
 
 class PositionMonitorMode(Enum):
