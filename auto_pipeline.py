@@ -676,6 +676,16 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     # Use calendar-day values for signal timestamps (no tz arithmetic).
     today = market_today()
 
+    # ── Resolve account size from funds file if not set ──────────────────────
+    if cfg.account_size <= 0:
+        funds_path = Path(cfg.base_dir) / FUNDS_PATH
+        cfg.account_size = read_funds(funds_path)
+        if cfg.account_size <= 0:
+            print(
+                f"{Fore.YELLOW}Warning: funds file returned ${cfg.account_size:,.2f} — "
+                f"position sizing will be zero. Add funds to {funds_path}.{Style.RESET_ALL}"
+            )
+
     # ── Setup dirs ───────────────────────────────────────────────────────────
     base = Path(cfg.base_dir)
     screener_dir = base / cfg.screener_subdir
