@@ -60,11 +60,11 @@ import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH, MAX_POSITIONS
+from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH, MAX_POSITIONS, RISK_PER_TRADE_PCT
 from funds import read_funds, write_funds
 from log_utils import log
 from schema_keys import INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT, \
-    INTENT_COL_REASON, \
+    INTENT_COL_ENTRY_PRICE_PLANNED, INTENT_COL_STOP_PRICE, INTENT_COL_REASON, \
     INTENT_COL_STATUS, INTENT_REQUIRED_COLS, POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_SHARES, \
     POSITIONS_COLS, SIGNAL_COL_TICKER
 from time_utils import market_today
@@ -317,10 +317,15 @@ def run_virtual_buy(
         actionable_indices = actionable_indices[:remaining_slots]
 
     n_buying = len(actionable_indices)
-    allocation_per_ticker = total_funds / n_buying
+
+    # ── Position-size cap: no single position takes more than 1/MAX_POSITIONS ─
+    max_position_value = total_funds / MAX_POSITIONS
+    dollar_risk = total_funds * (RISK_PER_TRADE_PCT / 100)
+
     print(f"  Positions    : {current_position_count} / {MAX_POSITIONS} occupied, {remaining_slots} slot(s) open")
-    print(
-        f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({n_buying} ticker(s) to buy, splitting all available cash)\n")
+    print(f"  Risk/trade   : ${dollar_risk:,.2f} ({RISK_PER_TRADE_PCT}% of ${total_funds:,.2f})")
+    print(f"  Max position : ${max_position_value:,.2f} (1/{MAX_POSITIONS} of funds)\n")
+
     # ── 3. Fetch prices & compute shares ────────────────────────────────────
     today = market_today().date()
     buy_records: list[dict] = []
@@ -337,11 +342,34 @@ def run_virtual_buy(
             intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             continue
 
-        shares = int(allocation_per_ticker / price)  # whole shares only
+        # ── Risk-based sizing using stop from the candidates queue ────────────
+        raw_entry = str(intents_df.at[idx, INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
+        raw_stop  = str(intents_df.at[idx, INTENT_COL_STOP_PRICE]).replace("$", "").strip()
+
+        shares = 0
+        sizing_method = "risk_based"
+        try:
+            planned_entry = float(raw_entry)
+            planned_stop  = float(raw_stop)
+            per_share_risk = planned_entry - planned_stop
+            if per_share_risk > 0:
+                shares_by_risk = int(dollar_risk / per_share_risk)
+                # Cap: position value must not exceed max_position_value
+                shares_by_cap  = int(max_position_value / price)
+                shares = min(shares_by_risk, shares_by_cap)
+            else:
+                sizing_method = "fallback_equal"
+        except (ValueError, TypeError):
+            sizing_method = "fallback_equal"
+
+        if sizing_method == "fallback_equal":
+            # Stop data missing or invalid — fall back to equal-split with a warning
+            print(f"{Fore.YELLOW}[no stop data — equal-split fallback]{Style.RESET_ALL} ", end="")
+            shares = int(max_position_value / price)
+
         if shares <= 0:
             print(
-                f"{Fore.YELLOW}price ${price:.2f} exceeds allocation "
-                f"${allocation_per_ticker:,.2f} — skipped{Style.RESET_ALL}"
+                f"{Fore.YELLOW}price ${price:.2f} too high for available allocation — skipped{Style.RESET_ALL}"
             )
             intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
             intents_df.at[idx, INTENT_COL_REASON] = "allocation_too_small"

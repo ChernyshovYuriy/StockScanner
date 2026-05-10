@@ -24,10 +24,12 @@ LOGS_PATH = Path(OUT_PATH / "logs")
 LOCKS_PATH = Path(OUT_PATH / "locks")
 
 # Maximum number of positions the portfolio can hold simultaneously.
-# Available funds are divided by the number of tickers actually being bought
-# today (not by remaining slots), so capital is deployed immediately rather
-# than held idle waiting for a full set of signals.
 MAX_POSITIONS = 8
+
+# Fraction of total funds risked on each trade (used by virtual_buy.py).
+# Shares = (funds * RISK_PER_TRADE_PCT/100) / (entry_price - stop_price)
+# Position value is additionally capped at funds / MAX_POSITIONS.
+RISK_PER_TRADE_PCT = 1.0
 
 
 class PositionMonitorMode(Enum):
