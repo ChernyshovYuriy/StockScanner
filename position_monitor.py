@@ -72,12 +72,18 @@ INITIAL_STOP_ATR_K = 1.5
 CHAND_TRAIL_ATR_K = 2.5
 
 # Profit giveback rule
-GIVEBACK_ACTIVATE_PCT = 2.0  # arm the rule once max profit hits 2%
-GIVEBACK_ALLOW_PCT = 1.0  # tolerate up to 1% pullback from peak
+# Armed once max profit >= GIVEBACK_ACTIVATE_PCT; sells if profit falls
+# more than GIVEBACK_ALLOW_PCT below the peak.
+# With a typical 5% stop and 2.0 R:R target (~10% move):
+#   activate=6%  → arms only after half the target is reached
+#   allow=3%     → tolerates a normal daily wiggle without ejecting early
+GIVEBACK_ACTIVATE_PCT = 6.0
+GIVEBACK_ALLOW_PCT = 3.0
 
-# Time stop
-TIME_STOP_DAYS = 10  # trading days (~2 calendar weeks)
-TIME_STOP_MIN_PROFIT_PCT = 1.5  # require +1.5% by day 10 or exit
+# Time stop: exit if position is not profitable after N trading days.
+# Swing setups need 3-4 calendar weeks to develop; 10 days was too short.
+TIME_STOP_DAYS = 20  # trading days (~4 calendar weeks)
+TIME_STOP_MIN_PROFIT_PCT = 0.0  # just require break-even; don't hold dead money
 
 # Stop trigger mode:
 #   "low"   -> fire if today's low  <= stop  (catches intraday breach)
