@@ -4,6 +4,7 @@ signal_db
 logs
 cache
 out
+screener_outputs
 .env
 data/candidates_queue.csv
 data/own.csv

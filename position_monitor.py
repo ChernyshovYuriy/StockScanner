@@ -46,6 +46,7 @@ from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
 from config import CACHE_PATH, LOGS_PATH, OWN_PATH, FUNDS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, ALERTS_PATH
+from funds import read_funds, write_funds
 from log_utils import log
 from report_html import append_positions_report
 from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, \
@@ -458,41 +459,6 @@ def parse_positions_csv(path: Path) -> list[Position]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FUNDS FILE HELPERS  (matches virtual_buy.py implementation exactly)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def read_funds(path: Path) -> float:
-    """Read available capital from a plain-text funds file."""
-    if not path.exists():
-        print(f"{Fore.YELLOW}Funds file not found: {path}{Style.RESET_ALL}")
-        return 0.0
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            return float(line.replace(",", "").replace("$", ""))
-        except ValueError:
-            print(f"{Fore.YELLOW}Could not parse funds value '{line}' in {path}{Style.RESET_ALL}")
-            return 0.0
-
-    return 0.0
-
-
-def write_funds(path: Path, amount: float) -> None:
-    """Overwrite the funds file with the new balance, preserving comment lines."""
-    comments: list[str] = []
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("#"):
-                comments.append(line)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(comments + [f"{amount:.2f}"]) + "\n", encoding="utf-8")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # VIRTUAL SELL EXECUTION
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -630,6 +596,7 @@ def _funds_summary_html(funds_before: float, funds_after: float, funds_gained: f
     unrealised_pnl: current paper gain/loss on all open (HOLD) positions
     unrealised_position_value: current market value of all open (HOLD) positions
     """
+
     def _fmt_pnl(pnl: float) -> str:
         sign = "+" if pnl >= 0 else "-"
         return f"{sign}${abs(pnl):,.2f}"

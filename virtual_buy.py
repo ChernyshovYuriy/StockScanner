@@ -61,64 +61,20 @@ from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
 from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH, MAX_POSITIONS
+from funds import read_funds, write_funds
 from log_utils import log
-from schema_keys import INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT, INTENT_COL_REASON, \
+from schema_keys import INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT, \
+    INTENT_COL_REASON, \
     INTENT_COL_STATUS, INTENT_REQUIRED_COLS, POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_SHARES, \
     POSITIONS_COLS, SIGNAL_COL_TICKER
 from time_utils import market_today
 
 init(autoreset=True)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FUNDS FILE
-# ─────────────────────────────────────────────────────────────────────────────
-
-def read_funds(path: Path) -> float:
-    """
-    Read available capital from a plain-text file.
-    The first non-blank, non-comment line is parsed as a float.
-    Returns 0.0 if the file is missing, empty, or unparseable.
-    """
-    if not path.exists():
-        print(f"{Fore.YELLOW}Funds file not found: {path}{Style.RESET_ALL}")
-        return 0.0
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            value = float(line.replace(",", "").replace("$", ""))
-            return value
-        except ValueError:
-            print(
-                f"{Fore.YELLOW}Could not parse funds value '{line}' "
-                f"in {path}{Style.RESET_ALL}"
-            )
-            return 0.0
-
-    print(f"{Fore.YELLOW}Funds file is empty: {path}{Style.RESET_ALL}")
-    return 0.0
-
-
-def write_funds(path: Path, amount: float) -> None:
-    """
-    Overwrite the funds file with the updated remaining balance.
-    Preserves any comment lines (starting with #) that were in the original.
-    """
-    comments: list[str] = []
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("#"):
-                comments.append(line)
-
-    lines = comments + [f"{amount:.2f}"]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SIGNALS FILE
@@ -363,7 +319,8 @@ def run_virtual_buy(
     n_buying = len(actionable_indices)
     allocation_per_ticker = total_funds / n_buying
     print(f"  Positions    : {current_position_count} / {MAX_POSITIONS} occupied, {remaining_slots} slot(s) open")
-    print(f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({n_buying} ticker(s) to buy, splitting all available cash)\n")
+    print(
+        f"  Per ticker   : ${allocation_per_ticker:,.2f}  ({n_buying} ticker(s) to buy, splitting all available cash)\n")
     # ── 3. Fetch prices & compute shares ────────────────────────────────────
     today = market_today().date()
     buy_records: list[dict] = []
