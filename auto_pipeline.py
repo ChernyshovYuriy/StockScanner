@@ -49,7 +49,8 @@ import yfinance as yf
 from colorama import Fore, Style, init
 from tabulate import tabulate
 
-from config import ALERTS_PATH, SCREENER_OUT_PATH, OUT_PATH
+from config import ALERTS_PATH, FUNDS_PATH, SCREENER_OUT_PATH, OUT_PATH
+from funds import read_funds
 from report_html import write_pipeline_report
 from schema_keys import SIGNAL_DB_COLS, SIGNAL_COL_ALERT_SENT, SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS, SIGNAL_COL_DETAIL, \
     SIGNAL_COL_DAYS_IN_STATE, SIGNAL_COL_ENTRY, SIGNAL_COL_FIRST_SEEN, SIGNAL_COL_LAST_SEEN, SIGNAL_COL_PATTERN, \
@@ -81,14 +82,15 @@ class PipelineConfig:
     max_tracked_tickers: int = 40  # cap to avoid excessive API calls
 
     # Entry detection params
-    account_size: float = 100_000.0
+    account_size: float = 0.0  # set from data/funds at runtime
     risk_per_trade_pct: float = 1.0
     atr_period: int = 14
     atr_stop_mult: float = 1.5
+    max_stop_pct: float = 7.0   # cap stop distance; prevents tiny positions on wide stops
     price_data_days: int = 400  # history window for pattern detection
 
     # Alert filtering
-    min_rr: float = 2.5  # minimum risk:reward to include in alerts (raised from 2.0)
+    min_rr: float = 2.0  # minimum risk:reward to include in alerts
     alert_on_forming: bool = True  # include FORMING signals (lower priority)
 
     # Market regime filter — block new buys when TSX benchmark is below its
@@ -501,37 +503,45 @@ def detect_all_patterns(ticker: str, df: pd.DataFrame) -> List[Dict]:
 # RISK / SIZING
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _find_resistance(high, entry: float, lookback: int = 252) -> Optional[float]:
+def _find_resistance(high, entry: float, min_rr_distance: float = 2.0,
+                     risk: float = 0.0, lookback: int = 252) -> Optional[float]:
     """
-    Return the nearest swing-high *above* entry within the last `lookback` bars.
-    A swing-high requires the bar to be higher than both its 2-bar neighbours.
-    Falls back to None if no resistance is found (caller uses ATR target instead).
+    Return the nearest swing-high *above* entry within the last `lookback` bars,
+    but only if it is at least `min_rr_distance * risk` above entry.
+    Resistance closer than that would produce R:R < min_rr_distance, so we
+    ignore it and let the caller fall back to an ATR-based target instead.
+    Falls back to None if no qualifying resistance is found.
     """
     h = high.iloc[-lookback:]
+    min_target = entry + min_rr_distance * risk if risk > 0 else entry
     candidates = []
     for i in range(2, len(h) - 2):
         v = h.iloc[i]
-        if v > entry and v >= h.iloc[i - 1] and v >= h.iloc[i + 1] \
+        if v > min_target and v >= h.iloc[i - 1] and v >= h.iloc[i + 1] \
                 and v >= h.iloc[i - 2] and v >= h.iloc[i + 2]:
             candidates.append(v)
     return float(min(candidates)) if candidates else None
 
 
 def compute_levels(close, high, low, entry: float,
-                   atr_period: int, atr_mult: float) -> Dict:
+                   atr_period: int, atr_mult: float,
+                   max_stop_pct: float = 7.0) -> Dict:
     atr_val = _atr(high, low, close, atr_period).iloc[-1]
     atr_stop = entry - atr_mult * atr_val
     swing_low = low.iloc[-20:].min()
-    stop = min(atr_stop, swing_low * 0.99)
+    raw_stop = min(atr_stop, swing_low * 0.99)
+
+    # Cap stop distance so wide stops don't shrink positions to insignificance
+    min_stop = entry * (1 - max_stop_pct / 100)
+    stop = max(raw_stop, min_stop)
+
     risk = max(entry - stop, 0.01)
 
-    # FIX: use nearest market resistance as the primary target so that R:R
-    # reflects real supply levels, not a tautological ATR multiple.
-    # If no resistance exists above entry we fall back to ATR projections, but
-    # callers should treat those R:R values as estimates only.
-    resistance = _find_resistance(high, entry)
+    # Only use resistance as target if it is at least 2R above entry,
+    # otherwise fall back to ATR projection (keeps R:R >= 2.0 by default).
+    resistance = _find_resistance(high, entry, min_rr_distance=2.0, risk=risk)
     if resistance is not None:
-        target_2r = resistance  # real supply ceiling
+        target_2r = resistance  # real supply ceiling at least 2R away
         target_3r = entry + 3 * risk  # ATR projection beyond resistance
     else:
         target_2r = entry + 2 * risk  # ATR-only fallback
@@ -771,7 +781,8 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
             # Compute trade levels
             entry = round(pivot * 1.005, 2)  # tiny buffer above pivot
             levels = compute_levels(close, high, low, entry,
-                                    cfg.atr_period, cfg.atr_stop_mult)
+                                    cfg.atr_period, cfg.atr_stop_mult,
+                                    cfg.max_stop_pct)
             sizing = compute_position_size(
                 cfg.account_size, cfg.risk_per_trade_pct,
                 levels["entry"], levels["stop"]
@@ -1134,9 +1145,10 @@ def main():
         description="Auto Entry Pipeline — TSX Swing Trading"
     )
     parser.add_argument("--base-dir", default=".", help="Root directory")
-    parser.add_argument("--account", default=100_000.0, type=float)
-    parser.add_argument("--risk", default=1.0, type=float,
-                        help="Risk per trade as %% of account (default: 1.0)")
+    parser.add_argument("--account", default=None, type=float,
+                        help="Account size override (default: read from data/funds)")
+    parser.add_argument("--max-stop", default=7.0, type=float,
+                        help="Max stop distance as %% of entry price (default: 7.0)")
     parser.add_argument("--min-days", default=1, type=int,
                         help="Min days ticker must appear in screener (default: 1)")
     parser.add_argument("--max-tickers", default=40, type=int)
@@ -1154,10 +1166,22 @@ def main():
                         help="Optional output file for tickers that jumped to CONFIRMED today")
     args = parser.parse_args()
 
+    if args.account is not None:
+        account_size = args.account
+    else:
+        funds_path = Path(args.base_dir) / FUNDS_PATH
+        account_size = read_funds(funds_path)
+        if account_size <= 0:
+            print(
+                f"{Fore.YELLOW}Warning: funds file returned ${account_size:,.2f} — "
+                f"position sizing will be zero. Use --account to override.{Style.RESET_ALL}"
+            )
+
     cfg = PipelineConfig(
         base_dir=args.base_dir,
-        account_size=args.account,
+        account_size=account_size,
         risk_per_trade_pct=args.risk,
+        max_stop_pct=args.max_stop,
         min_days_in_screener=args.min_days,
         max_tracked_tickers=args.max_tickers,
         schedule_time=args.schedule_time,
