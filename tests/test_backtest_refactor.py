@@ -760,20 +760,29 @@ class TestPositionMonitor:
         assert float(r["pnl_%"]) == pytest.approx(expected, abs=0.01)
 
     def test_time_stop_triggers_after_n_days_with_small_profit(self):
-        """TIME_STOP fires when tdays ≥ 7 and profit < 0.5%."""
-        from position_monitor import compute_signals
+        """TIME_STOP fires when tdays ≥ TIME_STOP_DAYS and profit < TIME_STOP_MIN_PROFIT_PCT.
+
+        TIME_STOP_MIN_PROFIT_PCT=0.0 means the position must be below break-even
+        (negative P&L) to trigger.  We set price slightly below entry to satisfy
+        that condition while keeping the position far from the ATR stop.
+        """
+        from position_monitor import compute_signals, TIME_STOP_DAYS, TIME_STOP_MIN_PROFIT_PCT
         n = 200
         idx = pd.bdate_range("2024-01-01", periods=n)
-        # Flat price — stays near entry, profit ≈ 0
-        price = np.full(n, 20.0)
+        # Price drifts slightly below entry — negative P&L, nowhere near the ATR stop
+        entry = 20.0
+        price = np.full(n, entry * 0.99)   # -1%: below break-even, above any ATR stop
         close = pd.Series(price, index=idx)
         df = pd.DataFrame({"Open": close, "High": close + 0.05,
                            "Low": close - 0.05, "Close": close,
                            "Volume": pd.Series(np.ones(n) * 300_000, index=idx)})
-        pos = self._Pos("X.TO", idx[0].date(), 20.0, 100.0)
+        pos = self._Pos("X.TO", idx[0].date(), entry, 100.0)
         r = compute_signals(pos, df)
-        # Should fire TIME_STOP since tdays >> 7 and profit ≈ 0
-        assert r["status"] == "SELL"
+        # tdays >> TIME_STOP_DAYS and profit < TIME_STOP_MIN_PROFIT_PCT (negative)
+        assert r["status"] == "SELL", (
+            f"Expected SELL (tdays={r.get('tdays')}, pnl={r.get('pnl_%'):.2f}%, "
+            f"TIME_STOP_DAYS={TIME_STOP_DAYS}, threshold={TIME_STOP_MIN_PROFIT_PCT}%)"
+        )
         assert "TIME_STOP" in r["reason"]
 
     def test_no_data_returns_status_key(self):
