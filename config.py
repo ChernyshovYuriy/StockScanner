@@ -31,6 +31,10 @@ MAX_POSITIONS = 8
 # Position value is additionally capped at funds / MAX_POSITIONS.
 RISK_PER_TRADE_PCT = 1.0
 
+# Maximum % a stock's open price may exceed the planned entry before the buy
+# is skipped. Protects against gap-ups that destroy the signal's R:R.
+GAP_FILTER_PCT = 2.0
+
 
 class PositionMonitorMode(Enum):
     PRE_CLOSE = 1

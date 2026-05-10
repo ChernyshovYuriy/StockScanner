@@ -60,7 +60,7 @@ import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH, MAX_POSITIONS, RISK_PER_TRADE_PCT
+from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH, MAX_POSITIONS, RISK_PER_TRADE_PCT, GAP_FILTER_PCT
 from funds import read_funds, write_funds
 from log_utils import log
 from schema_keys import INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT, \
@@ -341,6 +341,27 @@ def run_virtual_buy(
             intents_df.at[idx, INTENT_COL_REASON] = "no_price_data"
             intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
             continue
+
+        # ── Gap filter: skip if price has moved too far above planned entry ───
+        # A gap-up invalidates the R:R — the stop hasn't moved but the entry
+        # price has, so the trade no longer has the expected reward profile.
+        try:
+            planned_entry_for_gap = float(
+                str(intents_df.at[idx, INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
+            )
+            max_allowed = planned_entry_for_gap * (1 + GAP_FILTER_PCT / 100)
+            if price > max_allowed:
+                print(
+                    f"{Fore.YELLOW}gap-up skip: open ${price:.2f} > "
+                    f"entry ${planned_entry_for_gap:.2f} + {GAP_FILTER_PCT}% "
+                    f"(${max_allowed:.2f}){Style.RESET_ALL}"
+                )
+                intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
+                intents_df.at[idx, INTENT_COL_REASON] = f"gap_up_{price:.2f}_vs_{planned_entry_for_gap:.2f}"
+                intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+                continue
+        except (ValueError, TypeError):
+            pass  # no planned entry recorded — proceed without gap check
 
         # ── Risk-based sizing using stop from the candidates queue ────────────
         raw_entry = str(intents_df.at[idx, INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
