@@ -453,7 +453,7 @@ def parse_positions_csv(path: Path) -> list[Position]:
     positions: list[Position] = []
     for _, row in df.iterrows():
         ticker = str(row[SIGNAL_COL_TICKER]).strip()
-        if not ticker:
+        if not ticker or ticker.lower() == "nan":
             continue
         positions.append(Position(
             ticker=ticker,
@@ -708,7 +708,22 @@ def __run_send_report():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    mode: int = PositionMonitorMode.PRE_CLOSE
+    import argparse
+    parser = argparse.ArgumentParser(description="Position Monitor")
+    parser.add_argument(
+        "--mode",
+        choices=["pre-close", "post-close"],
+        default="pre-close",
+        help="pre-close: uses live intraday data + executes sells (default). "
+             "post-close: uses completed daily bars, read-only (no sells).",
+    )
+    args = parser.parse_args()
+    mode = (
+        PositionMonitorMode.PRE_CLOSE
+        if args.mode == "pre-close"
+        else PositionMonitorMode.POST_CLOSE
+    )
+
     service = "position_monitor"
     run_id = uuid.uuid4().hex
 

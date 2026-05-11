@@ -690,6 +690,23 @@ class TestLevelsAndSizing:
 
 @pytest.mark.characterization
 class TestPositionMonitor:
+    """Tests for position_monitor.compute_signals.
+
+    Exit-threshold tests must import the relevant constants from position_monitor
+    (e.g. TIME_STOP_DAYS, GIVEBACK_ACTIVATE_PCT) rather than hardcoding values.
+    That way the tests stay correct automatically when the constants are tuned.
+    """
+
+    # ── Module-level constants imported once for the whole class ─────────────
+    from position_monitor import (  # noqa: E402
+        TIME_STOP_DAYS,
+        TIME_STOP_MIN_PROFIT_PCT,
+        GIVEBACK_ACTIVATE_PCT,
+        GIVEBACK_ALLOW_PCT,
+        INITIAL_STOP_ATR_K,
+        CHAND_TRAIL_ATR_K,
+    )
+
     @dataclass
     class _Pos:
         ticker: str
@@ -743,12 +760,12 @@ class TestPositionMonitor:
             assert float(r["stop_price"]) < pos.entry_price
 
     def test_initial_stop_uses_atr_mult(self):
-        """initial_stop ≈ entry_price - 1.5 × ATR14."""
-        from position_monitor import compute_signals, INITIAL_STOP_ATR_K
+        """initial_stop ≈ entry_price - INITIAL_STOP_ATR_K × ATR14."""
+        from position_monitor import compute_signals
         df, pos = self._make_pos_fixture()
         r = compute_signals(pos, df)
         if "initial_stop" in r and "ATR14" in r:
-            expected = pos.entry_price - INITIAL_STOP_ATR_K * float(r["ATR14"])
+            expected = pos.entry_price - self.INITIAL_STOP_ATR_K * float(r["ATR14"])
             assert float(r["initial_stop"]) == pytest.approx(expected, rel=0.01)
 
     def test_pnl_pct_formula(self):
@@ -766,7 +783,7 @@ class TestPositionMonitor:
         (negative P&L) to trigger.  We set price slightly below entry to satisfy
         that condition while keeping the position far from the ATR stop.
         """
-        from position_monitor import compute_signals, TIME_STOP_DAYS, TIME_STOP_MIN_PROFIT_PCT
+        from position_monitor import compute_signals
         n = 200
         idx = pd.bdate_range("2024-01-01", periods=n)
         # Price drifts slightly below entry — negative P&L, nowhere near the ATR stop
@@ -778,10 +795,10 @@ class TestPositionMonitor:
                            "Volume": pd.Series(np.ones(n) * 300_000, index=idx)})
         pos = self._Pos("X.TO", idx[0].date(), entry, 100.0)
         r = compute_signals(pos, df)
-        # tdays >> TIME_STOP_DAYS and profit < TIME_STOP_MIN_PROFIT_PCT (negative)
+        # tdays >> self.TIME_STOP_DAYS and profit < self.TIME_STOP_MIN_PROFIT_PCT
         assert r["status"] == "SELL", (
             f"Expected SELL (tdays={r.get('tdays')}, pnl={r.get('pnl_%'):.2f}%, "
-            f"TIME_STOP_DAYS={TIME_STOP_DAYS}, threshold={TIME_STOP_MIN_PROFIT_PCT}%)"
+            f"TIME_STOP_DAYS={self.TIME_STOP_DAYS}, threshold={self.TIME_STOP_MIN_PROFIT_PCT}%)"
         )
         assert "TIME_STOP" in r["reason"]
 
