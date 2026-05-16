@@ -500,6 +500,29 @@ def test_save_intents_ignores_extra_keys_in_dict():
     assert len(load_pending_intents()) == 1
 
 
+def test_save_intents_accepts_dollar_sign_formatted_prices():
+    # auto_pipeline.py stores prices as '$80.57' display strings in the
+    # alerts DataFrame and passes them directly to save_intents().
+    # This is the exact format that crashed production on first deploy.
+    save_intents([{
+        "ticker": "RY.TO",
+        "signal_date": "2026-05-15",
+        "alert_state": "CONFIRMED",
+        "priority": 1,
+        "pattern": "VCP",
+        "entry_price_planned": "$80.57",
+        "stop_price": "$76.12",
+        "target_price": "$89.45",
+        "rr": "2.3",
+    }])
+    df = load_pending_intents()
+    assert len(df) == 1
+    assert df.iloc[0]["entry_price_planned"] == pytest.approx(80.57)
+    assert df.iloc[0]["stop_price"] == pytest.approx(76.12)
+    assert df.iloc[0]["target_price"] == pytest.approx(89.45)
+    assert df.iloc[0]["rr"] == pytest.approx(2.3)
+
+
 # signals ────────────────────────────────────────────────────────────────────
 
 def test_save_signals_with_missing_optional_columns():
