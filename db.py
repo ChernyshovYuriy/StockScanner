@@ -24,9 +24,10 @@ so callers need minimal changes when switching from CSV reads.
 
 from __future__ import annotations
 
+import math
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, List, Dict
+from typing import Generator, List, Dict, Optional
 
 import duckdb
 import pandas as pd
@@ -425,12 +426,31 @@ _INTENT_COLS = [
 ]
 
 
+def _parse_price(val) -> Optional[float]:
+    """
+    Convert a price value to float, stripping display formatting such as
+    '$80.57' or '2.5R' that auto_pipeline writes into the alerts DataFrame.
+    Returns None on any failure.
+    """
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val) if not math.isnan(float(val)) else None
+    try:
+        return float(str(val).replace("$", "").replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
 def save_intents(intents: List[Dict]) -> None:
     """
     Write a fresh batch of PENDING buy intents produced by auto_pipeline.
 
     Replaces only the PENDING rows so that EXECUTED/SKIPPED/EXPIRED history
     is preserved. Call once per pipeline run.
+
+    Price columns are normalised via _parse_price() to handle the '$80.57'
+    formatted strings that auto_pipeline stores in its alerts DataFrame.
     """
     from time_utils import market_now
     now = market_now().isoformat()
@@ -444,6 +464,11 @@ def save_intents(intents: List[Dict]) -> None:
         df["created_at"] = now
         if "intent_reason" not in df.columns:
             df["intent_reason"] = None
+        # Strip $ / formatting from price columns — auto_pipeline stores them
+        # as display strings (e.g. '$80.57') in the alerts DataFrame.
+        for col in ("entry_price_planned", "stop_price", "target_price", "rr"):
+            if col in df.columns:
+                df[col] = df[col].apply(_parse_price)
         insert_df = df.reindex(columns=_INTENT_COLS)
         cols = ", ".join(_INTENT_COLS)
         conn.register("_intents_tmp", insert_df)
