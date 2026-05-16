@@ -53,7 +53,7 @@ from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSIT
     POSITION_COL_PNL_DOLLARS, \
     POSITION_COL_PNL_PCT, POSITION_COL_REASON, POSITION_COL_SHARES, POSITION_COL_STATUS, POSITIONS_COLS, \
     SIGNAL_COL_TICKER
-from send_report import send_report, SendConfig
+from send_report import send_report, send_transaction_email, SendConfig
 from time_utils import date_to_iso_basic, market_now, market_today
 
 init(autoreset=True)
@@ -565,6 +565,14 @@ def execute_virtual_sells(
         f"→ ${new_funds:,.2f}{Style.RESET_ALL}"
     )
     print(f"{'─' * 60}\n")
+
+    send_transaction_email(
+        buys=[],
+        sells=sold_records,
+        cash_before=current_funds,
+        cash_after=new_funds,
+        open_positions_count=remaining_count,
+    )
 
     return {
         "funds_before": current_funds,

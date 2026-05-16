@@ -163,6 +163,274 @@ def validate_config() -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TRANSACTION EMAIL — buy / sell activity notification
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_transaction_html(
+    buys: list,
+    sells: list,
+    cash_before: float,
+    cash_after: float,
+    open_positions_count: int,
+) -> str:
+    """
+    Build a Gmail-compatible HTML email for trade activity.
+
+    buys  : list of buy-record dicts with keys: ticker, shares, entry_price, pattern
+    sells : list of sell-record dicts with keys: ticker, shares, entry_price,
+            sell_price, proceeds, pnl_$, pnl_%, reason
+    """
+    from time_utils import market_today_str
+    date_str = market_today_str()
+
+    # ── Palette (matches report_html.py light theme) ──────────────────────────
+    TEXT       = "#1a1d2e"
+    MUTED      = "#5a6080"
+    BORDER     = "#dde1ea"
+    PAGE_BG    = "#f4f6f9"
+    WHITE      = "#ffffff"
+    GREEN      = "#0a7c4e"
+    GREEN_BG   = "#f0fdf7"
+    RED        = "#c0152f"
+    RED_BG     = "#fff0f2"
+    HEADER_BG  = "#1a1d2e"
+    FONT       = "Arial,Helvetica,sans-serif"
+
+    # ── Header label ──────────────────────────────────────────────────────────
+    if buys and sells:
+        icon, subtitle = "🔄", f"{len(buys)} bought · {len(sells)} sold"
+    elif buys:
+        n = len(buys)
+        icon, subtitle = "🟢", f"{n} position{'s' if n != 1 else ''} opened"
+    else:
+        n = len(sells)
+        icon, subtitle = "🔴", f"{n} position{'s' if n != 1 else ''} closed"
+
+    # ── Summary card ──────────────────────────────────────────────────────────
+    cash_delta  = cash_after - cash_before
+    delta_sign  = "+" if cash_delta >= 0 else ""
+    delta_color = GREEN if cash_delta >= 0 else RED
+
+    extra_rows = ""
+    if buys:
+        total_cost = sum(float(r.get("shares", 0)) * float(r.get("entry_price", 0)) for r in buys)
+        extra_rows += f"<li><b>Total invested</b>: ${total_cost:,.2f}</li>"
+    if sells:
+        total_proceeds = sum(float(r.get("proceeds", 0)) for r in sells)
+        total_pnl      = sum(float(r.get("pnl_$", 0))   for r in sells)
+        pnl_color = GREEN if total_pnl >= 0 else RED
+        pnl_sign  = "+" if total_pnl >= 0 else ""
+        extra_rows += (
+            f"<li><b>Total proceeds</b>: ${total_proceeds:,.2f}</li>"
+            f"<li><b>Realised P&amp;L</b>: "
+            f"<span style='color:{pnl_color};font-weight:bold'>"
+            f"{pnl_sign}${abs(total_pnl):,.2f}</span></li>"
+        )
+
+    summary = f"""
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"
+     style="border-collapse:collapse;background:{WHITE};border:1px solid {BORDER};margin-bottom:16px">
+    <tr><td style="padding:20px 24px;font-family:{FONT};color:{TEXT}">
+      <div style="font-size:12px;font-weight:bold;color:{MUTED};margin-bottom:10px;
+                  text-transform:uppercase;letter-spacing:.5px">Summary</div>
+      <ul style="margin:0;padding-left:18px;line-height:1.9;font-size:14px">
+        <li><b>Cash before</b>: ${cash_before:,.2f}</li>
+        <li><b>Cash after</b>&nbsp;: ${cash_after:,.2f}
+          &nbsp;<span style="color:{delta_color};font-weight:bold">
+            ({delta_sign}${abs(cash_delta):,.2f})</span></li>
+        {extra_rows}
+        <li><b>Open positions</b>: {open_positions_count}</li>
+      </ul>
+    </td></tr></table>"""
+
+    # ── Buys table ────────────────────────────────────────────────────────────
+    TH = (f"padding:8px 12px;font-family:{FONT};font-size:11px;font-weight:bold;"
+          f"text-transform:uppercase;color:{MUTED}")
+    buys_section = ""
+    if buys:
+        rows = ""
+        for i, r in enumerate(buys):
+            bg      = WHITE if i % 2 == 0 else PAGE_BG
+            ticker  = r.get("ticker", "")
+            shares  = float(r.get("shares", 0))
+            price   = float(r.get("entry_price", 0))
+            cost    = round(shares * price, 2)
+            pattern = r.get("pattern") or "—"
+            rows += f"""
+            <tr style="background:{bg}">
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         font-weight:bold;color:{TEXT}">{ticker}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{TEXT};text-align:right">{shares:.0f}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{TEXT};text-align:right">${price:.4f}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{TEXT};text-align:right">${cost:,.2f}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{MUTED}">{pattern}</td>
+            </tr>"""
+        buys_section = f"""
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+         style="border-collapse:collapse;background:{WHITE};border:1px solid {BORDER};margin-bottom:16px">
+          <tr style="background:{GREEN_BG}">
+            <td colspan="5" style="padding:12px 16px;font-family:{FONT};
+                                   font-size:14px;font-weight:bold;color:{GREEN}">
+              🟢 Positions Opened</td></tr>
+          <tr style="background:{PAGE_BG}">
+            <th style="{TH};text-align:left">Ticker</th>
+            <th style="{TH};text-align:right">Shares</th>
+            <th style="{TH};text-align:right">Price</th>
+            <th style="{TH};text-align:right">Cost</th>
+            <th style="{TH};text-align:left">Pattern</th>
+          </tr>
+          {rows}
+        </table>"""
+
+    # ── Sells table ───────────────────────────────────────────────────────────
+    sells_section = ""
+    if sells:
+        rows = ""
+        for i, r in enumerate(sells):
+            bg          = WHITE if i % 2 == 0 else PAGE_BG
+            ticker      = r.get("ticker", "")
+            shares      = float(r.get("shares", 0))
+            entry_price = float(r.get("entry_price", 0))
+            sell_price  = float(r.get("sell_price", 0))
+            pnl_dollars = float(r.get("pnl_$", 0))
+            pnl_pct     = float(r.get("pnl_%", 0))
+            reason      = r.get("reason", "")
+            pc          = GREEN if pnl_dollars >= 0 else RED
+            ps          = "+" if pnl_dollars >= 0 else "-"
+            rows += f"""
+            <tr style="background:{bg}">
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         font-weight:bold;color:{TEXT}">{ticker}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{TEXT};text-align:right">{shares:.0f}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{TEXT};text-align:right">${entry_price:.4f}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{TEXT};text-align:right">${sell_price:.4f}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         font-weight:bold;color:{pc};text-align:right">{ps}${abs(pnl_dollars):,.2f}</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:13px;
+                         color:{pc};text-align:right">{ps}{abs(pnl_pct):.2f}%</td>
+              <td style="padding:10px 12px;font-family:{FONT};font-size:12px;
+                         color:{MUTED}">{reason}</td>
+            </tr>"""
+        sells_section = f"""
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+         style="border-collapse:collapse;background:{WHITE};border:1px solid {BORDER};margin-bottom:16px">
+          <tr style="background:{RED_BG}">
+            <td colspan="7" style="padding:12px 16px;font-family:{FONT};
+                                   font-size:14px;font-weight:bold;color:{RED}">
+              🔴 Positions Closed</td></tr>
+          <tr style="background:{PAGE_BG}">
+            <th style="{TH};text-align:left">Ticker</th>
+            <th style="{TH};text-align:right">Shares</th>
+            <th style="{TH};text-align:right">Entry</th>
+            <th style="{TH};text-align:right">Sell</th>
+            <th style="{TH};text-align:right">P&amp;L $</th>
+            <th style="{TH};text-align:right">P&amp;L %</th>
+            <th style="{TH};text-align:left">Reason</th>
+          </tr>
+          {rows}
+        </table>"""
+
+    # ── Full document ─────────────────────────────────────────────────────────
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:{PAGE_BG}">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{PAGE_BG}">
+<tr><td align="center" style="padding:20px 8px">
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%">
+
+  <tr><td style="background:{HEADER_BG};padding:20px 24px;border-radius:4px 4px 0 0">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td style="font-family:{FONT};font-size:18px;font-weight:bold;color:#ffffff">
+        {icon} Trade Activity</td>
+      <td align="right" style="font-family:{FONT};font-size:12px;color:#9099b8">
+        {date_str}</td>
+    </tr>
+    <tr><td colspan="2" style="font-family:{FONT};font-size:13px;color:#9099b8;padding-top:4px">
+        {subtitle}</td></tr>
+    </table>
+  </td></tr>
+
+  <tr><td style="background:{PAGE_BG};padding:16px 0">
+    {summary}
+    {buys_section}
+    {sells_section}
+  </td></tr>
+
+  <tr><td style="padding:8px 0 16px;text-align:center;
+                 font-family:{FONT};font-size:11px;color:#9099b8">
+    Virtual transactions only — not financial advice
+  </td></tr>
+
+</table>
+</td></tr></table>
+</body>
+</html>"""
+
+
+def send_transaction_email(
+    buys: list,
+    sells: list,
+    cash_before: float,
+    cash_after: float,
+    open_positions_count: int = 0,
+) -> None:
+    """
+    Send a trade activity notification email.
+
+    Silently skips if Gmail is not configured (so unconfigured systems
+    don't crash on every trade).  Always call after DB writes are committed —
+    never in dry_run paths.
+    """
+    if not buys and not sells:
+        return
+
+    problems = validate_config()
+    if problems:
+        print("  [transaction email] skipped — Gmail not configured.")
+        return
+
+    from time_utils import market_today_str
+    date_str = market_today_str()
+
+    if buys and sells:
+        subject = f"🔄 TSX — {len(buys)} bought, {len(sells)} sold — {date_str}"
+    elif buys:
+        n = len(buys)
+        subject = f"🟢 TSX — {n} position{'s' if n != 1 else ''} opened — {date_str}"
+    else:
+        n = len(sells)
+        subject = f"🔴 TSX — {n} position{'s' if n != 1 else ''} closed — {date_str}"
+
+    html_content = build_transaction_html(buys, sells, cash_before, cash_after, open_positions_count)
+
+    plain = (
+        f"TSX Trade Activity — {date_str}\n"
+        f"Cash: ${cash_before:,.2f} → ${cash_after:,.2f}\n"
+        f"Positions opened : {len(buys)}\n"
+        f"Positions closed : {len(sells)}\n"
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["From"]    = GMAIL_SENDER
+    msg["To"]      = GMAIL_RECIPIENT
+    msg["Subject"] = subject
+    msg.attach(MIMEText(plain, "plain", "utf-8"))
+    msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+    send_email(msg)
+    print(f"  ✓ Transaction email sent → {GMAIL_RECIPIENT}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EMAIL BUILDER
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -47,6 +47,7 @@ from db import (
     set_cash,
 )
 from log_utils import log
+from send_report import send_transaction_email
 from schema_keys import (
     INTENT_COL_ENTRY_PRICE_PLANNED,
     INTENT_COL_STOP_PRICE,
@@ -343,6 +344,13 @@ def run_virtual_buy(
     print(f"{'─' * 60}\n")
 
     print(f"{Fore.RED}⚠  VIRTUAL TRANSACTIONS ONLY — not financial advice.{Style.RESET_ALL}\n")
+    send_transaction_email(
+        buys=buy_records,
+        sells=[],
+        cash_before=total_funds,
+        cash_after=remaining,
+        open_positions_count=len(get_open_positions_df()),
+    )
     log(service, run_id, "completed", bought=len(buy_records), skipped=skipped_count)
 
 
