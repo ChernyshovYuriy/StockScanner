@@ -500,6 +500,25 @@ def test_save_intents_ignores_extra_keys_in_dict():
     assert len(load_pending_intents()) == 1
 
 
+def test_save_intents_without_signal_date_defaults_to_today():
+    # auto_pipeline's candidates_queue does not include signal_date —
+    # save_intents must fill it rather than letting DuckDB raise NOT NULL.
+    save_intents([{
+        "ticker": "RY.TO",
+        "alert_state": "CONFIRMED",
+        "priority": 1,
+        "pattern": "VCP",
+        "entry_price_planned": 80.57,
+        "stop_price": 76.12,
+        "target_price": 89.45,
+        "rr": 2.3,
+        # signal_date intentionally absent
+    }])
+    df = load_pending_intents()
+    assert len(df) == 1
+    assert df.iloc[0]["signal_date"] is not None
+
+
 def test_save_intents_accepts_dollar_sign_formatted_prices():
     # auto_pipeline.py stores prices as '$80.57' display strings in the
     # alerts DataFrame and passes them directly to save_intents().

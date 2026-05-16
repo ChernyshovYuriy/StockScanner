@@ -462,6 +462,10 @@ def save_intents(intents: List[Dict]) -> None:
         df["ticker"] = df["ticker"].str.upper()
         df["intent_status"] = "PENDING"
         df["created_at"] = now
+        # signal_date is not included in the candidates_queue built by
+        # auto_pipeline — default to today, matching the old _write_candidates_queue behaviour.
+        if "signal_date" not in df.columns or df["signal_date"].isna().all():
+            df["signal_date"] = market_now().date().isoformat()
         if "intent_reason" not in df.columns:
             df["intent_reason"] = None
         # Strip $ / formatting from price columns — auto_pipeline stores them
