@@ -353,6 +353,17 @@ def test_mark_intent_executed():
     intent_id = int(load_pending_intents().iloc[0]["id"])
     mark_intent_executed(intent_id, 50.25, 99)
     assert load_pending_intents().empty
+    # Verify execution details were persisted, not just the status flag.
+    import duckdb
+    conn = duckdb.connect(str(db_module.DB_PATH))
+    row = conn.execute(
+        "SELECT intent_status, executed_price, executed_shares FROM intents WHERE id = ?",
+        [intent_id],
+    ).fetchone()
+    conn.close()
+    assert row[0] == "EXECUTED"
+    assert row[1] == pytest.approx(50.25)
+    assert row[2] == pytest.approx(99.0)
 
 
 def test_mark_intent_skipped():
@@ -360,6 +371,16 @@ def test_mark_intent_skipped():
     intent_id = int(load_pending_intents().iloc[0]["id"])
     mark_intent_skipped(intent_id, "gap-up filter")
     assert load_pending_intents().empty
+    # Verify the skip reason was persisted, not just the status flag.
+    import duckdb
+    conn = duckdb.connect(str(db_module.DB_PATH))
+    row = conn.execute(
+        "SELECT intent_status, intent_reason FROM intents WHERE id = ?",
+        [intent_id],
+    ).fetchone()
+    conn.close()
+    assert row[0] == "SKIPPED"
+    assert row[1] == "gap-up filter"
 
 
 def test_mark_intent_executed_on_unknown_id_does_not_raise():

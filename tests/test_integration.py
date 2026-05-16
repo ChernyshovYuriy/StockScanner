@@ -360,6 +360,8 @@ def test_execute_virtual_sells_dry_run_writes_nothing():
     assert len(get_open_positions()) == 1  # position still there
     assert get_cash() == 5_000.0           # cash unchanged
     assert get_all_trades().empty
+    sell_txs = get_transactions()[get_transactions()["side"] == "SELL"]
+    assert sell_txs.empty                  # no SELL transaction recorded
 
 
 def test_execute_virtual_sells_empty_list_returns_zeros():
@@ -461,12 +463,23 @@ def test_pipeline_intents_then_sell_full_lifecycle():
     cash_after_buy = get_cash()
     assert cash_after_buy < 10_000.0
 
-    # Position triggers a SELL signal later that day
-    execute_virtual_sells([_sell_row("RY.TO", shares=100.0, sell_price=45.00,
-                                     pnl_dollars=250.0, pnl_pct=5.88)])
+    # Read what was actually bought so the sell row is consistent.
+    pos = get_open_positions()[0]
+    actual_shares = pos["shares"]
+    actual_entry  = pos["entry_price"]
+    sell_price    = 45.00
+    proceeds      = round(actual_shares * sell_price, 2)
+    pnl_dollars   = round((sell_price - actual_entry) * actual_shares, 2)
+    pnl_pct       = round((sell_price / actual_entry - 1) * 100, 2)
+
+    execute_virtual_sells([_sell_row("RY.TO",
+                                     shares=actual_shares,
+                                     sell_price=sell_price,
+                                     pnl_dollars=pnl_dollars,
+                                     pnl_pct=pnl_pct)])
 
     assert get_open_positions() == []
-    assert get_cash() > cash_after_buy          # proceeds returned
+    assert get_cash() == pytest.approx(cash_after_buy + proceeds)
     assert len(get_all_trades()) == 1
 
     tx = get_transactions()
