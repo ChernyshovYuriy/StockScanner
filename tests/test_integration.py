@@ -112,7 +112,9 @@ def test_virtual_buy_inserts_position_and_deducts_cash():
     positions = get_open_positions()
     assert len(positions) == 1
     assert positions[0]["ticker"] == "RY.TO"
-    assert get_cash() < 10_000.0
+    # risk_based sizing: dollar_risk=100, per_share_risk=2.50 → 40 shares by risk,
+    # capped to int(1250/42.50)=29 by max_position_value → cost = 29 * 42.50 = 1232.50
+    assert get_cash() == pytest.approx(10_000.0 - 1232.50)
 
 
 def test_virtual_buy_marks_intent_executed():
@@ -219,6 +221,7 @@ def test_virtual_buy_dry_run_writes_nothing():
 
     assert get_open_positions() == []
     assert get_cash() == 10_000.0
+    assert get_transactions().empty        # no BUY recorded
     assert not load_pending_intents().empty  # intent still pending
 
 
@@ -326,11 +329,10 @@ def test_execute_virtual_sells_records_sell_transaction():
 
     execute_virtual_sells([_sell_row("RY.TO", sell_price=45.00)])
 
-    tx = get_transactions()
-    assert len(tx) == 2  # BUY (from insert_position) + SELL
-    sell_tx = tx[tx["side"] == "SELL"].iloc[0]
-    assert sell_tx["ticker"] == "RY.TO"
-    assert sell_tx["price"] == 45.00
+    sell_txs = get_transactions()[get_transactions()["side"] == "SELL"]
+    assert len(sell_txs) == 1
+    assert sell_txs.iloc[0]["ticker"] == "RY.TO"
+    assert sell_txs.iloc[0]["price"] == 45.00
 
 
 def test_execute_virtual_sells_multiple_positions():

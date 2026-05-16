@@ -703,10 +703,10 @@ class TestAnalyzeStock:
         bench = df["Close"].copy()
         rs_universe = list(np.linspace(-10, 10, 50))
         result = sc.analyze_stock("X.TO", df, bench, rs_universe=rs_universe)
-        if result is not None:
-            assert isinstance(result, StockResult)
-            assert result.ticker == "X.TO"
-            assert 0 <= result.composite_score <= 100
+        assert result is not None
+        assert isinstance(result, StockResult)
+        assert result.ticker == "X.TO"
+        assert 0 <= result.composite_score <= 100
 
     def test_composite_score_bounded(self):
         sc = self._make_screener()
