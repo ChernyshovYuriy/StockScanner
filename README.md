@@ -1,166 +1,309 @@
-# TSX Canadian Stock Screener + Auto Entry Pipeline
+# TSX Swing Trading System
 
-Python tools for **screening Canadian (TSX) stocks** and running a **daily swing-trading “entry pipeline”** that tracks candidates across days and emits actionable alerts when setups move through a signal state machine.
+A fully automated virtual swing-trading system for **Canadian (TSX) stocks**.
+Screens the market daily, detects technical entry patterns, executes virtual
+buys and sells, and emails a report after every trade.
 
-This repo contains two primary scripts:
-
-- **`canadian_stock_screener.py`** — multi-factor momentum screener that ranks a predefined TSX universe and saves a *top-N* CSV.
-- **`auto_pipeline.py`** — consumes daily screener outputs, tracks tickers over time, detects technical entry patterns, and produces alerts + a persistent signal database.
-
-> Data source: Yahoo Finance via `yfinance`.
+> Data source: Yahoo Finance via `yfinance`. All transactions are virtual —
+> no real brokerage connection.
 
 ---
 
-## Repo layout
+## How it works
 
-```
-.
-├── canadian_stock_screener.py
-├── auto_pipeline.py
-├── config.py
-├── requirements.txt
-└── data/
-    └── can_tickers        # TSX universe list (one ticker per line)
-```
+Three scheduled services cooperate across the trading day:
 
----
+| Time (ET) | Service | What it does |
+|---|---|---|
+| **4:30 PM** | `main.py` | Checks market regime → rebuilds universe → runs screener → detects patterns → queues buy candidates |
+| **9:30 AM** | `virtual_buy.py` | Reads the candidate queue, fetches live prices, sizes and executes virtual buys → sends trade email |
+| **3:30 PM** | `position_monitor.py` | Evaluates open positions against exit rules using intraday data → executes virtual sells → sends trade email |
 
-## 1) Canadian stock screener
-
-### What it does
-`canadian_stock_screener.py` downloads ~2 years of daily data and scores each ticker with a weighted stack (see `CONFIG["weights"]` in the script):
-
-- **Weinstein Stage II alignment**
-- **Relative Strength vs benchmark** (`XIU.TO`)
-- **MACD momentum**
-- **OBV slope** (volume accumulation)
-- **ADX trend strength**
-- **Volatility-adjusted momentum (VAM)**
-- **52-week high proximity / breakout pressure**
-
-It also applies basic filters such as **minimum price** and **minimum average volume**.
-
-### Output
-- Prints a table to the console.
-- Saves the top picks to:
-  - `out/screener_outputs/YYYYMMDD_HHMM.csv`
-
-### Run
-```bash
-python canadian_stock_screener.py
-```
-
-### Configure
-Edit `CONFIG` inside `canadian_stock_screener.py`:
-- `top_n` (default 10)
-- `min_price` (default 2.0 CAD)
-- `min_avg_volume` (default 100,000)
-- `weights` (factor weighting)
-- `lookback_days` (default 504 trading days)
-
-Universe list:
-- `data/can_tickers`
-
----
-
-## 2) Automated entry pipeline
-
-### What it does
-`auto_pipeline.py` reads daily screener outputs, tracks tickers across days, detects entry patterns, and alerts on signal state transitions.
-
-**Accepted inputs (flexible):**
-- Any CSV with a **`Ticker`** or **`symbol`** column
-- Example names (from the script header):
-  - `top10_tsx_20260218_1430.csv`
-  - `my_tickers_2026-02-18.csv`
-- JSON is also supported for some upstream tools (see `auto_pipeline.py` header).
-
-### Patterns detected
-The pipeline currently runs **three detectors**:
-
-1. **VCP (Volatility Contraction Pattern)**
-2. **EMA pullback reclaim** (EMA21 and EMA50 variants)
-3. **Base breakout** (tight range + volume confirmation)
-
-### Signal state machine
-```
-FORMING  →  AT_PIVOT  →  CONFIRMED  →  ACTIVE / FAILED
-```
-
-### Alert priority
-- 🔴 **URGENT** — state jumped to **CONFIRMED** today (often “enter next session open” style)
-- 🟡 **WATCH** — state reached **AT_PIVOT** today (often “place buy-stop” / watch volume)
-- 🟢 **FORMING** — setup building, check again
-- ⚫ **EXPIRED** — invalidated/expired
-
-### Directory layout (auto-created)
-On first run, the pipeline creates:
-
-```
-<base_dir>/
-  out/
-    screener_outputs/      # drop daily top-N CSVs here
-    signal_db/
-      signal_history.csv   # persistent signal state across days (auto-managed)
-    alerts/
-      alerts_YYYYMMDD.csv  # actionable alerts for each run
-      report_YYYYMMDD.txt  # human-readable daily report
-```
-
-## 3) Operational services and schedule
-
-This repository is run as three operational services:
-
-- **`main.py`**
-  - Builds swing universe, runs screener, runs pipeline, and sends report.
-  - Typical schedule: **once daily after market close**.
-
-- **`virtual_buy.py`**
-  - Executes virtual buys from the candidate queue and updates funds/positions files.
-  - Typical schedule: **once daily after the pipeline/report step**.
-
-- **`position_monitor.py`**
-  - Monitors open positions and can execute virtual sells in pre-close mode.
-  - Typical schedule:
-    - **Pre-close** run for actionable intraday exits.
-    - **Post-close** run for informational end-of-day monitoring.
+All state — cash, positions, trades, signals, intents — lives in a single
+**DuckDB database** at `data/trading.db`.
 
 ---
 
 ## Installation
 
-### Requirements
-- Python **3.10+** recommended
-- Internet access (Yahoo Finance via `yfinance`)
+**Requirements:** Python 3.10+, internet access (Yahoo Finance).
 
-### Install deps
 ```bash
+git clone <repo>
+cd StockScanner
+
 python -m venv .venv
-# Linux/macOS:
-source .venv/bin/activate
-# Windows:
-# .venv\Scripts\activate
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
 ```
 
 ---
 
+## First-time setup
+
+### 1. Set your starting capital
+
+Run once before anything else. Replace `50000` with your paper-trading capital:
+
+```bash
+python -c "from db import init_db, set_cash; init_db(); set_cash(50_000)"
+```
+
+Verify the database was created and the balance is correct:
+
+```bash
+python -c "
+from db import init_db, get_cash, get_open_positions
+init_db()
+print('Cash     :', get_cash())
+print('Positions:', get_open_positions())
+"
+```
+
+### 2. Configure email (optional but recommended)
+
+The system sends a trade notification email after every buy or sell.
+Gmail requires an **App Password** (not your regular password).
+
+1. Enable 2-Step Verification at <https://myaccount.google.com/security>
+2. Create an App Password → copy the 16-character code
+3. Create a `.env` file in the repo root:
+
+```
+GMAIL_SENDER=you@gmail.com
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+GMAIL_RECIPIENT=you@gmail.com
+```
+
+If `.env` is absent the system runs normally — it just skips emails.
+
+### 3. Run `main.py` before the first trading day
+
+Run this on the weekend before you want to start:
+
+```bash
+python main.py
+```
+
+This populates `data/trading.db` with the first batch of signals and queues
+any `CONFIRMED` setups as pending buy intents. `virtual_buy.py` will consume
+them Monday morning.
+
+---
+
+## Daily operation
+
+Once the system is running, the three services execute automatically on their
+schedule. To run them manually:
+
+```bash
+# End-of-day (after 4:30 PM ET)
+python main.py
+
+# Next morning (at/after 9:30 AM ET open)
+python virtual_buy.py
+
+# Pre-close (around 3:30 PM ET, market still open)
+python position_monitor.py --mode pre-close
+
+# Optional post-close informational run
+python position_monitor.py --mode post-close
+```
+
+### Dry-run mode
+
+Both `virtual_buy.py` and `position_monitor.py` support `--dry-run` to
+preview activity without touching the database:
+
+```bash
+python virtual_buy.py --dry-run
+python position_monitor.py --mode pre-close --dry-run  # not yet wired — informational only
+```
+
+---
+
+## Querying the database
+
+Use DuckDB directly for ad-hoc queries:
+
+```python
+import duckdb
+conn = duckdb.connect("data/trading.db")
+
+conn.execute("SELECT * FROM transactions ORDER BY trade_date").df()     # full ledger
+conn.execute("SELECT * FROM positions").df()                             # open positions
+conn.execute("SELECT * FROM trades ORDER BY sell_date").df()             # closed trades
+conn.execute("SELECT * FROM account").df()                               # cash balance
+conn.execute("SELECT * FROM intents WHERE intent_status = 'PENDING'").df()
+
+conn.close()
+```
+
+### Database tables
+
+| Table | Contents |
+|---|---|
+| `account` | Current cash balance |
+| `positions` | Open virtual positions (ticker, entry date, price, shares) |
+| `trades` | Permanent closed-trade log with full P&L |
+| `transactions` | Unified ledger — every BUY and SELL in chronological order |
+| `signals` | Pipeline signal state machine (rebuilt each run) |
+| `intents` | Buy candidate queue with execution history |
+
+---
+
+## Screener
+
+`canadian_stock_screener.py` scores each ticker in the TSX universe with a
+weighted factor stack:
+
+- **Weinstein Stage II alignment**
+- **Relative Strength vs XIU.TO**
+- **MACD momentum**
+- **OBV slope** (volume accumulation)
+- **ADX trend strength**
+- **Volatility-adjusted momentum (VAM)**
+- **52-week high proximity / breakout pressure**
+
+**Universe:** `data/can_tickers_universe` (one ticker per line) →
+filtered by the universe builder into `data/can_tickers`.
+
+**Output:** `out/screener_out/YYYYMMDD_HHMM.csv`
+
+**Configure** via `CONFIG` dict inside `canadian_stock_screener.py`:
+`top_n`, `min_price`, `min_avg_volume`, `weights`, `lookback_days`.
+
+---
+
+## Entry pipeline
+
+`auto_pipeline.py` reads screener CSVs, tracks tickers across days, and runs
+three pattern detectors:
+
+1. **VCP** — Volatility Contraction Pattern
+2. **EMA pullback reclaim** — EMA21 and EMA50 variants
+3. **Base breakout** — tight range + volume confirmation
+
+### Signal state machine
+
+```
+FORMING  →  AT_PIVOT  →  CONFIRMED  →  ACTIVE
+                     ↘              ↘  FAILED / EXPIRED
+```
+
+`CONFIRMED` setups are written to the `intents` table as `PENDING` buy
+candidates. `virtual_buy.py` processes them the following morning.
+
+### Market regime filter
+
+Before generating new signals, `main.py` checks whether **XIU.TO** is above
+its 200-day SMA. In a bear regime, signal generation is skipped — no new
+positions are opened. Existing positions continue to be monitored.
+
+---
+
+## Exit rules (`position_monitor.py`)
+
+Each position is evaluated against four exit rules (defaults):
+
+| Rule | Trigger |
+|---|---|
+| Initial stop | Entry − 1.5 × ATR(14) |
+| Chandelier trail | Highest high since entry − 2.5 × ATR(14) |
+| Profit giveback | Max profit ≥ 6% and current profit drops ≥ 3% below peak |
+| Time stop | ≥ 20 trading days held with profit < 0% |
+
+---
+
+## Backtesting
+
+Run a historical backtest over any date range:
+
+```bash
+# Single run
+python run_backtest.py --start 2022-01-01 --end 2024-01-01
+
+# Custom tickers file
+python run_backtest.py --tickers data/can_tickers --start 2022-01-01 --end 2024-01-01
+
+# Parameter sweep (risk_pct × top_n_buys combinations)
+python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep
+
+python run_backtest.py --help
+```
+
+Output files are written to `out/`:
+- `backtest_DATES_TIMESTAMP.html` — HTML report with equity curve and trade log
+- `backtest_trades_TIMESTAMP.csv` — full trade log
+- `backtest_equity_TIMESTAMP.csv` — day-by-day equity curve
+
+---
+
+## Directory layout
+
+```
+.
+├── main.py                  # end-of-day service (4:30 PM)
+├── virtual_buy.py           # morning buy execution (9:30 AM)
+├── position_monitor.py      # pre/post-close monitor (3:30 PM)
+├── auto_pipeline.py         # pattern detection + signal state machine
+├── canadian_stock_screener.py
+├── run_backtest.py          # backtest CLI
+├── db.py                    # DuckDB persistence layer
+├── send_report.py           # Gmail email sender
+├── config.py                # path constants + trading parameters
+├── data/
+│   ├── trading.db           # all live state (auto-created on first run)
+│   ├── can_tickers          # filtered universe (written by universe builder)
+│   └── can_tickers_universe # raw TSX universe (one ticker per line)
+└── out/
+    ├── screener_out/        # daily screener CSVs
+    ├── alerts/              # daily alert CSVs + HTML report
+    ├── logs/                # service run logs
+    └── locks/               # process lock files
+```
+
+---
+
+## Running tests
+
+```bash
+pytest tests/ -v
+
+# By phase gate (backtest refactor)
+pytest -v -m phase1    # clock injection
+pytest -v -m phase2    # MarketDataProvider
+pytest -v -m phase3    # PortfolioState
+pytest -v -m phase4    # BacktestRunner
+pytest -v -m phase5    # HTML report
+pytest -v -m phase6    # CLI entry point
+
+# Specific files
+pytest tests/test_db.py -v           # database layer
+pytest tests/test_integration.py -v  # service integration
+```
+
+---
+
 ## Notes / limitations
 
-- `yfinance` depends on Yahoo endpoints; intermittent rate limits or missing data can happen.
-- The screener is designed around **TSX tickers** and uses **`XIU.TO`** as the benchmark.
-- The pipeline caps tracked tickers (`--max-tickers`, default 40) to avoid excessive API calls.
+- `yfinance` depends on Yahoo Finance endpoints — intermittent rate limits
+  or missing data can occur.
+- The screener and benchmark (`XIU.TO`) are designed for **TSX tickers**.
+- The pipeline caps tracked tickers (default 40) to limit API calls.
+- All transactions are virtual — this system does **not** connect to any
+  brokerage.
 
 ---
 
 ## Disclaimer
 
-This repository is for research/education and does **not** constitute financial advice. Trading involves risk.
+For research and education only. Does **not** constitute financial advice.
+Trading involves risk of loss.
 
 ---
 
 ## License
 
-- MIT
-
+MIT

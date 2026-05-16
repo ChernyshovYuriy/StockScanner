@@ -8,3 +8,4 @@ screener_outputs
 .env
 data/candidates_queue.csv
 data/own.csv
+data/trading.db
