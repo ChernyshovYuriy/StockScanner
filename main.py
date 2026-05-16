@@ -9,7 +9,7 @@ from canadian_stock_screener import DataManager, StockScreener, CONFIG, display_
 from concurrent_utils import acquire_lock
 from config import ALERTS_PATH
 from config import CAN_TICKERS_PATH, CAN_TICKERS_ONE_LINE_PATH, CAN_TICKERS_REJECTED_PATH, SCREENER_OUT_PATH, \
-    CAN_TICKERS_UNIVERSE_PATH, REPORT_PATH, CANDIDATES_QUEUE_PATH
+    CAN_TICKERS_UNIVERSE_PATH, REPORT_PATH
 from log_utils import log
 from send_report import SendConfig, send_report
 from swing_tickers import UniverseBuilderConfig, Thresholds, run_universe_builder
@@ -114,7 +114,6 @@ def __run_stock_screener():
 def __run_pipeline():
     cfg = PipelineConfig(
         shared_report_path=REPORT_PATH,
-        candidates_queue_path=CANDIDATES_QUEUE_PATH
     )
     run_pipeline(cfg)
 

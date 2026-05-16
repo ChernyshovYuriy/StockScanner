@@ -7,11 +7,10 @@ detects entry patterns, and alerts on signal state transitions.
 Directory layout (auto-created on first run):
   <base_dir>/
     screener_outputs/     ← drop your daily top-N CSVs here
-    signal_db/
-      signal_history.csv  ← persistent signal state across days (auto-managed)
     alerts/
       alerts_YYYYMMDD.csv ← actionable alerts for each run
       report_YYYYMMDD.txt ← human-readable daily report
+  data/trading.db         ← persistent signal state and intent queue (auto-managed)
 
 CSV naming convention (flexible — any of these work):
   top10_tsx_20260218_1430.csv   ← from canadian_stock_screener.py
@@ -49,8 +48,8 @@ import yfinance as yf
 from colorama import Fore, Style, init
 from tabulate import tabulate
 
-from config import ALERTS_PATH, FUNDS_PATH, SCREENER_OUT_PATH, OUT_PATH
-from funds import read_funds
+from config import ALERTS_PATH, SCREENER_OUT_PATH, OUT_PATH
+from db import get_cash, init_db, load_signals, save_signals, save_intents
 from report_html import write_pipeline_report
 from schema_keys import SIGNAL_DB_COLS, SIGNAL_COL_ALERT_SENT, SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS, SIGNAL_COL_DETAIL, \
     SIGNAL_COL_DAYS_IN_STATE, SIGNAL_COL_ENTRY, SIGNAL_COL_FIRST_SEEN, SIGNAL_COL_LAST_SEEN, SIGNAL_COL_PATTERN, \
@@ -73,7 +72,6 @@ class PipelineConfig:
     # Directory layout
     base_dir: str = "."  # root — all sub-dirs created here
     screener_subdir: str = SCREENER_OUT_PATH  # drop daily CSVs here
-    db_subdir: str = OUT_PATH / "signal_db"  # signal history lives here
     alerts_subdir: str = ALERTS_PATH  # daily alert output
 
     # Ticker promotion rules
@@ -82,7 +80,7 @@ class PipelineConfig:
     max_tracked_tickers: int = 40  # cap to avoid excessive API calls
 
     # Entry detection params
-    account_size: float = 0.0  # set from data/funds at runtime
+    account_size: float = 0.0  # set from db.get_cash() at runtime
     risk_per_trade_pct: float = 1.0
     atr_period: int = 14
     atr_stop_mult: float = 1.5
@@ -105,9 +103,6 @@ class PipelineConfig:
 
     # Reporting
     shared_report_path: Optional[str] = None  # optional single-file report output
-
-    # Buy candidates
-    candidates_queue_path: Optional[str] = None  # optional single-file for buy candidates
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,25 +290,22 @@ def build_ticker_persistence(history: Dict[datetime, List[str]],
 # SIGNAL DB — persistent state across daily runs
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_signal_db(db_path: Path) -> pd.DataFrame:
-    if db_path.exists():
-        try:
-            db = pd.read_csv(db_path)
-            for col in (SIGNAL_COL_FIRST_SEEN, SIGNAL_COL_LAST_SEEN):
-                if col in db.columns:
-                    # Keep seen columns as calendar dates (no time/tz semantics).
-                    # This avoids tz-aware/naive mixing while matching the business
-                    # meaning of these fields: "seen on day X".
-                    day_text = db[col].astype(str).str.extract(r"(\d{4}-\d{2}-\d{2})", expand=False)
-                    db[col] = pd.to_datetime(day_text, errors="coerce").dt.date
-            return db
-        except Exception:
-            pass
-    return pd.DataFrame(columns=SIGNAL_DB_COLS)
+def load_signal_db() -> pd.DataFrame:
+    db = load_signals()
+    if db.empty:
+        return pd.DataFrame(columns=SIGNAL_DB_COLS)
+    for col in (SIGNAL_COL_FIRST_SEEN, SIGNAL_COL_LAST_SEEN):
+        if col in db.columns:
+            # Keep seen columns as calendar dates (no time/tz semantics).
+            # This avoids tz-aware/naive mixing while matching the business
+            # meaning of these fields: "seen on day X".
+            day_text = db[col].astype(str).str.extract(r"(\d{4}-\d{2}-\d{2})", expand=False)
+            db[col] = pd.to_datetime(day_text, errors="coerce").dt.date
+    return db
 
 
-def save_signal_db(db: pd.DataFrame, db_path: Path) -> None:
-    db.to_csv(db_path, index=False)
+def save_signal_db(db: pd.DataFrame) -> None:
+    save_signals(db)
 
 
 def expire_missing_tickers(db: pd.DataFrame,
@@ -678,23 +670,19 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
 
     # ── Resolve account size from funds file if not set ──────────────────────
     if cfg.account_size <= 0:
-        funds_path = Path(cfg.base_dir) / FUNDS_PATH
-        cfg.account_size = read_funds(funds_path)
+        cfg.account_size = get_cash()
         if cfg.account_size <= 0:
             print(
-                f"{Fore.YELLOW}Warning: funds file returned ${cfg.account_size:,.2f} — "
-                f"position sizing will be zero. Add funds to {funds_path}.{Style.RESET_ALL}"
+                f"{Fore.YELLOW}Warning: cash balance is ${cfg.account_size:,.2f} — "
+                f"position sizing will be zero. Set cash via db.set_cash().{Style.RESET_ALL}"
             )
 
     # ── Setup dirs ───────────────────────────────────────────────────────────
     base = Path(cfg.base_dir)
     screener_dir = base / cfg.screener_subdir
-    db_dir = base / cfg.db_subdir
     alerts_dir = base / cfg.alerts_subdir
-    for d in (screener_dir, db_dir, alerts_dir):
+    for d in (screener_dir, alerts_dir):
         d.mkdir(parents=True, exist_ok=True)
-
-    db_path = db_dir / "signal_history.csv"
 
     print(f"\n{'=' * 65}")
     print(f"  {Fore.YELLOW}🤖  AUTO ENTRY PIPELINE  —  {date_to_iso_extended(today)}{Style.RESET_ALL}")
@@ -732,7 +720,7 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
 
     # ── Step 3: Load signal DB & expire missing ──────────────────────────────
     print(f"\n{Fore.CYAN}[3/5] Loading signal history...{Style.RESET_ALL}")
-    db = load_signal_db(db_path)
+    db = load_signal_db()
     db = expire_missing_tickers(db, tracked, today)
     print(f"  DB has {len(db)} existing signals")
 
@@ -889,7 +877,7 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
 
     # ── Step 5: Save DB & write outputs ─────────────────────────────────────
     print(f"\n{Fore.CYAN}[5/5] Saving results...{Style.RESET_ALL}")
-    save_signal_db(db, db_path)
+    save_signal_db(db)
 
     df_alerts = pd.DataFrame(alerts) if alerts else pd.DataFrame()
 
@@ -905,34 +893,32 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     alert_csv = alerts_dir / f"alerts_{date_to_iso_basic(today)}.csv"
     df_alerts.to_csv(alert_csv, index=False)
 
-    candidates_queue_path = cfg.candidates_queue_path
-    if candidates_queue_path:
-        # ── Market regime check ──────────────────────────────────────────────
-        market_ok = True
-        if cfg.regime_filter:
-            print(f"\n  Checking market regime ({cfg.regime_benchmark} vs SMA{cfg.regime_sma_period})...")
-            market_ok = _is_market_in_uptrend(cfg.regime_benchmark, cfg.regime_sma_period)
+    # ── Market regime check & write intent queue to database ─────────────────
+    market_ok = True
+    if cfg.regime_filter:
+        print(f"\n  Checking market regime ({cfg.regime_benchmark} vs SMA{cfg.regime_sma_period})...")
+        market_ok = _is_market_in_uptrend(cfg.regime_benchmark, cfg.regime_sma_period)
 
-        candidates_queue = []
-        if market_ok:
-            confirmed = df_alerts[df_alerts[SIGNAL_COL_STATE] == STATE_CONFIRMED]
-            for index, row in confirmed.iterrows():
-                candidates_queue.append({
-                    SIGNAL_COL_TICKER: row.get(SIGNAL_COL_TICKER, ""),
-                    INTENT_COL_ALERT_STATE: row.get(SIGNAL_COL_STATE, ""),
-                    INTENT_COL_PRIORITY: len(candidates_queue) + 1,
-                    SIGNAL_COL_PATTERN: row.get(SIGNAL_COL_PATTERN, ""),
-                    INTENT_COL_ENTRY_PRICE_PLANNED: row.get(SIGNAL_COL_ENTRY, ""),
-                    INTENT_COL_STOP_PRICE: row.get(SIGNAL_COL_STOP, ""),
-                    INTENT_COL_TARGET_PRICE: row.get("target_2R", ""),
-                    INTENT_COL_RR: row.get("R:R", ""),
-                })
-        else:
-            print(f"  {Fore.RED}[regime] Market below SMA{cfg.regime_sma_period} — "
-                  f"candidates queue left empty (no new buys){Style.RESET_ALL}")
+    candidates_queue = []
+    if market_ok:
+        confirmed = df_alerts[df_alerts[SIGNAL_COL_STATE] == STATE_CONFIRMED] if not df_alerts.empty else pd.DataFrame()
+        for _, row in confirmed.iterrows():
+            candidates_queue.append({
+                SIGNAL_COL_TICKER: row.get(SIGNAL_COL_TICKER, ""),
+                INTENT_COL_ALERT_STATE: row.get(SIGNAL_COL_STATE, ""),
+                INTENT_COL_PRIORITY: len(candidates_queue) + 1,
+                SIGNAL_COL_PATTERN: row.get(SIGNAL_COL_PATTERN, ""),
+                INTENT_COL_ENTRY_PRICE_PLANNED: row.get(SIGNAL_COL_ENTRY, ""),
+                INTENT_COL_STOP_PRICE: row.get(SIGNAL_COL_STOP, ""),
+                INTENT_COL_TARGET_PRICE: row.get("target_2R", ""),
+                INTENT_COL_RR: row.get("R:R", ""),
+            })
+    else:
+        print(f"  {Fore.RED}[regime] Market below SMA{cfg.regime_sma_period} — "
+              f"candidates queue left empty (no new buys){Style.RESET_ALL}")
 
-        _write_candidates_queue(candidates_queue, candidates_queue_path)
-        print(f"  Queue   → {candidates_queue_path} ({len(candidates_queue)} ticker(s))")
+    save_intents(candidates_queue)
+    print(f"  Queue   → database ({len(candidates_queue)} ticker(s))")
 
     # Write human-readable report
     _write_report(df_alerts, db, alerts_dir, today, cfg, len(tracked), cfg.shared_report_path)
@@ -980,30 +966,6 @@ def _print_summary(df_alerts: pd.DataFrame, today: datetime, n_tracked: int):
         print(f"  {em} {row[SIGNAL_COL_TICKER]:<12} {row[SIGNAL_COL_PATTERN]:<10} {row[SIGNAL_COL_DETAIL]}")
 
 
-def _write_candidates_queue(intents: List[Dict[str, object]], output_path: str) -> None:
-    """Write structured entry intents to the queue CSV file."""
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    now = market_now()
-    created_at = now.isoformat()
-    signal_date = now.date().isoformat()
-    rows = []
-    for priority, intent in enumerate(intents, start=1):
-        rows.append({
-            SIGNAL_COL_TICKER: intent.get(SIGNAL_COL_TICKER, ""),
-            INTENT_COL_SIGNAL_DATE: signal_date,
-            INTENT_COL_ALERT_STATE: intent.get(INTENT_COL_ALERT_STATE, STATE_CONFIRMED),
-            INTENT_COL_PRIORITY: intent.get(INTENT_COL_PRIORITY, priority),
-            SIGNAL_COL_PATTERN: intent.get(SIGNAL_COL_PATTERN, ""),
-            INTENT_COL_ENTRY_PRICE_PLANNED: intent.get(INTENT_COL_ENTRY_PRICE_PLANNED, ""),
-            INTENT_COL_STOP_PRICE: intent.get(INTENT_COL_STOP_PRICE, ""),
-            INTENT_COL_TARGET_PRICE: intent.get(INTENT_COL_TARGET_PRICE, ""),
-            INTENT_COL_RR: intent.get(INTENT_COL_RR, ""),
-            INTENT_COL_STATUS: "pending",
-            INTENT_COL_REASON: "",
-            INTENT_COL_CREATED_AT: created_at,
-        })
-    pd.DataFrame(rows, columns=INTENT_REQUIRED_COLS).to_csv(out, index=False)
 
 
 def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
@@ -1088,7 +1050,7 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
     alerts_fname = f"alerts_{date_to_iso_basic(today)}.csv"
     print(f"  Report  → {report_path}")
     print(f"  Alerts  → {alerts_dir / alerts_fname}")
-    print(f"  DB      → signal_db/signal_history.csv")
+    print(f"  DB      → data/trading.db (signals table)")
 
 
 def _write_empty_report(alerts_dir: Path, today: datetime,
@@ -1156,7 +1118,7 @@ def main():
     )
     parser.add_argument("--base-dir", default=".", help="Root directory")
     parser.add_argument("--account", default=None, type=float,
-                        help="Account size override (default: read from data/funds)")
+                        help="Account size override (default: read from database)")
     parser.add_argument("--max-stop", default=7.0, type=float,
                         help="Max stop distance as %% of entry price (default: 7.0)")
     parser.add_argument("--min-days", default=1, type=int,
@@ -1171,19 +1133,17 @@ def main():
     parser.add_argument("--shared-report-file",
                         default="report/report.html",
                         help="Optional single report file path that pipeline writes to")
-    parser.add_argument("--candidates_queue",
-                        default="positions/candidates",
-                        help="Optional output file for tickers that jumped to CONFIRMED today")
     args = parser.parse_args()
+
+    init_db()
 
     if args.account is not None:
         account_size = args.account
     else:
-        funds_path = Path(args.base_dir) / FUNDS_PATH
-        account_size = read_funds(funds_path)
+        account_size = get_cash()
         if account_size <= 0:
             print(
-                f"{Fore.YELLOW}Warning: funds file returned ${account_size:,.2f} — "
+                f"{Fore.YELLOW}Warning: cash balance is ${account_size:,.2f} — "
                 f"position sizing will be zero. Use --account to override.{Style.RESET_ALL}"
             )
 
@@ -1196,7 +1156,6 @@ def main():
         max_tracked_tickers=args.max_tickers,
         schedule_time=args.schedule_time,
         shared_report_path=args.shared_report_file,
-        candidates_queue_path=args.candidates_queue
     )
 
     # Single ticker debug mode

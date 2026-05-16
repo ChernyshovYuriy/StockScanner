@@ -1,58 +1,33 @@
 """
 virtual_buy.py
 ==============
-Executes virtual buy transactions for tickers found in a signals file.
+Executes virtual buy transactions for tickers found in the intent queue.
 
-Reads available funds from a plain-text funds file, fetches the current
-price for each ticker via Yahoo Finance (same pattern as the rest of this
-project), computes how many whole shares can be purchased, and appends a
-record to a positions CSV file.
+Reads available cash and pending intents from the database, fetches the
+current price for each ticker via Yahoo Finance, computes how many whole
+shares can be purchased, and writes new positions to the database.
 
-If the signals file is empty or contains no valid tickers — does nothing.
-If the funds file is missing or contains 0 — does nothing.
+If the intent queue is empty or contains no valid tickers — does nothing.
+If cash balance is 0 — does nothing.
 
 Usage
 -----
-  python virtual_buy.py \\
-      --signals  screener_outputs/20260312T1600.csv \\
-      --funds    funds.txt \\
-      --positions positions/positions.csv
-
-  python virtual_buy.py \\
-      --signals  screener_outputs/20260312T1600.csv \\
-      --funds    funds.txt \\
-      --positions positions/positions.csv \\
-      --top      3          # buy only the top-N tickers by score (default: all)
-
+  python virtual_buy.py
+  python virtual_buy.py --top 3   # buy only the top-N pending intents
+  python virtual_buy.py --dry-run
   python virtual_buy.py --help
 
 Arguments
 ---------
-  --signals    Path to the structured entry-intent CSV emitted by the
-               pipeline (requires intent_status and related intent columns).
-  --funds      Path to a plain-text file whose first non-blank line is the
-               total available capital in CAD (e.g. "50000" or "50000.00").
-               Funds are split equally across all purchased tickers.
-  --positions  Path to the output positions CSV.  The file is APPENDED to
-               (never overwritten) so it accumulates across multiple runs.
-               Created with a header row if it does not yet exist.
-  --top        (optional) Limit processing to the first N pending intent rows.
-               Default: process all pending intents.
-  --dry-run    Print what would be bought without writing anything.
-
-Output CSV columns
-------------------
-  ticker, entry_date, entry_price, shares
-
-  This format is intentionally compatible with position_monitor.py.
+  --top      (optional) Limit processing to the first N pending intent rows.
+             Default: process all pending intents.
+  --dry-run  Print what would be bought without writing anything.
 """
 
 from __future__ import annotations
 
 import sys
 import uuid
-from datetime import date
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -60,48 +35,30 @@ import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import CANDIDATES_QUEUE_PATH, FUNDS_PATH, OWN_PATH, MAX_POSITIONS, RISK_PER_TRADE_PCT, GAP_FILTER_PCT
-from funds import read_funds, write_funds
+from config import MAX_POSITIONS, RISK_PER_TRADE_PCT, GAP_FILTER_PCT
+from db import (
+    get_cash,
+    get_open_positions_df,
+    init_db,
+    insert_position,
+    load_pending_intents,
+    mark_intent_executed,
+    mark_intent_skipped,
+    set_cash,
+)
 from log_utils import log
-from schema_keys import INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT, \
-    INTENT_COL_ENTRY_PRICE_PLANNED, INTENT_COL_STOP_PRICE, INTENT_COL_REASON, \
-    INTENT_COL_STATUS, INTENT_REQUIRED_COLS, POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_SHARES, \
-    POSITIONS_COLS, SIGNAL_COL_TICKER
+from schema_keys import (
+    INTENT_COL_ENTRY_PRICE_PLANNED,
+    INTENT_COL_STOP_PRICE,
+    POSITION_COL_ENTRY_DATE,
+    POSITION_COL_ENTRY_PRICE,
+    POSITION_COL_SHARES,
+    SIGNAL_COL_PATTERN,
+    SIGNAL_COL_TICKER,
+)
 from time_utils import market_today
 
 init(autoreset=True)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CONSTANTS
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SIGNALS FILE
-# ─────────────────────────────────────────────────────────────────────────────
-
-def load_intents_csv(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame(columns=INTENT_REQUIRED_COLS)
-    try:
-        return pd.read_csv(path)
-    except Exception:
-        return pd.DataFrame(columns=INTENT_REQUIRED_COLS)
-
-
-def persist_intent_updates(path: Path, df: pd.DataFrame) -> None:
-    df.to_csv(path, index=False)
-
-
-def validate_intents_csv(df: pd.DataFrame, path: Path) -> bool:
-    missing = [col for col in INTENT_REQUIRED_COLS if col not in df.columns]
-    if missing:
-        print(
-            f"{Fore.RED}Structured intents CSV missing required columns: {missing}. "
-            f"Found: {list(df.columns)} in {path}{Style.RESET_ALL}"
-        )
-        return False
-    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,151 +111,82 @@ def fetch_latest_price(ticker: str) -> Optional[float]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POSITIONS CSV  — append-only, position_monitor.py compatible
-# ─────────────────────────────────────────────────────────────────────────────
-
-def load_positions(path: Path) -> pd.DataFrame:
-    """Load existing positions CSV, or return an empty DataFrame."""
-    if path.exists():
-        try:
-            return pd.read_csv(path)
-        except Exception:
-            pass
-    return pd.DataFrame(columns=POSITIONS_COLS)
-
-
-def append_position(path: Path, ticker: str, entry_date: date,
-                    entry_price: float, shares: float) -> None:
-    """Append a single new position row to the CSV."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    new_row = pd.DataFrame([{
-        SIGNAL_COL_TICKER: ticker,
-        POSITION_COL_ENTRY_DATE: entry_date.isoformat(),
-        POSITION_COL_ENTRY_PRICE: round(entry_price, 4),
-        POSITION_COL_SHARES: shares,
-    }])
-
-    write_header = not path.exists() or path.stat().st_size == 0
-    new_row.to_csv(path, mode="a", index=False, header=write_header)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # CORE BUY LOGIC
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_virtual_buy(
-        signals_path: Path,
-        funds_path: Path,
-        positions_path: Path,
         top_n: Optional[int],
         dry_run: bool,
         run_id: Optional[str] = None,
 ) -> None:
     service = "virtual_buy"
     run_id = run_id or uuid.uuid4().hex
-    log(service, run_id, "start", signals_path=str(signals_path), funds_path=str(funds_path),
-        positions_path=str(positions_path), dry_run=dry_run)
+    log(service, run_id, "start", dry_run=dry_run)
 
     print(f"\n{'=' * 60}")
     print(f"  {Fore.YELLOW}💸  Virtual Buy Runner{Style.RESET_ALL}")
     print(f"{'=' * 60}\n")
 
     # ── 1. Read intents ──────────────────────────────────────────────────────
-    intents_df = load_intents_csv(signals_path)
+    intents_df = load_pending_intents()
     if intents_df.empty:
-        print(f"{Fore.YELLOW}No intents found in signals file — nothing to buy.{Style.RESET_ALL}")
-        return
-    if not validate_intents_csv(intents_df, signals_path):
+        print(f"{Fore.YELLOW}No pending intents in queue — nothing to buy.{Style.RESET_ALL}")
         return
 
-    intents_df = intents_df.copy()
-    intents_df[SIGNAL_COL_TICKER] = intents_df[SIGNAL_COL_TICKER].astype(str).str.strip().str.upper()
-    intents_df[INTENT_COL_STATUS] = intents_df[INTENT_COL_STATUS].astype(str).str.strip().str.lower()
-    intents_df[INTENT_COL_REASON] = intents_df[INTENT_COL_REASON].fillna("").astype(str)
-    for optional_col in (INTENT_COL_EXECUTED_PRICE, INTENT_COL_EXECUTED_SHARES, INTENT_COL_PROCESSED_AT):
-        if optional_col not in intents_df.columns:
-            intents_df[optional_col] = ""
-
-    pending_df = intents_df[intents_df[INTENT_COL_STATUS] == "pending"].copy()
     if top_n is not None and top_n > 0:
-        pending_df = pending_df.head(top_n)
-    if pending_df.empty:
-        print(f"{Fore.YELLOW}No pending intents in signals file — nothing to buy.{Style.RESET_ALL}")
-        return
+        intents_df = intents_df.head(top_n).copy()
 
-    pending_indices = pending_df.index.tolist()
-    pending_tickers = pending_df[SIGNAL_COL_TICKER].tolist()
-
-    print(f"  Signals file : {signals_path}")
+    pending_tickers = intents_df[SIGNAL_COL_TICKER].tolist()
     print(f"  Pending intents found: {', '.join(pending_tickers)}\n")
 
-    positions_df = load_positions(positions_path)
-    owned_tickers = set()
-    if not positions_df.empty and SIGNAL_COL_TICKER in positions_df.columns:
-        owned_tickers = {
-            t.strip().upper() for t in positions_df[SIGNAL_COL_TICKER].dropna().astype(str).tolist() if t.strip()
-        }
+    owned_tickers = set(get_open_positions_df()["ticker"].str.upper())
 
     duplicate_seen: set[str] = set()
     run_seen: set[str] = set()
-    actionable_indices: list[int] = []
-    processed_at = market_today().isoformat()
+    actionable: list[dict] = []
     skipped_count = 0
-    for idx in pending_indices:
-        ticker = str(intents_df.at[idx, SIGNAL_COL_TICKER]).strip().upper()
+
+    for _, row in intents_df.iterrows():
+        ticker = str(row[SIGNAL_COL_TICKER]).strip().upper()
+        intent_id = int(row["id"])
+
         if not ticker or ticker == "NAN":
-            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
-            intents_df.at[idx, INTENT_COL_REASON] = "invalid_ticker"
-            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+            if not dry_run:
+                mark_intent_skipped(intent_id, "invalid_ticker")
             skipped_count += 1
             continue
         if ticker in duplicate_seen:
-            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
-            intents_df.at[idx, INTENT_COL_REASON] = "duplicate_pending"
-            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+            if not dry_run:
+                mark_intent_skipped(intent_id, "duplicate_pending")
             skipped_count += 1
             continue
         duplicate_seen.add(ticker)
 
         if ticker in owned_tickers:
-            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
-            intents_df.at[idx, INTENT_COL_REASON] = "already_owned"
-            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+            if not dry_run:
+                mark_intent_skipped(intent_id, "already_owned")
             skipped_count += 1
             continue
 
         if ticker in run_seen:
-            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
-            intents_df.at[idx, INTENT_COL_REASON] = "duplicate_run"
-            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+            if not dry_run:
+                mark_intent_skipped(intent_id, "duplicate_run")
             skipped_count += 1
             continue
 
         run_seen.add(ticker)
-        actionable_indices.append(idx)
+        actionable.append({"intent_id": intent_id, "ticker": ticker, "row": row})
 
     # ── 2. Read available funds ──────────────────────────────────────────────
-    total_funds = read_funds(funds_path)
+    total_funds = get_cash()
     if total_funds <= 0:
-        print(
-            f"{Fore.YELLOW}Available funds is ${total_funds:,.2f} — nothing to buy.{Style.RESET_ALL}"
-        )
-        if not dry_run:
-            persist_intent_updates(signals_path, intents_df)
+        print(f"{Fore.YELLOW}Available funds is ${total_funds:,.2f} — nothing to buy.{Style.RESET_ALL}")
         return
 
-    print(f"  Funds file   : {funds_path}")
     print(f"  Total funds  : ${total_funds:,.2f}")
 
-    # Equal-weight allocation across tickers being bought today.
-    # Capital is split only among the tickers we are actually buying now,
-    # ensuring available cash is deployed rather than held idle for slots
-    # that may never fill.  MAX_POSITIONS still caps the total open positions.
-    if not actionable_indices:
+    if not actionable:
         print(f"{Fore.YELLOW}No actionable pending intents — nothing to buy.{Style.RESET_ALL}")
-        if not dry_run:
-            persist_intent_updates(signals_path, intents_df)
         return
 
     current_position_count = len(owned_tickers)
@@ -308,17 +196,12 @@ def run_virtual_buy(
             f"{Fore.YELLOW}Portfolio full — {current_position_count} of "
             f"{MAX_POSITIONS} positions occupied. Nothing to buy.{Style.RESET_ALL}"
         )
-        if not dry_run:
-            persist_intent_updates(signals_path, intents_df)
         return
 
     # Cap the number of buys to available slots
-    if len(actionable_indices) > remaining_slots:
-        actionable_indices = actionable_indices[:remaining_slots]
+    if len(actionable) > remaining_slots:
+        actionable = actionable[:remaining_slots]
 
-    n_buying = len(actionable_indices)
-
-    # ── Position-size cap: no single position takes more than 1/MAX_POSITIONS ─
     max_position_value = total_funds / MAX_POSITIONS
     dollar_risk = total_funds * (RISK_PER_TRADE_PCT / 100)
 
@@ -330,16 +213,18 @@ def run_virtual_buy(
     today = market_today().date()
     buy_records: list[dict] = []
 
-    for idx in actionable_indices:
-        ticker = str(intents_df.at[idx, SIGNAL_COL_TICKER]).strip().upper()
+    for item in actionable:
+        ticker   = item["ticker"]
+        intent_id = item["intent_id"]
+        row      = item["row"]
         print(f"  {Fore.CYAN}{ticker:<14}{Style.RESET_ALL}", end=" ", flush=True)
 
         price = fetch_latest_price(ticker)
         if price is None or price <= 0:
             print(f"{Fore.RED}no price data — skipped{Style.RESET_ALL}")
-            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
-            intents_df.at[idx, INTENT_COL_REASON] = "no_price_data"
-            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+            if not dry_run:
+                mark_intent_skipped(intent_id, "no_price_data")
+            skipped_count += 1
             continue
 
         # ── Gap filter: skip if price has moved too far above planned entry ───
@@ -347,7 +232,7 @@ def run_virtual_buy(
         # price has, so the trade no longer has the expected reward profile.
         try:
             planned_entry_for_gap = float(
-                str(intents_df.at[idx, INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
+                str(row[INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
             )
             max_allowed = planned_entry_for_gap * (1 + GAP_FILTER_PCT / 100)
             if price > max_allowed:
@@ -356,16 +241,16 @@ def run_virtual_buy(
                     f"entry ${planned_entry_for_gap:.2f} + {GAP_FILTER_PCT}% "
                     f"(${max_allowed:.2f}){Style.RESET_ALL}"
                 )
-                intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
-                intents_df.at[idx, INTENT_COL_REASON] = f"gap_up_{price:.2f}_vs_{planned_entry_for_gap:.2f}"
-                intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+                if not dry_run:
+                    mark_intent_skipped(intent_id, f"gap_up_{price:.2f}_vs_{planned_entry_for_gap:.2f}")
+                skipped_count += 1
                 continue
         except (ValueError, TypeError):
             pass  # no planned entry recorded — proceed without gap check
 
         # ── Risk-based sizing using stop from the candidates queue ────────────
-        raw_entry = str(intents_df.at[idx, INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
-        raw_stop  = str(intents_df.at[idx, INTENT_COL_STOP_PRICE]).replace("$", "").strip()
+        raw_entry = str(row[INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
+        raw_stop  = str(row[INTENT_COL_STOP_PRICE]).replace("$", "").strip()
 
         shares = 0
         sizing_method = "risk_based"
@@ -392,9 +277,9 @@ def run_virtual_buy(
             print(
                 f"{Fore.YELLOW}price ${price:.2f} too high for available allocation — skipped{Style.RESET_ALL}"
             )
-            intents_df.at[idx, INTENT_COL_STATUS] = "skipped"
-            intents_df.at[idx, INTENT_COL_REASON] = "allocation_too_small"
-            intents_df.at[idx, INTENT_COL_PROCESSED_AT] = processed_at
+            if not dry_run:
+                mark_intent_skipped(intent_id, "allocation_too_small")
+            skipped_count += 1
             continue
 
         cost = shares * price
@@ -405,63 +290,45 @@ def run_virtual_buy(
         )
 
         buy_records.append({
-            "intent_index": idx,
+            "intent_id": intent_id,
+            "pattern": str(row.get(SIGNAL_COL_PATTERN, "")) or None,
             SIGNAL_COL_TICKER: ticker,
             POSITION_COL_ENTRY_DATE: today,
             POSITION_COL_ENTRY_PRICE: price,
             POSITION_COL_SHARES: shares,
         })
 
-    # ── 4. Write to positions CSV ────────────────────────────────────────────
+    # ── 4. Write to database ─────────────────────────────────────────────────
     print()
     if not buy_records:
-        print(f"{Fore.YELLOW}No valid buy records generated — positions file unchanged.{Style.RESET_ALL}")
-        if not dry_run:
-            persist_intent_updates(signals_path, intents_df)
+        print(f"{Fore.YELLOW}No valid buy records generated — nothing written.{Style.RESET_ALL}")
+        log(service, run_id, "completed", bought=0, skipped=skipped_count)
         return
 
     if dry_run:
-        print(f"{Fore.CYAN}[DRY RUN] Would append {len(buy_records)} record(s) to {positions_path}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}[DRY RUN] Would insert {len(buy_records)} position(s) into database{Style.RESET_ALL}")
     else:
         for rec in buy_records:
-            append_position(
-                positions_path,
+            insert_position(
                 rec[SIGNAL_COL_TICKER],
-                rec[POSITION_COL_ENTRY_DATE],
+                rec[POSITION_COL_ENTRY_DATE].isoformat(),
                 rec[POSITION_COL_ENTRY_PRICE],
                 rec[POSITION_COL_SHARES],
+                pattern=rec.get("pattern"),
             )
-            intents_df.at[rec["intent_index"], INTENT_COL_STATUS] = "executed"
-            intents_df.at[rec["intent_index"], INTENT_COL_REASON] = ""
-            intents_df.at[rec["intent_index"], INTENT_COL_EXECUTED_PRICE] = str(round(rec[POSITION_COL_ENTRY_PRICE], 4))
-            intents_df.at[rec["intent_index"], INTENT_COL_EXECUTED_SHARES] = str(rec[POSITION_COL_SHARES])
-            intents_df.at[rec["intent_index"], INTENT_COL_PROCESSED_AT] = processed_at
-        print(
-            f"{Fore.GREEN}✓ Appended {len(buy_records)} record(s) → {positions_path.resolve()}{Style.RESET_ALL}"
-        )
+            mark_intent_executed(rec["intent_id"], rec[POSITION_COL_ENTRY_PRICE], rec[POSITION_COL_SHARES])
+        print(f"{Fore.GREEN}✓ Inserted {len(buy_records)} position(s) into database{Style.RESET_ALL}")
 
-    # ── 5. Update funds file & print summary ────────────────────────────────
+    # ── 5. Update cash & print summary ──────────────────────────────────────
     print(f"\n{'─' * 60}")
     total_invested = sum(r[POSITION_COL_SHARES] * r[POSITION_COL_ENTRY_PRICE] for r in buy_records)
     remaining = total_funds - total_invested
 
     if dry_run:
-        print(f"{Fore.CYAN}[DRY RUN] Would update {funds_path} → ${remaining:,.2f}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}[DRY RUN] Would update cash → ${remaining:,.2f}{Style.RESET_ALL}")
     else:
-        write_funds(funds_path, remaining)
-        print(
-            f"{Fore.GREEN}✓ Funds updated → {funds_path.resolve()}  "
-            f"(${remaining:,.2f} remaining){Style.RESET_ALL}"
-        )
-
-    if dry_run:
-        print(f"{Fore.CYAN}[DRY RUN] Would update intent statuses in {signals_path}{Style.RESET_ALL}")
-    else:
-        persist_intent_updates(signals_path, intents_df)
-        print(
-            f"{Fore.GREEN}✓ Intent queue updated → statuses persisted in "
-            f"{signals_path.resolve()}{Style.RESET_ALL}"
-        )
+        set_cash(remaining)
+        print(f"{Fore.GREEN}✓ Cash updated → ${remaining:,.2f} remaining{Style.RESET_ALL}")
 
     print(f"  Tickers bought : {len(buy_records)}")
     print(f"  Total invested : ${total_invested:,.2f}")
@@ -480,6 +347,8 @@ def run_virtual_buy(
 
 
 if __name__ == "__main__":
+    import argparse
+
     service = "virtual_buy"
     run_id = uuid.uuid4().hex
 
@@ -490,13 +359,17 @@ if __name__ == "__main__":
         sys.exit(0)
 
     log(service, run_id, "lock_acquired", lock_file=str(lock_path))
+
+    parser = argparse.ArgumentParser(description="Virtual Buy Runner")
+    parser.add_argument("--top", type=int, default=10, help="Max pending intents to process (default: 10)")
+    parser.add_argument("--dry-run", action="store_true", help="Print what would be bought without writing")
+    args = parser.parse_args()
+
+    init_db()
     try:
         run_virtual_buy(
-            signals_path=Path(CANDIDATES_QUEUE_PATH),
-            funds_path=Path(FUNDS_PATH),
-            positions_path=Path(OWN_PATH),
-            top_n=10,
-            dry_run=False,
+            top_n=args.top,
+            dry_run=args.dry_run,
             run_id=run_id,
         )
     finally:

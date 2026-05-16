@@ -45,8 +45,8 @@ import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import CACHE_PATH, LOGS_PATH, OWN_PATH, FUNDS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, ALERTS_PATH
-from funds import read_funds, write_funds
+from config import CACHE_PATH, LOGS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, ALERTS_PATH
+from db import delete_position, get_cash, get_open_positions_df, init_db, insert_trade, set_cash
 from log_utils import log
 from report_html import append_positions_report
 from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, \
@@ -441,15 +441,10 @@ def compute_signals(
 # POSITIONS FILE HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def parse_positions_csv(path: Path) -> list[Position]:
-    if not path.exists():
-        raise FileNotFoundError(f"Cannot find {path.resolve()}")
-
-    df = pd.read_csv(path)
-    missing = set(POSITIONS_COLS) - set(df.columns)
-    if missing:
-        raise ValueError(f"{path} missing required columns: {sorted(missing)}")
-
+def parse_positions_from_db() -> list[Position]:
+    df = get_open_positions_df()
+    if df.empty:
+        return []
     positions: list[Position] = []
     for _, row in df.iterrows():
         ticker = str(row[SIGNAL_COL_TICKER]).strip()
@@ -470,16 +465,14 @@ def parse_positions_csv(path: Path) -> list[Position]:
 
 def execute_virtual_sells(
         sell_rows: List[Dict],
-        positions_path: Path,
-        funds_path: Path,
         dry_run: bool = False,
 ) -> Dict[str, float]:
     """
     For each SELL signal:
-      1. Remove the position row from the positions CSV.
+      1. Remove the position from the database.
       2. Compute proceeds = shares * last_close.
-      3. Add proceeds back to the funds file.
-      4. Append the closed trade to logs/sells_YYYYMMDD.csv.
+      3. Add proceeds back to cash in the database.
+      4. Record the closed trade in the database.
     """
     if not sell_rows:
         return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": 0.0}
@@ -487,13 +480,6 @@ def execute_virtual_sells(
     print(f"\n{'─' * 60}")
     print(f"  {Fore.RED}💸  Virtual Sell Execution{Style.RESET_ALL}")
     print(f"{'─' * 60}")
-
-    # ── Load current positions ────────────────────────────────────────────────
-    if not positions_path.exists():
-        print(f"{Fore.RED}Positions file not found: {positions_path}{Style.RESET_ALL}")
-        return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": 0.0}
-
-    pos_df = pd.read_csv(positions_path)
 
     # ── Summarise each sell ───────────────────────────────────────────────────
     total_proceeds = 0.0
@@ -540,42 +526,44 @@ def execute_virtual_sells(
     print(f"  Total P&L      : {pnl_sign}${total_pnl:,.2f}")
 
     if dry_run:
-        print(f"\n  {Fore.CYAN}[DRY RUN] No files written.{Style.RESET_ALL}\n")
+        print(f"\n  {Fore.CYAN}[DRY RUN] No changes written.{Style.RESET_ALL}\n")
         return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": total_proceeds,
                 "realized_pnl": total_pnl}
 
-    # ── Remove sold tickers from positions CSV ────────────────────────────────
-    sold_tickers = {r[SIGNAL_COL_TICKER] for r in sell_rows}
-    remaining_df = pos_df[~pos_df[SIGNAL_COL_TICKER].isin(sold_tickers)]
-    remaining_df.to_csv(positions_path, index=False)
+    # ── Remove sold positions and record trades in database ───────────────────
+    sell_date = market_now(TSX_TZ).date().isoformat()
+    for rec in sold_records:
+        ticker = rec[SIGNAL_COL_TICKER]
+        delete_position(ticker)
+        insert_trade(
+            ticker=ticker,
+            entry_date=str(rec[POSITION_COL_ENTRY_DATE]),
+            entry_price=float(rec[POSITION_COL_ENTRY_PRICE]),
+            shares=float(rec[POSITION_COL_SHARES]),
+            sell_date=sell_date,
+            sell_price=float(rec["sell_price"]),
+            proceeds=float(rec["proceeds"]),
+            pnl_dollars=float(rec[POSITION_COL_PNL_DOLLARS]),
+            pnl_pct=float(rec[POSITION_COL_PNL_PCT]),
+            reason=str(rec[POSITION_COL_REASON]),
+        )
 
+    remaining_count = len(get_open_positions_df())
     print(
-        f"\n  {Fore.GREEN}✓ Removed {len(sold_tickers)} position(s) from "
-        f"{positions_path.resolve()}{Style.RESET_ALL}"
+        f"\n  {Fore.GREEN}✓ Removed {len(sold_records)} position(s) and recorded trades in database{Style.RESET_ALL}"
     )
-    print(f"    Remaining open positions: {len(remaining_df)}")
+    print(f"    Remaining open positions: {remaining_count}")
 
-    # ── Update funds file ─────────────────────────────────────────────────────
-    current_funds = read_funds(funds_path)
+    # ── Update cash ───────────────────────────────────────────────────────────
+    current_funds = get_cash()
     new_funds = current_funds + total_proceeds
-    write_funds(funds_path, new_funds)
+    set_cash(new_funds)
 
     print(
-        f"  {Fore.GREEN}✓ Funds: "
+        f"  {Fore.GREEN}✓ Cash: "
         f"${current_funds:,.2f} + ${total_proceeds:,.2f} "
         f"→ ${new_funds:,.2f}{Style.RESET_ALL}"
     )
-
-    # ── Append to sells log ───────────────────────────────────────────────────
-    LOGS_PATH.mkdir(parents=True, exist_ok=True)
-    today_str = date_to_iso_basic(market_today())
-    sells_log = LOGS_PATH / f"sells_{today_str}.csv"
-
-    sells_df = pd.DataFrame(sold_records)
-    write_hdr = not sells_log.exists() or sells_log.stat().st_size == 0
-    sells_df.to_csv(sells_log, mode="a", index=False, header=write_hdr)
-
-    print(f"  {Fore.GREEN}✓ Sells logged → {sells_log.resolve()}{Style.RESET_ALL}")
     print(f"{'─' * 60}\n")
 
     return {
@@ -735,10 +723,9 @@ def main() -> None:
 
     log(service, run_id, "start", mode=mode)
 
-    positions_path = Path(OWN_PATH)
-    funds_path = Path(FUNDS_PATH)
+    init_db()
     dry_run = False
-    funds_before = read_funds(funds_path)
+    funds_before = get_cash()
     funds_after = funds_before
     funds_gained = 0.0
     realized_pnl = 0.0
@@ -759,20 +746,14 @@ def main() -> None:
     print(f"{'=' * 65}\n")
 
     # ── Load positions ────────────────────────────────────────────────────────
-    try:
-        positions = parse_positions_csv(positions_path)
-    except FileNotFoundError:
-        print(f"{Fore.RED}Positions file not found: {positions_path.resolve()}{Style.RESET_ALL}")
-        print("  Run virtual_buy.py first to populate positions.")
-        lock_file.close()
-        sys.exit(0)
+    positions = parse_positions_from_db()
 
     if not positions:
         print("No positions found — nothing to monitor.")
         lock_file.close()
         sys.exit(0)
 
-    print(f"  Loaded {len(positions)} open position(s) from {positions_path}\n")
+    print(f"  Loaded {len(positions)} open position(s) from database\n")
 
     LOGS_PATH.mkdir(parents=True, exist_ok=True)
 
@@ -860,8 +841,6 @@ def main() -> None:
         if sell_rows:
             funds_state = execute_virtual_sells(
                 sell_rows=sell_rows,
-                positions_path=positions_path,
-                funds_path=funds_path,
                 dry_run=dry_run,
             )
             funds_before = funds_state.get("funds_before", funds_before)
