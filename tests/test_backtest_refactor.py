@@ -1679,55 +1679,30 @@ class TestRunBacktest:
         args = _build_parser().parse_args(["--quiet"])
         assert args.quiet is True
 
-    # ── _run_single ───────────────────────────────────────────────────────────
+    # ── shared fixtures (class-scoped — each simulation runs once) ───────────
 
-    def test_run_single_creates_html_report(self, tmp_path):
-        """_run_single must write an HTML report to out/."""
+    @pytest.fixture(scope="class")
+    def single_output(self, tmp_path_factory):
+        """Run _run_single once; all single-output tests share this directory."""
         from run_backtest import _run_single, _build_parser
         import run_backtest as rb
 
         provider, tickers = self._make_provider_and_tickers()
         args = _build_parser().parse_args([
-            "--start", "2022-06-01",
-            "--end", "2022-09-01",
-            "--quiet",
+            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
         ])
-
-        # Redirect OUT_PATH to tmp_path for this test
+        tmp = tmp_path_factory.mktemp("single")
         original = rb.OUT_PATH
-        rb.OUT_PATH = tmp_path
+        rb.OUT_PATH = tmp
         try:
             _run_single(args, tickers, provider, bench_series=None)
         finally:
             rb.OUT_PATH = original
+        return tmp
 
-        html_files = list(tmp_path.glob("backtest_*.html"))
-        assert len(html_files) == 1, f"Expected 1 HTML report, got {html_files}"
-
-    def test_run_single_creates_csv_files(self, tmp_path):
-        """_run_single must write equity and trades CSVs."""
-        from run_backtest import _run_single, _build_parser
-        import run_backtest as rb
-
-        provider, tickers = self._make_provider_and_tickers()
-        args = _build_parser().parse_args([
-            "--start", "2022-06-01",
-            "--end", "2022-09-01",
-            "--quiet",
-        ])
-
-        original = rb.OUT_PATH
-        rb.OUT_PATH = tmp_path
-        try:
-            _run_single(args, tickers, provider, bench_series=None)
-        finally:
-            rb.OUT_PATH = original
-
-        assert len(list(tmp_path.glob("backtest_equity*.csv"))) == 1
-        assert len(list(tmp_path.glob("backtest_trades*.csv"))) == 1
-
-    def test_run_single_with_benchmark_overlay(self, tmp_path):
-        """benchmark_equity series must not cause errors in _run_single."""
+    @pytest.fixture(scope="class")
+    def single_bench_output(self, tmp_path_factory):
+        """Run _run_single with a benchmark overlay once."""
         from run_backtest import _run_single, _build_parser
         import run_backtest as rb
 
@@ -1737,100 +1712,72 @@ class TestRunBacktest:
         args = _build_parser().parse_args([
             "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
         ])
-
+        tmp = tmp_path_factory.mktemp("single_bench")
         original = rb.OUT_PATH
-        rb.OUT_PATH = tmp_path
+        rb.OUT_PATH = tmp
         try:
             _run_single(args, tickers, provider, bench_series=bench)
         finally:
             rb.OUT_PATH = original
+        return tmp
 
-        html_files = list(tmp_path.glob("backtest_*.html"))
+    @pytest.fixture(scope="class")
+    def sweep_output(self, tmp_path_factory):
+        """Run _run_sweep once (16 backtests); all sweep tests share this directory."""
+        from run_backtest import _run_sweep, _build_parser
+        import run_backtest as rb
+
+        provider, tickers = self._make_provider_and_tickers()
+        args = _build_parser().parse_args([
+            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
+        ])
+        tmp = tmp_path_factory.mktemp("sweep")
+        original = rb.OUT_PATH
+        rb.OUT_PATH = tmp
+        try:
+            _run_sweep(args, tickers, provider, bench_series=None)
+        finally:
+            rb.OUT_PATH = original
+        return tmp
+
+    # ── _run_single ───────────────────────────────────────────────────────────
+
+    def test_run_single_creates_html_report(self, single_output):
+        """_run_single must write an HTML report to out/."""
+        html_files = list(single_output.glob("backtest_*.html"))
+        assert len(html_files) == 1, f"Expected 1 HTML report, got {html_files}"
+
+    def test_run_single_creates_csv_files(self, single_output):
+        """_run_single must write equity and trades CSVs."""
+        assert len(list(single_output.glob("backtest_equity*.csv"))) == 1
+        assert len(list(single_output.glob("backtest_trades*.csv"))) == 1
+
+    def test_run_single_with_benchmark_overlay(self, single_bench_output):
+        """benchmark_equity series must not cause errors in _run_single."""
+        html_files = list(single_bench_output.glob("backtest_*.html"))
         assert len(html_files) == 1
-        content = html_files[0].read_text()
-        assert "Benchmark" in content
+        assert "Benchmark" in html_files[0].read_text()
 
     # ── _run_sweep ────────────────────────────────────────────────────────────
 
-    def test_run_sweep_creates_sweep_csv(self, tmp_path):
+    def test_run_sweep_creates_sweep_csv(self, sweep_output):
         """_run_sweep must write a sweep results CSV."""
-        from run_backtest import _run_sweep, _build_parser
-        import run_backtest as rb
+        assert len(list(sweep_output.glob("backtest_sweep_*.csv"))) == 1
 
-        provider, tickers = self._make_provider_and_tickers()
-        args = _build_parser().parse_args([
-            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
-        ])
-
-        original = rb.OUT_PATH
-        rb.OUT_PATH = tmp_path
-        try:
-            _run_sweep(args, tickers, provider, bench_series=None)
-        finally:
-            rb.OUT_PATH = original
-
-        sweep_files = list(tmp_path.glob("backtest_sweep_*.csv"))
-        assert len(sweep_files) == 1
-
-    def test_run_sweep_csv_has_expected_columns(self, tmp_path):
-        """Sweep CSV must contain risk_%, top_n, ret_%, sharpe."""
-        from run_backtest import _run_sweep, _build_parser
-        import run_backtest as rb
-
-        provider, tickers = self._make_provider_and_tickers()
-        args = _build_parser().parse_args([
-            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
-        ])
-
-        original = rb.OUT_PATH
-        rb.OUT_PATH = tmp_path
-        try:
-            _run_sweep(args, tickers, provider, bench_series=None)
-        finally:
-            rb.OUT_PATH = original
-
-        sweep_df = pd.read_csv(list(tmp_path.glob("backtest_sweep_*.csv"))[0])
+    def test_run_sweep_csv_has_expected_columns(self, sweep_output):
+        """Sweep CSV must contain time_stop_d, stop_atr, ret_%, sharpe."""
+        sweep_df = pd.read_csv(list(sweep_output.glob("backtest_sweep_*.csv"))[0])
         for col in ("time_stop_d", "stop_atr", "ret_%", "max_dd_%", "sharpe", "trades"):
             assert col in sweep_df.columns, f"Missing sweep column: {col}"
 
-    def test_run_sweep_row_count(self, tmp_path):
+    def test_run_sweep_row_count(self, sweep_output):
         """Sweep must produce one row per parameter combination: time_stop_days(4) × stop_atr(4) = 16."""
-        from run_backtest import _run_sweep, _build_parser
-        import run_backtest as rb
-
-        provider, tickers = self._make_provider_and_tickers()
-        args = _build_parser().parse_args([
-            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
-        ])
-
-        original = rb.OUT_PATH
-        rb.OUT_PATH = tmp_path
-        try:
-            _run_sweep(args, tickers, provider, bench_series=None)
-        finally:
-            rb.OUT_PATH = original
-
-        sweep_df = pd.read_csv(list(tmp_path.glob("backtest_sweep_*.csv"))[0])
+        sweep_df = pd.read_csv(list(sweep_output.glob("backtest_sweep_*.csv"))[0])
         assert len(sweep_df) == 16, f"Expected 16 sweep rows, got {len(sweep_df)}"
 
-    def test_run_sweep_also_writes_best_html(self, tmp_path):
+    def test_run_sweep_also_writes_best_html(self, sweep_output):
         """Sweep must write a full HTML report for the best Sharpe combo."""
-        from run_backtest import _run_sweep, _build_parser
-        import run_backtest as rb
-
-        provider, tickers = self._make_provider_and_tickers()
-        args = _build_parser().parse_args([
-            "--start", "2022-06-01", "--end", "2022-09-01", "--quiet",
-        ])
-
-        original = rb.OUT_PATH
-        rb.OUT_PATH = tmp_path
-        try:
-            _run_sweep(args, tickers, provider, bench_series=None)
-        finally:
-            rb.OUT_PATH = original
-
-        html_files = list(tmp_path.glob("backtest_*.html"))
+        html_files = list(sweep_output.glob("backtest_*.html"))
         assert len(html_files) >= 1, "Sweep must write at least one HTML report"
 
     # ── BacktestConfig new fields ─────────────────────────────────────────────
