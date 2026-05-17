@@ -66,6 +66,13 @@ def db(tmp_path):
     db_module.DB_PATH = tmp_path / "reset.db"
 
 
+@pytest.fixture(autouse=True)
+def no_emails(monkeypatch):
+    """Prevent any test from sending real emails via Gmail."""
+    monkeypatch.setattr("virtual_buy.send_transaction_email", lambda **_: None)
+    monkeypatch.setattr("position_monitor.send_transaction_email", lambda **_: None)
+
+
 def _intent(**overrides) -> dict:
     base = {
         "ticker": "RY.TO",
