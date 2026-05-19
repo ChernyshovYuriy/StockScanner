@@ -8,11 +8,8 @@ DATA_PATH = ROOT_DIR / "data"
 OUT_PATH = ROOT_DIR / "out"
 CACHE_PATH = ROOT_DIR / "cache"
 
-CAN_TICKERS_PATH = DATA_PATH / "can_tickers"
-CAN_TICKERS_UNIVERSE_PATH = DATA_PATH / "can_tickers_universe"
-
-CAN_TICKERS_ONE_LINE_PATH = OUT_PATH / "can_tickers_one_line"
-CAN_TICKERS_REJECTED_PATH = OUT_PATH / "can_tickers_rejected.csv"
+# URL for the ticker list (one ticker per line); used by all services.
+CAN_TICKERS_URL = "https://raw.githubusercontent.com/ChernyshovYuriy/Financing/refs/heads/main/data/can_tickers_swing_universe"
 SCREENER_OUT_PATH = OUT_PATH / "screener_out"
 REPORT_PATH = OUT_PATH / "report.html"
 REPORT_POSITION_PATH = OUT_PATH / "position_monitor_report.html"

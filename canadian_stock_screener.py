@@ -19,10 +19,11 @@ Usage:
 """
 
 import sys
+import urllib.request
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import List, Optional, Dict, Union
 
 from config import CACHE_PATH
 from time_utils import market_today, date_to_iso_extended, market_now, date_to_iso_basic_minutes, date_to_iso_basic
@@ -88,32 +89,44 @@ BENCHMARK = "XIU.TO"
 class DataManager:
     """Handles data downloading, caching, and preprocessing"""
 
-    def __init__(self, tickers_file: str, cache_dir: str = CACHE_PATH,
-                 provider=None):
+    def __init__(self, tickers_source: Union[str, List[str]],
+                 cache_dir: str = CACHE_PATH, provider=None):
         """
         Parameters
         ----------
-        tickers_file : path to the plain-text ticker list
-        cache_dir    : directory used for the daily parquet cache (live mode only)
-        provider     : optional MarketDataProvider.
-                       None  (default) → live mode: uses yfinance + parquet cache,
-                       identical to the original behaviour.
-                       MarketDataProvider instance → backtest mode: all data comes
-                       from the provider; cache and yfinance are bypassed entirely.
+        tickers_source : URL, local file path, or an already-loaded list of
+                         ticker strings.
+        cache_dir      : directory used for the daily parquet cache (live mode only)
+        provider       : optional MarketDataProvider.
+                         None  (default) → live mode: uses yfinance + parquet cache,
+                         identical to the original behaviour.
+                         MarketDataProvider instance → backtest mode: all data comes
+                         from the provider; cache and yfinance are bypassed entirely.
         """
-        self.tickers = self._load_tickers(tickers_file)
+        self.tickers = self._load_tickers(tickers_source)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
         self._provider = provider   # None = live mode
 
-    def _load_tickers(self, filepath: str) -> List[str]:
-        """Load tickers from file"""
+    def _load_tickers(self, source: Union[str, List[str]]) -> List[str]:
+        """Load tickers from a URL, local file path, or an existing list."""
+        if isinstance(source, list):
+            return [t.strip() for t in source if t.strip()]
+        if source.startswith("http://") or source.startswith("https://"):
+            try:
+                with urllib.request.urlopen(source) as resp:
+                    content = resp.read().decode("utf-8")
+                return [ln.strip() for ln in content.splitlines()
+                        if ln.strip() and not ln.strip().startswith("#")]
+            except Exception as e:
+                print(f"{Fore.RED}Error fetching tickers from {source}: {e}. Using fallback tickers.{Style.RESET_ALL}")
+                return ["RY.TO", "TD.TO", "BNS.TO", "BMO.TO", "CM.TO",
+                        "ENB.TO", "SU.TO", "CNQ.TO", "CP.TO", "CNR.TO"]
         try:
-            with open(filepath, "r") as f:
+            with open(source, "r") as f:
                 return [line.strip() for line in f if line.strip()]
         except FileNotFoundError:
-            print(f"{Fore.RED}Error: {filepath} not found. Using fallback tickers.{Style.RESET_ALL}")
-            # Fallback to major TSX stocks
+            print(f"{Fore.RED}Error: {source} not found. Using fallback tickers.{Style.RESET_ALL}")
             return ["RY.TO", "TD.TO", "BNS.TO", "BMO.TO", "CM.TO",
                     "ENB.TO", "SU.TO", "CNQ.TO", "CP.TO", "CNR.TO"]
 
@@ -1037,8 +1050,9 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Canadian Stock Screener")
-    parser.add_argument("--tickers", type=str, default="data/can_tickers",
-                        help="Path to tickers file")
+    from config import CAN_TICKERS_URL
+    parser.add_argument("--tickers", type=str, default=CAN_TICKERS_URL,
+                        help="URL or local file path for the ticker list (one per line)")
     parser.add_argument("--top", type=int, default=10,
                         help="Number of top stocks to display")
     parser.add_argument("--refresh", action="store_true",

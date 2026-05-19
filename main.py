@@ -1,3 +1,4 @@
+import argparse
 import sys
 import uuid
 
@@ -7,12 +8,9 @@ from colorama import Fore, Style
 from auto_pipeline import PipelineConfig, run_pipeline
 from canadian_stock_screener import DataManager, StockScreener, CONFIG, display_results, save_results
 from concurrent_utils import acquire_lock
-from config import ALERTS_PATH
-from config import CAN_TICKERS_PATH, CAN_TICKERS_ONE_LINE_PATH, CAN_TICKERS_REJECTED_PATH, SCREENER_OUT_PATH, \
-    CAN_TICKERS_UNIVERSE_PATH, REPORT_PATH
+from config import ALERTS_PATH, CAN_TICKERS_URL, SCREENER_OUT_PATH, REPORT_PATH
 from log_utils import log
 from send_report import SendConfig, send_report
-from swing_tickers import UniverseBuilderConfig, Thresholds, run_universe_builder
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REGIME FILTER
@@ -73,33 +71,8 @@ def __check_regime() -> bool:
 # PIPELINE STEPS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def __build_swing_tickers():
-    config = UniverseBuilderConfig(
-        tickers_path=CAN_TICKERS_UNIVERSE_PATH,
-        benchmark="XIU.TO",
-        out_file_path=CAN_TICKERS_PATH,
-        out_one_line_file_path=CAN_TICKERS_ONE_LINE_PATH,
-        out_rejected_file_path=CAN_TICKERS_REJECTED_PATH,
-        period="1y",
-        interval="1d",
-        auto_adjust=True,
-        batch_size=80,
-        sleep_seconds=1.0,
-        thresholds=Thresholds(
-            min_price=1.0,
-            min_avg_dollar_vol_20=1_000_000.0,
-            max_atr_pct_14=0.05,
-            max_one_day_drop_126=-0.15,
-            require_above_50d=True,
-            prefer_above_200d=True,
-            max_stale_days=5,
-        ),
-    )
-    run_universe_builder(config)
-
-
-def __run_stock_screener():
-    data_manager = DataManager(CAN_TICKERS_PATH)
+def __run_stock_screener(tickers_url: str):
+    data_manager = DataManager(tickers_url)
     screener = StockScreener(CONFIG, data_manager)
 
     results = screener.run(force_refresh=True)
@@ -132,7 +105,20 @@ def __run_send_report():
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="TSX Swing Trading System — daily pipeline")
+    p.add_argument(
+        "--tickers-url",
+        dest="tickers_url",
+        default=CAN_TICKERS_URL,
+        help="URL or file path for the ticker list (one per line)",
+    )
+    return p
+
+
 if __name__ == "__main__":
+    args = _build_parser().parse_args()
+
     service = "main"
     run_id = uuid.uuid4().hex
 
@@ -149,7 +135,7 @@ if __name__ == "__main__":
         print(f"{'=' * 65}\n")
 
         # ── Step 1: Market regime check ───────────────────────────────────────
-        print(f"{Fore.CYAN}[1/4] Checking market regime...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}[1/3] Checking market regime...{Style.RESET_ALL}")
         bull_regime = __check_regime()
 
         if not bull_regime:
@@ -164,16 +150,12 @@ if __name__ == "__main__":
 
         print(f"\n{Fore.GREEN}  Bull regime confirmed — proceeding with full pipeline.{Style.RESET_ALL}\n")
 
-        # ── Step 2: Build universe ────────────────────────────────────────────
-        print(f"{Fore.CYAN}[2/4] Building swing ticker universe...{Style.RESET_ALL}")
-        __build_swing_tickers()
+        # ── Step 2: Score and rank ────────────────────────────────────────────
+        print(f"{Fore.CYAN}[2/3] Running stock screener...{Style.RESET_ALL}")
+        __run_stock_screener(args.tickers_url)
 
-        # ── Step 3: Score and rank ────────────────────────────────────────────
-        print(f"\n{Fore.CYAN}[3/4] Running stock screener...{Style.RESET_ALL}")
-        __run_stock_screener()
-
-        # ── Step 4: Detect patterns and emit buy intents ──────────────────────
-        print(f"\n{Fore.CYAN}[4/4] Running entry pipeline...{Style.RESET_ALL}")
+        # ── Step 3: Detect patterns and emit buy intents ──────────────────────
+        print(f"\n{Fore.CYAN}[3/3] Running entry pipeline...{Style.RESET_ALL}")
         __run_pipeline()
 
         # ── Send report ───────────────────────────────────────────────────────

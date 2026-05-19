@@ -123,6 +123,71 @@ python position_monitor.py --mode pre-close --dry-run  # not yet wired — infor
 
 ---
 
+## Systemd deployment (Linux)
+
+The `system/` directory contains `.service` and `.timer` unit files for
+running the three services automatically on a Linux host.
+
+### First-time install
+
+```bash
+# Copy unit files to systemd
+sudo cp system/*.service system/*.timer /etc/systemd/system/
+
+# Reload systemd so it sees the new units
+sudo systemctl daemon-reload
+
+# Enable timers so they survive reboots
+sudo systemctl enable stockscanner-main.timer
+sudo systemctl enable stockscanner-buy.timer
+sudo systemctl enable stockscanner-monitor.timer
+
+# Start the timers now
+sudo systemctl start stockscanner-main.timer
+sudo systemctl start stockscanner-buy.timer
+sudo systemctl start stockscanner-monitor.timer
+```
+
+### After editing a .service or .timer file
+
+```bash
+# Copy updated files
+sudo cp system/stockscanner-main.service /etc/systemd/system/
+# (repeat for whichever files changed)
+
+# Tell systemd to reload its configuration
+sudo systemctl daemon-reload
+
+# Restart the affected service if it is currently running
+sudo systemctl restart stockscanner-main.service
+```
+
+### Useful status commands
+
+```bash
+# Check whether timers are active and when they next fire
+systemctl list-timers stockscanner-*
+
+# View recent output for a service
+journalctl -u stockscanner-main.service -n 50
+
+# Check the current status of a service
+systemctl status stockscanner-main.service
+
+# Run a service immediately (outside its schedule)
+sudo systemctl start stockscanner-main.service
+```
+
+### Tickers URL
+
+The main service is started with `--tickers-url` pointing to a remote file
+(one ticker per line). To change the URL, edit
+`system/stockscanner-main.service` and re-run the install steps above.
+The default URL is also set in `config.py` (`CAN_TICKERS_URL`) and is used
+when running services manually from the command line without `--tickers-url`.
+
+---
+
 ## Querying the database
 
 Use DuckDB directly for ad-hoc queries:
@@ -166,8 +231,7 @@ weighted factor stack:
 - **Volatility-adjusted momentum (VAM)**
 - **52-week high proximity / breakout pressure**
 
-**Universe:** `data/can_tickers_universe` (one ticker per line) →
-filtered by the universe builder into `data/can_tickers`.
+**Universe:** loaded from `CAN_TICKERS_URL` in `config.py` (one ticker per line).
 
 **Output:** `out/screener_out/YYYYMMDD_HHMM.csv`
 
@@ -224,8 +288,8 @@ Run a historical backtest over any date range:
 # Single run
 python run_backtest.py --start 2022-01-01 --end 2024-01-01
 
-# Custom tickers file
-python run_backtest.py --tickers data/can_tickers --start 2022-01-01 --end 2024-01-01
+# Custom tickers (URL or file)
+python run_backtest.py --tickers https://example.com/tickers.txt --start 2022-01-01 --end 2024-01-01
 
 # Parameter sweep (risk_pct × top_n_buys combinations)
 python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep
@@ -254,9 +318,7 @@ Output files are written to `out/`:
 ├── send_report.py           # Gmail email sender
 ├── config.py                # path constants + trading parameters
 ├── data/
-│   ├── trading.db           # all live state (auto-created on first run)
-│   ├── can_tickers          # filtered universe (written by universe builder)
-│   └── can_tickers_universe # raw TSX universe (one ticker per line)
+│   └── trading.db           # all live state (auto-created on first run)
 └── out/
     ├── screener_out/        # daily screener CSVs
     ├── alerts/              # daily alert CSVs + HTML report

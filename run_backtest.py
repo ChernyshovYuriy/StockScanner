@@ -6,8 +6,8 @@ Command-line entry point for the backtest system.
 Single run:
     python run_backtest.py --start 2022-01-01 --end 2024-01-01
 
-Custom tickers file:
-    python run_backtest.py --tickers data/can_tickers --start 2022-01-01 --end 2024-01-01
+Custom tickers source (URL or file):
+    python run_backtest.py --tickers https://example.com/tickers.txt --start 2022-01-01 --end 2024-01-01
 
 Parameter sweep (test multiple risk_pct × top_n_buys combinations):
     python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep
@@ -31,7 +31,7 @@ import yfinance as yf
 from backtest_report import write_backtest_report
 from backtest_runner import BacktestConfig, BacktestResults, BacktestRunner
 from position_monitor import ExitParams
-from config import CAN_TICKERS_PATH, OUT_PATH
+from config import CAN_TICKERS_URL, OUT_PATH
 from market_data import HistoricalSliceProvider
 
 
@@ -39,9 +39,17 @@ from market_data import HistoricalSliceProvider
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_tickers(path: str) -> list[str]:
-    """Read tickers from a one-per-line text file, strip blanks and comments."""
-    with open(path, "r", encoding="utf-8") as f:
+def _load_tickers(source: str) -> list[str]:
+    """Read tickers from a URL or local file (one per line), strip blanks and comments."""
+    import urllib.request
+    if source.startswith("http://") or source.startswith("https://"):
+        with urllib.request.urlopen(source) as resp:
+            content = resp.read().decode("utf-8")
+        return [
+            ln.strip() for ln in content.splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+    with open(source, "r", encoding="utf-8") as f:
         return [
             ln.strip() for ln in f
             if ln.strip() and not ln.strip().startswith("#")
@@ -366,8 +374,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Backtest end date   (YYYY-MM-DD, exclusive)")
 
     # Universe
-    p.add_argument("--tickers",  default=str(CAN_TICKERS_PATH),
-                   help="Path to tickers file (one ticker per line)")
+    p.add_argument("--tickers",  default=CAN_TICKERS_URL,
+                   help="URL or file path for the ticker list (one ticker per line)")
     p.add_argument("--benchmark", default="XIU.TO",
                    help="Benchmark ETF ticker")
 

@@ -23,6 +23,7 @@ Run from IDE:
 
 import math
 import time
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -49,7 +50,7 @@ class Thresholds:
 
 @dataclass
 class UniverseBuilderConfig:
-    tickers_path: str = "tickers.txt"
+    tickers_source: str = ""   # URL or local file path (one ticker per line)
     benchmark: str = "XIU.TO"
     out_file_path: str = "tickers_out"
     out_one_line_file_path: str = "tickers_out_one_line"
@@ -66,9 +67,15 @@ class UniverseBuilderConfig:
 # I/O HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def read_tickers(path: str) -> List[str]:
-    with open(path, "r", encoding="utf-8") as f:
-        lines = [ln.strip().upper() for ln in f.readlines()]
+def read_tickers(source: str) -> List[str]:
+    """Load tickers from a URL or a local file path (one ticker per line)."""
+    if source.startswith("http://") or source.startswith("https://"):
+        with urllib.request.urlopen(source) as resp:
+            content = resp.read().decode("utf-8")
+        lines = [ln.strip().upper() for ln in content.splitlines()]
+    else:
+        with open(source, "r", encoding="utf-8") as f:
+            lines = [ln.strip().upper() for ln in f.readlines()]
     tickers = [t for t in lines if t and not t.startswith("#")]
     seen, out = set(), []
     for t in tickers:
@@ -349,8 +356,8 @@ def run_universe_builder(cfg: UniverseBuilderConfig) -> Tuple[pd.DataFrame, pd.D
     df_tradable  : passed all filters, sorted by score desc
     df_rejected  : failed at least one filter, includes reject_reasons column
     """
-    tickers = read_tickers(cfg.tickers_path)
-    print(f"Loaded {len(tickers)} tickers from {cfg.tickers_path}")
+    tickers = read_tickers(cfg.tickers_source)
+    print(f"Loaded {len(tickers)} tickers from {cfg.tickers_source}")
 
     # FIX #5: fetch benchmark once upfront
     print(f"Fetching benchmark {cfg.benchmark} ...")
@@ -520,10 +527,16 @@ if __name__ == "__main__":
         default="out/can_tickers_swing"
     )
 
+    parser.add_argument(
+        "--tickers-url",
+        type=str,
+        default="",
+        help="URL or file path for the universe ticker list (one per line)",
+    )
     args = parser.parse_args()
 
     config = UniverseBuilderConfig(
-        tickers_path="data/can_tickers",
+        tickers_source=args.tickers_url,
         benchmark="XIU.TO",
         out_file_path=args.out,
         out_one_line_file_path="out/can_tickers_swing_one_line",

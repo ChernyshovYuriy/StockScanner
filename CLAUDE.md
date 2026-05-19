@@ -29,7 +29,7 @@ pytest -v -m phase6        # CLI entry point (run_backtest.py)
 pytest -v -m characterization  # golden-value business logic locks
 
 # Run the three scheduled services manually
-python main.py                                    # end-of-day pipeline (4:30 PM)
+python main.py   # end-of-day pipeline (4:30 PM); --tickers-url overrides CAN_TICKERS_URL from config.py
 python virtual_buy.py                             # virtual entry execution (9:30 AM)
 python position_monitor.py --mode pre-close       # position monitoring with sells (3:30 PM)
 python position_monitor.py --mode post-close      # informational EOD run
@@ -37,10 +37,10 @@ python position_monitor.py --mode post-close      # informational EOD run
 # Run backtest
 python run_backtest.py --start 2022-01-01 --end 2024-01-01
 python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep   # parameter sweep
-python run_backtest.py --tickers data/can_tickers --start 2022-01-01 --end 2024-01-01
+python run_backtest.py --tickers https://your-host/path/can_tickers.txt --start 2022-01-01 --end 2024-01-01
 
 # Run the screener standalone
-python canadian_stock_screener.py
+python canadian_stock_screener.py --tickers https://your-host/path/can_tickers.txt
 
 # Query the live database
 python -c "
@@ -65,9 +65,7 @@ The system runs as three separate scheduled entrypoints that must remain indepen
 ### Data flow
 
 ```
-data/can_tickers_universe
-  → swing_tickers.py (UniverseBuilder)
-  → data/can_tickers
+<CAN_TICKERS_URL>  (remote URL, one ticker per line)
   → canadian_stock_screener.py (StockScreener + DataManager)
   → out/screener_out/YYYYMMDD_HHMM.csv
   → auto_pipeline.py (pattern detectors + signal state machine)
@@ -79,7 +77,7 @@ data/can_tickers_universe
 
 ### Key modules
 
-- **`config.py`** — All path constants and trading parameters (`MAX_POSITIONS`, `RISK_PER_TRADE_PCT`, `GAP_FILTER_PCT`, `PositionMonitorMode`).
+- **`config.py`** — `CAN_TICKERS_URL` (the single ticker list URL), output paths, and trading parameters (`MAX_POSITIONS`, `RISK_PER_TRADE_PCT`, `GAP_FILTER_PCT`, `PositionMonitorMode`).
 - **`db.py`** — DuckDB persistence layer. All live-mode state lives in `data/trading.db`. Call `init_db()` at the start of each service. Six tables: `account` (cash), `positions` (open), `trades` (closed, append-only), `signals` (pipeline state machine), `intents` (buy queue), `transactions` (unified BUY+SELL ledger). Schema changes are straightforward — DuckDB supports full `ALTER TABLE`.
 - **`time_utils.py`** — Injectable backtest clock. `set_backtest_clock(dt)` pins time for simulation; `None` restores live wall-clock. All time-dependent code calls `market_now()` / `market_today()` from here.
 - **`market_data.py`** — Two data providers behind a structural interface (`MarketDataProvider`): `LiveDataProvider` (wraps yfinance for live mode) and `HistoricalSliceProvider` (pre-loaded dict with strict `as_of` cutoff to prevent lookahead bias).
@@ -101,8 +99,6 @@ This codebase applies strict scope discipline (see `AGENTS.md`):
 ### State files (live mode)
 
 - `data/trading.db` — DuckDB database; single source of truth for all live-mode state (cash, positions, trades, signals, intents, transactions). Query directly with `duckdb.connect("data/trading.db")`.
-- `data/can_tickers` — filtered universe of TSX tickers (one per line)
-- `data/can_tickers_universe` — raw universe input for the universe builder
 - `out/` — generated outputs (screener CSVs, alerts, HTML report, logs, locks)
 
 ### Querying the database

@@ -355,101 +355,91 @@ def _run_screener_step(
         DataManager, ScreenerConfig, ScoreCalculator,
         StockScreener, BENCHMARK, TechnicalIndicators,
     )
-    import tempfile, os
 
-    # Build a minimal tickers file pointing to our universe
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
-                                     delete=False) as tf:
-        for t in cfg.tickers:
-            if t != cfg.benchmark:
-                tf.write(t + "\n")
-        tickers_path = tf.name
+    universe_tickers = [t for t in cfg.tickers if t != cfg.benchmark]
 
-    try:
-        screener_cfg = ScreenerConfig(
-            lookback_days=cfg.lookback_days,
-            top_n=min(len(cfg.tickers), 50),  # ScreenerConfig max is 50
-            min_avg_volume=cfg.min_avg_volume,
-            min_price=cfg.min_price,
-            weights={
-                "stage2_score": 0.20,
-                "rs_score": 0.20,
-                "macd_score": 0.15,
-                "obv_score": 0.15,
-                "adx_score": 0.10,
-                "vam_score": 0.10,
-                "breakout_score": 0.10,
-            },
-        )
-        dm = DataManager(
-            tickers_file=tickers_path,
-            provider=provider,
-        )
-        screener = StockScreener(screener_cfg, dm)
+    screener_cfg = ScreenerConfig(
+        lookback_days=cfg.lookback_days,
+        top_n=min(len(universe_tickers), 50),  # ScreenerConfig max is 50
+        min_avg_volume=cfg.min_avg_volume,
+        min_price=cfg.min_price,
+        weights={
+            "stage2_score": 0.20,
+            "rs_score": 0.20,
+            "macd_score": 0.15,
+            "obv_score": 0.15,
+            "adx_score": 0.10,
+            "vam_score": 0.10,
+            "breakout_score": 0.10,
+        },
+    )
+    dm = DataManager(
+        tickers_source=universe_tickers,
+        provider=provider,
+    )
+    screener = StockScreener(screener_cfg, dm)
 
-        # Inject the cutoff so download_data delegates to the provider
-        data = dm.download_data(cfg.lookback_days, as_of=sim_date)
-        if BENCHMARK not in data or not data:
-            return pd.DataFrame()
+    # Inject the cutoff so download_data delegates to the provider
+    data = dm.download_data(cfg.lookback_days, as_of=sim_date)
+    if BENCHMARK not in data or not data:
+        return pd.DataFrame()
 
-        bench_close = data[BENCHMARK]["Close"]
-        score_calc = ScoreCalculator(screener_cfg)
-        ti = TechnicalIndicators()
+    bench_close = data[BENCHMARK]["Close"]
+    score_calc = ScoreCalculator(screener_cfg)
+    ti = TechnicalIndicators()
 
-        rs_vals = []
-        for tkr, df in data.items():
-            if tkr == BENCHMARK:
+    rs_vals = []
+    for tkr, df in data.items():
+        if tkr == BENCHMARK:
+            continue
+        try:
+            common = df["Close"].index.intersection(bench_close.index)
+            if len(common) < 60:
                 continue
-            try:
-                common = df["Close"].index.intersection(bench_close.index)
-                if len(common) < 60:
-                    continue
-                c = df["Close"].loc[common]
-                b = bench_close.loc[common]
-                rs = (c.iloc[-1] / c.iloc[-60] - 1 - (b.iloc[-1] / b.iloc[-60] - 1)) * 100
-                rs_vals.append(float(rs))
-            except Exception:
-                pass
+            c = df["Close"].loc[common]
+            b = bench_close.loc[common]
+            rs = (c.iloc[-1] / c.iloc[-60] - 1 - (b.iloc[-1] / b.iloc[-60] - 1)) * 100
+            rs_vals.append(float(rs))
+        except Exception:
+            pass
 
-        rows = []
-        for tkr in dm.tickers:
-            if tkr not in data:
-                continue
-            df = data[tkr]
-            close = df["Close"]
-            high = df["High"]
-            low = df["Low"]
-            volume = df["Volume"]
-            avg_vol = float(volume.iloc[-20:].mean())
-            last_price = float(close.iloc[-1])
-            if avg_vol < cfg.min_avg_volume or last_price < cfg.min_price:
-                continue
-            try:
-                s2 = score_calc.score_stage2(close)
-                rs = score_calc.score_relative_strength(close, bench_close, rs_vals)
-                mac = score_calc.score_macd(close)
-                ob = score_calc.score_obv(close, volume)
-                adx = score_calc.score_adx(high, low, close)
-                vam = score_calc.score_vam(close)
-                brk = score_calc.score_breakout(close, high, volume)
-                w = screener_cfg.weights
-                composite = (s2 * w["stage2_score"] + rs * w["rs_score"] +
-                             mac * w["macd_score"] + ob * w["obv_score"] +
-                             adx * w["adx_score"] + vam * w["vam_score"] +
-                             brk * w["breakout_score"])
-                rows.append({
-                    "ticker": tkr,
-                    "composite_score": round(composite, 2),
-                    "price": round(last_price, 4),
-                })
-            except Exception:
-                pass
+    rows = []
+    for tkr in dm.tickers:
+        if tkr not in data:
+            continue
+        df = data[tkr]
+        close = df["Close"]
+        high = df["High"]
+        low = df["Low"]
+        volume = df["Volume"]
+        avg_vol = float(volume.iloc[-20:].mean())
+        last_price = float(close.iloc[-1])
+        if avg_vol < cfg.min_avg_volume or last_price < cfg.min_price:
+            continue
+        try:
+            s2 = score_calc.score_stage2(close)
+            rs = score_calc.score_relative_strength(close, bench_close, rs_vals)
+            mac = score_calc.score_macd(close)
+            ob = score_calc.score_obv(close, volume)
+            adx = score_calc.score_adx(high, low, close)
+            vam = score_calc.score_vam(close)
+            brk = score_calc.score_breakout(close, high, volume)
+            w = screener_cfg.weights
+            composite = (s2 * w["stage2_score"] + rs * w["rs_score"] +
+                         mac * w["macd_score"] + ob * w["obv_score"] +
+                         adx * w["adx_score"] + vam * w["vam_score"] +
+                         brk * w["breakout_score"])
+            rows.append({
+                "ticker": tkr,
+                "composite_score": round(composite, 2),
+                "price": round(last_price, 4),
+            })
+        except Exception:
+            pass
 
-        return (pd.DataFrame(rows)
-                .sort_values("composite_score", ascending=False)
-                .reset_index(drop=True))
-    finally:
-        os.unlink(tickers_path)
+    return (pd.DataFrame(rows)
+            .sort_values("composite_score", ascending=False)
+            .reset_index(drop=True))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
