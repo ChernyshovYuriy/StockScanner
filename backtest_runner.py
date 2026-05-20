@@ -140,6 +140,11 @@ class BacktestConfig:
     # None = compute fresh each run (default, single-run mode).
     _screener_cache: Optional[Dict] = field(default=None, repr=False)
 
+    # Gap filter: skip a buy if open price > intent_entry * (1 + gap_filter_pct/100).
+    # None = no filter (buy at any open price, matches pre-2026-05 backtest behaviour).
+    # Set to e.g. 2.0 to match the live GAP_FILTER_PCT=2.0 in config.py.
+    gap_filter_pct: Optional[float] = None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULT CONTAINER
@@ -650,6 +655,10 @@ def _execute_buys(
         price = _next_open_price(ticker, provider, after)
         if price is None or price <= 0:
             continue
+        if cfg.gap_filter_pct is not None:
+            planned = intent.get("entry", 0.0)
+            if planned and planned > 0 and price > planned * (1 + cfg.gap_filter_pct / 100):
+                continue
         shares = int(allocation / price)
         if shares <= 0:
             continue

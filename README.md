@@ -291,16 +291,24 @@ python run_backtest.py --start 2022-01-01 --end 2024-01-01
 # Custom tickers (URL or file)
 python run_backtest.py --tickers https://example.com/tickers.txt --start 2022-01-01 --end 2024-01-01
 
-# Parameter sweep (risk_pct × top_n_buys combinations)
+# Exit-param sweep: time_stop_days × stop_atr (4×4=16 combinations)
 python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep
+
+# Walk-forward gap filter optimization (find best GAP_FILTER_PCT via sliding windows)
+python run_backtest.py --start 2022-01-01 --end 2025-01-01 --walk-forward-gap
+python run_backtest.py --start 2022-01-01 --end 2025-01-01 --walk-forward-gap --wf-in-days 84 --wf-out-days 21
 
 python run_backtest.py --help
 ```
+
+The backtest simulates the live gap filter when `gap_filter_pct` is set in `BacktestConfig`
+(default `None` = no filter, matching historical behaviour before May 2026).
 
 Output files are written to `out/`:
 - `backtest_DATES_TIMESTAMP.html` — HTML report with equity curve and trade log
 - `backtest_trades_TIMESTAMP.csv` — full trade log
 - `backtest_equity_TIMESTAMP.csv` — day-by-day equity curve
+- `backtest_wf_gap_DATES_TIMESTAMP.csv` — walk-forward gap optimization results
 
 ---
 

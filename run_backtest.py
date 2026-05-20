@@ -9,8 +9,12 @@ Single run:
 Custom tickers source (URL or file):
     python run_backtest.py --tickers https://example.com/tickers.txt --start 2022-01-01 --end 2024-01-01
 
-Parameter sweep (test multiple risk_pct × top_n_buys combinations):
+Parameter sweep (exit params — time_stop_days × stop_atr, 4×4=16 combos):
     python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep
+
+Walk-forward gap filter optimization (find optimal GAP_FILTER_PCT):
+    python run_backtest.py --start 2022-01-01 --end 2024-01-01 --walk-forward-gap
+    python run_backtest.py --start 2022-01-01 --end 2024-01-01 --walk-forward-gap --wf-in-days 126 --wf-out-days 42
 
 All options:
     python run_backtest.py --help
@@ -358,6 +362,252 @@ def _run_sweep(
                 suffix=f"_best_ts{best_ts}_sa{best_satr}")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# WALK-FORWARD GAP OPTIMIZATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_walk_forward_gap(
+    args: argparse.Namespace,
+    tickers: list[str],
+    provider: HistoricalSliceProvider,
+) -> None:
+    """
+    Walk-forward optimization for gap_filter_pct.
+
+    Sliding window approach:
+      - In-sample (IS): sweep GAP_VALUES, pick the value with best Sharpe.
+      - Out-of-sample (OOS): validate the chosen value on unseen data.
+      - Slide the window forward by out_days and repeat.
+
+    Screener scores are pre-computed once for the full period and re-indexed
+    into each sub-window — no redundant screener computation.
+    """
+    from backtest_runner import (
+        _run_screener_step, _trading_days,
+        BacktestConfig, BacktestResults, BacktestRunner,
+    )
+    from time_utils import set_backtest_clock, TSX_TZ
+    from datetime import datetime as _dt
+
+    GAP_VALUES: list = [None, 1.0, 2.0, 3.0, 4.0, 5.0]
+    GAP_LABELS: dict = {None: "OFF", 1.0: "1%", 2.0: "2%", 3.0: "3%", 4.0: "4%", 5.0: "5%"}
+
+    in_days  = args.wf_in_days
+    out_days = args.wf_out_days
+    freq     = args.screener_freq
+
+    trading_days = _trading_days(args.start, args.end)
+    n = len(trading_days)
+
+    if n < in_days + out_days:
+        print(
+            f"\nERROR: period too short for walk-forward "
+            f"({n} trading days available, need {in_days + out_days})",
+            file=sys.stderr,
+        )
+        return
+
+    # ── Pre-compute screener scores for the full period once ──────────────────
+    base_ep = ExitParams(
+        initial_stop_atr_k   = args.stop_atr,
+        chand_trail_atr_k    = args.trail_atr,
+        time_stop_days       = args.time_stop_days,
+        time_stop_min_profit = args.time_stop_pct,
+        stop_trigger         = args.stop_trigger,
+    )
+    base_cfg = BacktestConfig(
+        tickers            = tickers,
+        benchmark          = args.benchmark,
+        start_date         = args.start,
+        end_date           = args.end,
+        initial_cash       = args.capital,
+        risk_pct           = args.risk,
+        top_n_buys         = args.top_n,
+        min_score          = args.min_score,
+        lookback_days      = args.lookback,
+        screener_frequency = freq,
+        max_tracked_tickers= args.max_tickers,
+        regime_filter      = args.regime_filter,
+        min_rr             = args.min_rr,
+        exit_params        = base_ep,
+        _provider          = provider,
+    )
+
+    print(f"\n  Pre-computing screener scores for full period  ", end="", flush=True)
+    t_pre = time.perf_counter()
+    full_cache: dict = {}
+    for i, day in enumerate(trading_days):
+        if i % freq == 0:
+            sim_ts = pd.Timestamp(day)
+            set_backtest_clock(_dt(day.year, day.month, day.day, 16, 5, tzinfo=TSX_TZ))
+            full_cache[i] = _run_screener_step(base_cfg, provider, sim_ts)
+            print(".", end="", flush=True)
+    set_backtest_clock(None)
+    print(f"  done in {time.perf_counter() - t_pre:.1f}s  ({len(full_cache)} snapshots)")
+
+    # ── Build sliding windows ─────────────────────────────────────────────────
+    # Each window: (is_start_idx, is_end_idx, oos_end_idx) — all exclusive-right.
+    windows: list[tuple[int, int, int]] = []
+    s = 0
+    while s + in_days + out_days <= n:
+        windows.append((s, s + in_days, s + in_days + out_days))
+        s += out_days
+    n_windows = len(windows)
+
+    print(f"\n  Walk-Forward Gap Optimization")
+    print(f"  In-sample: {in_days}d  Out-of-sample: {out_days}d  "
+          f"{n_windows} windows  {len(GAP_VALUES)} gap values  "
+          f"({n_windows * len(GAP_VALUES)} IS + {n_windows} OOS backtests)\n")
+
+    def _make_sub_cache(offset: int, length: int) -> dict:
+        """Re-index full_cache entries into the 0-based day space of a sub-window."""
+        sub: dict = {}
+        for j in range(length):
+            sub_key = (j // freq) * freq
+            if sub_key in sub:
+                continue
+            full_key = ((offset + j) // freq) * freq
+            if full_key in full_cache:
+                sub[sub_key] = full_cache[full_key]
+        return sub
+
+    def _sharpe(r: BacktestResults) -> float:
+        eq = r.equity_curve_df()
+        if eq.empty or len(eq) < 5:
+            return -999.0
+        dr = eq["total_equity"].pct_change().dropna()
+        return float(dr.mean() / dr.std() * (252 ** 0.5)) if dr.std() > 0 else 0.0
+
+    def _run_sub(start_i: int, end_i: int, gap, sub_cache: dict) -> BacktestResults:
+        start_date = str(trading_days[start_i])
+        end_date   = str(trading_days[end_i]) if end_i < n else args.end
+        cfg = BacktestConfig(
+            tickers            = tickers,
+            benchmark          = args.benchmark,
+            start_date         = start_date,
+            end_date           = end_date,
+            initial_cash       = args.capital,
+            risk_pct           = args.risk,
+            top_n_buys         = args.top_n,
+            min_score          = args.min_score,
+            lookback_days      = args.lookback,
+            screener_frequency = freq,
+            max_tracked_tickers= args.max_tickers,
+            regime_filter      = args.regime_filter,
+            min_rr             = args.min_rr,
+            atr_stop_mult      = args.atr_mult,
+            exit_params        = base_ep,
+            gap_filter_pct     = gap,
+            _provider          = provider,
+            _screener_cache    = sub_cache,
+        )
+        return BacktestRunner(cfg).run(verbose=False)
+
+    summary_rows: list[dict] = []
+    gap_wins:  dict = {g: 0 for g in GAP_VALUES}
+    oos_stats: dict = {g: [] for g in GAP_VALUES}  # [(sharpe, ret_pct, n_trades)]
+
+    for w_idx, (is_s, is_e, oos_e) in enumerate(windows, 1):
+        is_str  = f"{trading_days[is_s]} -> {trading_days[is_e - 1]}"
+        oos_end = trading_days[min(oos_e, n) - 1]
+        oos_str = f"{trading_days[is_e]} -> {oos_end}"
+        print(f"  Window {w_idx}/{n_windows}  IS: {is_str}  OOS: {oos_str}")
+
+        is_cache  = _make_sub_cache(is_s, is_e - is_s)
+        oos_cache = _make_sub_cache(is_e, oos_e - is_e)
+
+        # IS sweep — all gap values
+        is_results: dict = {}
+        for gap in GAP_VALUES:
+            r = _run_sub(is_s, is_e, gap, is_cache)
+            is_results[gap] = (_sharpe(r), len(r.trades))
+
+        best_gap    = max(is_results, key=lambda g: is_results[g][0])
+        best_sharpe = is_results[best_gap][0]
+
+        for gap in GAP_VALUES:
+            sh, nt = is_results[gap]
+            marker = "  <- best" if gap == best_gap else ""
+            print(f"    IS  gap={GAP_LABELS[gap]:>3}  sharpe={sh:>6.2f}  trades={nt}{marker}")
+
+        # OOS validation with the IS winner
+        oos_r   = _run_sub(is_e, oos_e, best_gap, oos_cache)
+        oos_sh  = _sharpe(oos_r)
+        oos_eq  = oos_r.equity_curve_df()
+        oos_ret = (
+            (float(oos_eq["total_equity"].iloc[-1]) / args.capital - 1) * 100
+            if not oos_eq.empty else 0.0
+        )
+        oos_nt = len(oos_r.trades)
+
+        gap_wins[best_gap] += 1
+        oos_stats[best_gap].append((oos_sh, oos_ret, oos_nt))
+
+        warn = "  (low trade count)" if oos_nt < 3 else ""
+        print(f"    OOS gap={GAP_LABELS[best_gap]:>3}  sharpe={oos_sh:>6.2f}  "
+              f"ret={oos_ret:>+6.1f}%  trades={oos_nt}{warn}\n")
+
+        summary_rows.append({
+            "window":     w_idx,
+            "IS":         is_str,
+            "OOS":        oos_str,
+            "best_gap":   GAP_LABELS[best_gap],
+            "IS_sharpe":  round(best_sharpe, 2),
+            "OOS_sharpe": round(oos_sh, 2),
+            "OOS_ret_%":  round(oos_ret, 2),
+            "OOS_trades": oos_nt,
+        })
+
+    # ── Summary table ─────────────────────────────────────────────────────────
+    df_sum = pd.DataFrame(summary_rows)
+    print(f"{'─' * 70}")
+    print("  Walk-Forward Results")
+    print(f"{'─' * 70}")
+    print(df_sum.to_string(index=False))
+
+    # ── Vote count ────────────────────────────────────────────────────────────
+    print(f"\n  IS vote count (how many windows each gap value had best Sharpe):")
+    for gap in GAP_VALUES:
+        label  = GAP_LABELS[gap]
+        count  = gap_wins[gap]
+        marker = "  <- current config" if gap == 2.0 else ""
+        bar    = "#" * count
+        print(f"    {label:>3}  {bar:<{n_windows}}  {count}{marker}")
+
+    # ── Aggregate OOS by winning gap ──────────────────────────────────────────
+    print(f"\n  Aggregate OOS performance (windows where each gap value was chosen):")
+    for gap in GAP_VALUES:
+        rows = oos_stats[gap]
+        label = GAP_LABELS[gap]
+        marker = "  <- current config" if gap == 2.0 else ""
+        if not rows:
+            print(f"    {label:>3}  -- (never chosen as IS winner)")
+            continue
+        avg_sh  = sum(r[0] for r in rows) / len(rows)
+        avg_ret = sum(r[1] for r in rows) / len(rows)
+        tot_nt  = sum(r[2] for r in rows)
+        print(f"    {label:>3}  avg_sharpe={avg_sh:>6.2f}  "
+              f"avg_ret={avg_ret:>+6.1f}%  total_trades={tot_nt}{marker}")
+
+    # ── Recommendation ────────────────────────────────────────────────────────
+    top = max(gap_wins, key=lambda g: (
+        gap_wins[g],
+        sum(r[0] for r in oos_stats[g]) / max(len(oos_stats[g]), 1),
+    ))
+    print(f"\n  Recommendation: GAP_FILTER_PCT = {GAP_LABELS[top]} "
+          f"({gap_wins[top]}/{n_windows} IS windows)")
+    if gap_wins[top] <= n_windows // 2:
+        print("  Note: no single value dominated — consider a longer date range "
+              "for a more conclusive result.")
+
+    # ── Save CSV ──────────────────────────────────────────────────────────────
+    OUT_PATH.mkdir(parents=True, exist_ok=True)
+    ts_str  = datetime.now().strftime("%Y%m%dT%H%M")
+    wf_path = OUT_PATH / f"backtest_wf_gap_{args.start}_{args.end}_{ts_str}.csv"
+    df_sum.to_csv(wf_path, index=False)
+    print(f"\n  Results -> {wf_path.resolve()}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -419,6 +669,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Only open new positions when XIU.TO > 200-day SMA (regime filter)")
     p.add_argument("--sweep",  action="store_true",
                    help="Sweep time_stop_days × stop_atr (4×4=16 combos); ranks by Sharpe")
+    p.add_argument("--walk-forward-gap", dest="walk_forward_gap", action="store_true",
+                   help="Walk-forward optimization for gap_filter_pct; ranks by OOS Sharpe")
+    p.add_argument("--wf-in-days",  dest="wf_in_days",  type=int, default=126,
+                   help="Walk-forward in-sample window size in trading days (default 126 ~6 months)")
+    p.add_argument("--wf-out-days", dest="wf_out_days", type=int, default=42,
+                   help="Walk-forward out-of-sample window size in trading days (default 42 ~2 months)")
     p.add_argument("--quiet",  action="store_true",
                    help="Suppress per-day progress output")
 
@@ -465,7 +721,9 @@ def main() -> None:
     # ── Run ──────────────────────────────────────────────────────────────────
     t_total = time.perf_counter()
 
-    if args.sweep:
+    if args.walk_forward_gap:
+        _run_walk_forward_gap(args, tickers, provider)
+    elif args.sweep:
         _run_sweep(args, tickers, provider, bench_series)
     else:
         _run_single(args, tickers, provider, bench_series)

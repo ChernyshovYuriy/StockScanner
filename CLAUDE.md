@@ -36,7 +36,8 @@ python position_monitor.py --mode post-close      # informational EOD run
 
 # Run backtest
 python run_backtest.py --start 2022-01-01 --end 2024-01-01
-python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep   # parameter sweep
+python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep              # exit-param sweep (time_stop × stop_atr)
+python run_backtest.py --start 2022-01-01 --end 2025-01-01 --walk-forward-gap   # walk-forward gap filter optimization
 python run_backtest.py --tickers https://your-host/path/can_tickers.txt --start 2022-01-01 --end 2024-01-01
 
 # Run the screener standalone
@@ -81,6 +82,7 @@ The system runs as three separate scheduled entrypoints that must remain indepen
 - **`db.py`** — DuckDB persistence layer. All live-mode state lives in `data/trading.db`. Call `init_db()` at the start of each service. Six tables: `account` (cash), `positions` (open), `trades` (closed, append-only), `signals` (pipeline state machine), `intents` (buy queue), `transactions` (unified BUY+SELL ledger). Schema changes are straightforward — DuckDB supports full `ALTER TABLE`.
 - **`time_utils.py`** — Injectable backtest clock. `set_backtest_clock(dt)` pins time for simulation; `None` restores live wall-clock. All time-dependent code calls `market_now()` / `market_today()` from here.
 - **`market_data.py`** — Two data providers behind a structural interface (`MarketDataProvider`): `LiveDataProvider` (wraps yfinance for live mode) and `HistoricalSliceProvider` (pre-loaded dict with strict `as_of` cutoff to prevent lookahead bias).
+- **`backtest_runner.py`** `BacktestConfig.gap_filter_pct` — `None` (default) = no gap filter, matching pre-2026-05 backtest behaviour. Set to e.g. `2.0` to simulate the live `GAP_FILTER_PCT` from `config.py` (skip buys where open > intent_entry × 1.02).
 - **`portfolio.py`** — In-memory `PortfolioState` for backtesting only. No file I/O; the live-mode equivalent is `db.py`.
 - **`backtest_runner.py`** — Day-by-day simulation. For each day: after-close screener + pipeline, then next-open buys at open price, then daily position monitor.
 - **`canadian_stock_screener.py`** — Multi-factor momentum screener (Weinstein Stage II, RS vs XIU.TO, MACD, OBV, ADX, VAM, 52w proximity). Universe and weights controlled by `CONFIG` dict inside the file.
