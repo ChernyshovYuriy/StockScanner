@@ -2,7 +2,7 @@
 Description=Run StockScanner positions monitor at 15:30 local time Mon-Fri
 
 [Timer]
-OnCalendar=Mon..Fri 15:30
+OnCalendar=Mon..Fri 15:50
 Persistent=true
 Unit=stockscanner-monitor.service
 
