@@ -665,7 +665,7 @@ def _execute_buys(
         cost = price * shares
         if cost > portfolio.cash:
             continue
-        portfolio.buy(ticker, buy_date, price, shares)
+        portfolio.buy(ticker, buy_date, price, shares, stop_price=intent.get("stop"))
         bought.append(ticker)
 
     return bought
@@ -709,7 +709,8 @@ def _run_monitor_step(
             shares=float(pos.shares),
         )
 
-        result = compute_signals(pm_pos, df, exit_params=exit_params)  # no today_bar
+        result = compute_signals(pm_pos, df, exit_params=exit_params,
+                                 planned_stop=pos.stop_price)  # no today_bar
         if result.get("status") == "SELL":
             sell_price = _day_close_price(ticker, provider, sim_date)
             if sell_price is None or sell_price <= 0:

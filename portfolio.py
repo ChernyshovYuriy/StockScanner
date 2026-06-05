@@ -51,6 +51,7 @@ class OpenPosition:
     entry_date:  date
     entry_price: float
     shares:      int       # whole shares only — matches virtual_buy.py rule
+    stop_price:  Optional[float] = None  # planned exit stop carried from the buy intent
 
     @property
     def cost_basis(self) -> float:
@@ -135,6 +136,7 @@ class PortfolioState:
         entry_date: date,
         price:      float,
         shares:     int,
+        stop_price: Optional[float] = None,
     ) -> None:
         """
         Open a new position.
@@ -148,6 +150,7 @@ class PortfolioState:
         entry_date : trade date (date of execution, typically D+1 open in backtest)
         price      : execution price per share
         shares     : number of whole shares  (must be > 0)
+        stop_price : planned exit stop carried from the buy intent (optional)
         """
         if shares <= 0:
             raise ValueError(f"shares must be > 0, got {shares}")
@@ -170,6 +173,7 @@ class PortfolioState:
             entry_date=entry_date,
             entry_price=float(price),
             shares=int(shares),
+            stop_price=float(stop_price) if stop_price is not None else None,
         )
 
     def sell(

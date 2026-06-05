@@ -255,11 +255,13 @@ def run_virtual_buy(
 
         shares = 0
         sizing_method = "risk_based"
+        stop_price: Optional[float] = None
         try:
             planned_entry = float(raw_entry)
             planned_stop  = float(raw_stop)
             per_share_risk = planned_entry - planned_stop
             if per_share_risk > 0:
+                stop_price = planned_stop  # persist so the exit honours the planned stop
                 shares_by_risk = int(dollar_risk / per_share_risk)
                 # Cap: position value must not exceed max_position_value
                 shares_by_cap  = int(max_position_value / price)
@@ -297,6 +299,7 @@ def run_virtual_buy(
             POSITION_COL_ENTRY_DATE: today,
             POSITION_COL_ENTRY_PRICE: price,
             POSITION_COL_SHARES: shares,
+            "stop_price": stop_price,
         })
 
     # ── 4. Write to database ─────────────────────────────────────────────────
@@ -316,6 +319,7 @@ def run_virtual_buy(
                 rec[POSITION_COL_ENTRY_PRICE],
                 rec[POSITION_COL_SHARES],
                 pattern=rec.get("pattern"),
+                stop_price=rec.get("stop_price"),
             )
             mark_intent_executed(rec["intent_id"], rec[POSITION_COL_ENTRY_PRICE], rec[POSITION_COL_SHARES])
         print(f"{Fore.GREEN}✓ Inserted {len(buy_records)} position(s) into database{Style.RESET_ALL}")

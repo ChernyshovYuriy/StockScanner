@@ -142,6 +142,7 @@ class Position:
     entry_date: date
     entry_price: float
     shares: float
+    stop_price: Optional[float] = None  # planned exit stop carried from the buy intent
 
 
 @dataclass
@@ -309,6 +310,7 @@ def compute_signals(
         df: pd.DataFrame,
         today_bar: Optional[TodayBar] = None,
         exit_params: Optional["ExitParams"] = None,
+        planned_stop: Optional[float] = None,
 ) -> Dict[str, object]:
     """
     Compute stops and exit signals for a single position.
@@ -322,6 +324,11 @@ def compute_signals(
     exit_params : optional ExitParams override.  None = use module-level defaults
                   (live behaviour unchanged).  Pass a custom ExitParams in backtest
                   mode to tune stop/time-stop parameters.
+    planned_stop: optional stop price carried from the buy intent.  When provided,
+                  it is used as the initial stop instead of recomputing
+                  entry - initial_stop_atr_k × ATR, so the exit matches the
+                  (swing-low-aware) stop the trade was sized against.  None =
+                  recompute from ATR (default; live behaviour unchanged).
     """
     ep = exit_params if exit_params is not None else ExitParams()
     entry_dt = pd.Timestamp(pos.entry_date)
@@ -355,7 +362,12 @@ def compute_signals(
     # ── Stop levels ───────────────────────────────────────────────────────────
     # Chandelier anchors to the highest HIGH since entry (uses daily wicks, intentional)
     hh_since_entry = float(after_entry["High"].max())
-    initial_stop = pos.entry_price - ep.initial_stop_atr_k * atr_latest
+    # Honour the planned stop (swing-low-aware, carried from the buy intent) when
+    # provided; otherwise fall back to the ATR-derived stop (live behaviour unchanged).
+    if planned_stop is not None:
+        initial_stop = float(planned_stop)
+    else:
+        initial_stop = pos.entry_price - ep.initial_stop_atr_k * atr_latest
     chandelier_stop = hh_since_entry - ep.chand_trail_atr_k * atr_latest
     stop_price = max(initial_stop, chandelier_stop)
 
@@ -450,11 +462,14 @@ def parse_positions_from_db() -> list[Position]:
         ticker = str(row[SIGNAL_COL_TICKER]).strip()
         if not ticker or ticker.lower() == "nan":
             continue
+        raw_stop = row["stop_price"] if "stop_price" in row else None
+        stop_price = float(raw_stop) if pd.notna(raw_stop) else None
         positions.append(Position(
             ticker=ticker,
             entry_date=pd.to_datetime(row[POSITION_COL_ENTRY_DATE]).date(),
             entry_price=float(row[POSITION_COL_ENTRY_PRICE]),
             shares=float(row[POSITION_COL_SHARES]),
+            stop_price=stop_price,
         ))
     return positions
 
@@ -802,7 +817,7 @@ def main() -> None:
                     end="",
                 )
 
-        result = compute_signals(pos, df, today_bar=today_bar)
+        result = compute_signals(pos, df, today_bar=today_bar, planned_stop=pos.stop_price)
 
         status = result.get(POSITION_COL_STATUS, "")
         color = Fore.RED if status == "SELL" else Fore.GREEN

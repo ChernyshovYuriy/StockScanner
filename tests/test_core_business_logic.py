@@ -291,6 +291,30 @@ class TestComputeSignals:
         result = self.compute_signals(pos, df, exit_params=ep)
         assert result["status"] == "HOLD"
 
+    def test_planned_stop_overrides_atr_initial_stop(self):
+        """
+        A planned_stop carried from the buy intent replaces the entry-1.5×ATR
+        initial stop.  Same bar (close 97, ATR≈1.0, default stop ≈98.5):
+          - no planned_stop  → SELL  (97 < 98.5 ATR stop)
+          - planned_stop=95  → HOLD  (97 > 95 wider planned stop)
+        chand_trail_atr_k is set wide so the chandelier never dominates here.
+        """
+        closes = [100.0] * 29 + [97.0]
+        df = _make_daily_ohlcv(n=30, close_prices=closes, atr_approx=1.0)
+        pos = self._pos(entry_price=100.0, entry_date=df.index[0].date().isoformat())
+        ep = self.ExitParams(initial_stop_atr_k=1.5, chand_trail_atr_k=10.0,
+                             stop_trigger="close", time_stop_days=200)
+
+        # Default ATR stop fires.
+        assert self.compute_signals(pos, df, exit_params=ep)["status"] == "SELL"
+        # Wider planned stop is honoured → no exit.
+        held = self.compute_signals(pos, df, exit_params=ep, planned_stop=95.0)
+        assert held["status"] == "HOLD"
+        # Planned stop set above price → fires on the planned level, not the ATR one.
+        hit = self.compute_signals(pos, df, exit_params=ep, planned_stop=98.0)
+        assert hit["status"] == "SELL"
+        assert "STOP_HIT" in hit["reason"]
+
     # ── 2c. Profit giveback ───────────────────────────────────────────────────
 
     def test_giveback_triggers_sell(self):

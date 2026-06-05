@@ -111,7 +111,7 @@ def test_insert_position_uppercases_ticker():
 def test_get_open_positions_df_columns_when_empty():
     df = get_open_positions_df()
     assert df.empty
-    assert set(df.columns) == {"ticker", "entry_date", "entry_price", "shares"}
+    assert set(df.columns) == {"ticker", "entry_date", "entry_price", "shares", "stop_price"}
 
 
 def test_get_open_positions_df_returns_dataframe():

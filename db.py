@@ -82,9 +82,13 @@ _DDL: list[str] = [
         entry_date  TEXT   NOT NULL,
         entry_price DOUBLE NOT NULL,
         shares      DOUBLE NOT NULL,
+        stop_price  DOUBLE,
         opened_at   TEXT   NOT NULL
     )
     """,
+    # Migration for databases created before stop_price was added — no-op on
+    # fresh DBs where the column already exists from the CREATE above.
+    "ALTER TABLE positions ADD COLUMN IF NOT EXISTS stop_price DOUBLE",
     """
     CREATE TABLE IF NOT EXISTS trades (
         id          INTEGER DEFAULT nextval('seq_trades') PRIMARY KEY,
@@ -275,7 +279,7 @@ def get_open_positions() -> List[Dict]:
     with _connect() as conn:
         return (
             conn.execute(
-                "SELECT ticker, entry_date, entry_price, shares FROM positions ORDER BY entry_date"
+                "SELECT ticker, entry_date, entry_price, shares, stop_price FROM positions ORDER BY entry_date"
             )
             .df()
             .to_dict("records")
@@ -286,21 +290,28 @@ def get_open_positions_df() -> pd.DataFrame:
     """Return open positions as a DataFrame (drop-in for pd.read_csv(own.csv))."""
     with _connect() as conn:
         df = conn.execute(
-            "SELECT ticker, entry_date, entry_price, shares FROM positions ORDER BY entry_date"
+            "SELECT ticker, entry_date, entry_price, shares, stop_price FROM positions ORDER BY entry_date"
         ).df()
         if df.empty:
-            return pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "shares"])
+            return pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "shares", "stop_price"])
         return df
 
 
-def insert_position(ticker: str, entry_date: str, entry_price: float, shares: float, pattern: str | None = None) -> None:
-    """Add a new open position and record a BUY transaction. Raises if ticker is already open."""
+def insert_position(ticker: str, entry_date: str, entry_price: float, shares: float, pattern: str | None = None,
+                    stop_price: float | None = None) -> None:
+    """Add a new open position and record a BUY transaction. Raises if ticker is already open.
+
+    stop_price is the planned exit stop carried from the buy intent; position_monitor
+    honours it as the initial stop so the exit matches the stop the trade was sized against.
+    """
     from time_utils import market_now
     now = market_now().isoformat()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO positions (ticker, entry_date, entry_price, shares, opened_at) VALUES (?, ?, ?, ?, ?)",
-            [ticker.upper(), entry_date, round(entry_price, 4), round(shares, 4), now],
+            "INSERT INTO positions (ticker, entry_date, entry_price, shares, stop_price, opened_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [ticker.upper(), entry_date, round(entry_price, 4), round(shares, 4),
+             round(stop_price, 4) if stop_price is not None else None, now],
         )
         _record_transaction(conn, "BUY", ticker, entry_date, entry_price, shares, reason=pattern)
 
