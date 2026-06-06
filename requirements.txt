@@ -8,3 +8,4 @@ numpy
 pydantic
 pytest
 duckdb
+requests

@@ -1,0 +1,6 @@
+# Example tickers. Load with:
+#   python -m edgar.run watchlist MU,KEY,AMD,PLTR
+MU
+AMD
+KEY
+PLTR

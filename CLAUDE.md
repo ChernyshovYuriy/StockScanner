@@ -34,6 +34,11 @@ python virtual_buy.py                             # virtual entry execution (9:4
 python position_monitor.py --mode pre-close       # position monitoring with sells (3:50 PM)
 python position_monitor.py --mode post-close      # informational EOD run
 
+# EDGAR collector — separate 4th service (US SEC filings; ~6:30 PM ET)
+python edgar_service.py                            # scan + store + email digest of flagged hits
+python edgar_service.py --dry-run                  # build & print the digest, send nothing
+python -m edgar.run watchlist MU,KEY,AMD           # set the insider-buy watchlist (US tickers)
+
 # Run backtest
 python run_backtest.py --start 2022-01-01 --end 2024-01-01
 python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep              # exit-param sweep (time_stop × stop_atr)
@@ -87,7 +92,8 @@ The system runs as three separate scheduled entrypoints that must remain indepen
 - **`backtest_runner.py`** — Day-by-day simulation. For each day: after-close screener + pipeline, then next-open buys at open price, then daily position monitor.
 - **`canadian_stock_screener.py`** — Multi-factor momentum screener (Weinstein Stage II, RS vs XIU.TO, MACD, OBV, ADX, VAM, 52w proximity). Universe and weights controlled by `CONFIG` dict inside the file.
 - **`auto_pipeline.py`** — Consumes screener CSV outputs, runs three pattern detectors (VCP, EMA pullback reclaim, base breakout), advances a signal state machine (`FORMING → AT_PIVOT → CONFIRMED → ACTIVE/FAILED`), and writes confirmed intents to the database.
-- **`send_report.py`** — Gmail SMTP sender. Has two distinct responsibilities: `send_report()` sends the daily HTML pipeline report (called from `main.py` and `position_monitor.py`); `send_transaction_email()` / `build_transaction_html()` sends a trade notification email after every buy or sell (called from `virtual_buy.py` and `position_monitor.py`). Credentials are read from `.env` (`GMAIL_SENDER`, `GMAIL_APP_PASSWORD`, `GMAIL_RECIPIENT`). Silently skips if not configured.
+- **`send_report.py`** — Gmail SMTP sender. Has two distinct responsibilities: `send_report()` sends the daily HTML pipeline report (called from `main.py` and `position_monitor.py`); `send_transaction_email()` / `build_transaction_html()` sends a trade notification email after every buy or sell (called from `virtual_buy.py` and `position_monitor.py`). `send_text_email(subject, body)` sends a plain-text email (used by the EDGAR collector). Credentials are read from `.env` (`GMAIL_SENDER`, `GMAIL_APP_PASSWORD`, `GMAIL_RECIPIENT`). Silently skips if not configured.
+- **`edgar_service.py`** / **`edgar/`** — Separate 4th service (US SEC EDGAR), the fundamentals/ownership counterweight to the TSX momentum system. Daily after the US close it sweeps EDGAR's daily index, stores filings in its OWN SQLite DB (`data/edgar.db`, keyed on CIK+accession — NOT `trading.db`), and emails a plain-text digest of flagged hits (interim: watchlist insider open-market buys + all SC 13D/13G) via `send_report.send_text_email()`. Quiet day = no email. Reuses shared config/email/logging/lock; stays independent of the TSX trio (US filers only). Config in the `EDGAR_*` block of `config.py`; dev sandbox + specs in `edgar/`. Every filing is a lagged disclosure — a research trigger, not a price predictor.
 
 ### Scope discipline
 

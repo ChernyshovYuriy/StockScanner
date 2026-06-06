@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner EDGAR collector at 18:30 local time Mon-Fri (after US close)
+
+[Timer]
+OnCalendar=Mon..Fri 18:30
+Persistent=false
+Unit=stockscanner-edgar.service
+
+[Install]
+WantedBy=timers.target

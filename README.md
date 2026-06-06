@@ -382,6 +382,32 @@ pytest tests/test_integration.py -v  # service integration
 
 ---
 
+## EDGAR collector (4th service — US filings)
+
+A separate operational service (`edgar_service.py`) that complements the TSX
+momentum system with a **fundamentals / ownership** signal from SEC EDGAR. Daily
+after the US close (Mon–Fri ~6:30 PM ET) it sweeps EDGAR's daily index, stores
+filings in its **own** SQLite DB (`data/edgar.db`, separate from `trading.db`),
+and emails a plain-text **digest of flagged hits only** — quiet day, no email.
+
+It reuses StockScanner's infrastructure (config, Gmail sender, logging, lock); it
+does not reimplement them. US filers only — no overlap with the TSX universe.
+
+```bash
+python -m edgar.run watchlist MU,KEY,AMD   # set the insider-buy watchlist (US tickers)
+python edgar_service.py --dry-run          # build & print the digest, send nothing
+python edgar_service.py                    # daily run (scan, store, email)
+```
+
+**Interim flagging:** watchlist insider open-market buys + all SC 13D/13G
+market-wide. Richer flag logic (dollar-value threshold, 10b5-1 vs discretionary,
+insider clustering, 13D filer/% body parse) is a planned next step.
+
+> Every filing is a lagged disclosure (4–10+ days) — a research trigger, never a
+> price predictor or financial advice. Sells are intentionally never flagged.
+
+---
+
 ## Disclaimer
 
 For research and education only. Does **not** constitute financial advice.

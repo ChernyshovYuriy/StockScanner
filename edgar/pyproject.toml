@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edgar-screener"
+version = "0.2.0"
+description = "Scan SEC EDGAR for insider buys, activist stakes, material events; join with fundamentals on CIK."
+requires-python = ">=3.10"
+dependencies = ["requests>=2.31,<3.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+packages = ["edgar"]

@@ -507,6 +507,31 @@ def send_email(msg: MIMEMultipart, dry_run: bool = False) -> None:
         sys.exit(1)
 
 
+def send_text_email(subject: str, body: str) -> bool:
+    """
+    Send a plain-text email through the shared Gmail transport.
+
+    Used by the EDGAR collector service for its plain-text digest — it reuses the
+    same SMTP connection, credentials, and error handling as the HTML reports
+    rather than a fresh smtplib implementation.  Returns False (without raising)
+    when Gmail is not configured, so an unconfigured host degrades to
+    "logged, not sent" instead of crashing.
+    """
+    problems = validate_config()
+    if problems:
+        print("  [text email] skipped — Gmail not configured.")
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["From"] = GMAIL_SENDER
+    msg["To"] = GMAIL_RECIPIENT
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    send_email(msg)
+    return True
+
+
 def send_report(cfg: SendConfig):
     print("─" * 55)
     print("  TSX Pipeline — Gmail Sender")
