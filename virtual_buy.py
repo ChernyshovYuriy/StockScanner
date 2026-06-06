@@ -57,7 +57,7 @@ from schema_keys import (
     SIGNAL_COL_PATTERN,
     SIGNAL_COL_TICKER,
 )
-from time_utils import market_today
+from time_utils import is_market_open, market_today
 
 init(autoreset=True)
 
@@ -127,6 +127,16 @@ def run_virtual_buy(
     print(f"\n{'=' * 60}")
     print(f"  {Fore.YELLOW}💸  Virtual Buy Runner{Style.RESET_ALL}")
     print(f"{'=' * 60}\n")
+
+    # ── Market-hours guard ───────────────────────────────────────────────────
+    # Never fill live buys outside the TSX session — an off-hours trigger (e.g.
+    # a systemd Persistent catch-up, a manual run, or a holiday) would size
+    # against a stale yfinance quote.  --dry-run is still allowed any time so the
+    # runner can be inspected off-hours without writing anything.
+    if not dry_run and not is_market_open():
+        print(f"{Fore.YELLOW}Market closed — no buys executed.{Style.RESET_ALL}")
+        log(service, run_id, "skip_market_closed")
+        return
 
     # ── 1. Read intents ──────────────────────────────────────────────────────
     intents_df = load_pending_intents()

@@ -54,7 +54,7 @@ from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSIT
     POSITION_COL_PNL_PCT, POSITION_COL_REASON, POSITION_COL_SHARES, POSITION_COL_STATUS, POSITIONS_COLS, \
     SIGNAL_COL_TICKER
 from send_report import send_report, send_transaction_email, SendConfig
-from time_utils import date_to_iso_basic, market_now, market_today
+from time_utils import date_to_iso_basic, is_market_open, market_now, market_today
 
 init(autoreset=True)
 
@@ -125,12 +125,6 @@ ENABLE_CACHE = True
 # TSX timezone
 TSX_TZ = ZoneInfo("America/Toronto")
 
-# TSX regular session hours (ET)
-MARKET_OPEN_HOUR = 9
-MARKET_OPEN_MIN = 30
-MARKET_CLOSE_HOUR = 16
-MARKET_CLOSE_MIN = 0
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA STRUCTURES
@@ -152,19 +146,6 @@ class TodayBar:
     close: float  # latest traded price (last 5-min close)
     high: float  # session high so far
     source: str  # e.g. "5m-intraday"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MARKET HOURS CHECK
-# ─────────────────────────────────────────────────────────────────────────────
-
-def is_market_open() -> bool:
-    """Return True if TSX is currently in its regular session (9:30–16:00 ET)."""
-    now = market_now(TSX_TZ)
-    open_min = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MIN
-    close_min = MARKET_CLOSE_HOUR * 60 + MARKET_CLOSE_MIN
-    now_min = now.hour * 60 + now.minute
-    return open_min <= now_min < close_min
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -754,8 +735,17 @@ def main() -> None:
     realized_pnl = 0.0
 
     # ── Determine run mode ────────────────────────────────────────────────────
-    use_intraday = mode == PositionMonitorMode.PRE_CLOSE
-    execute_sells = mode == PositionMonitorMode.PRE_CLOSE
+    # Market-hours guard: pre-close intraday fetch + sell execution only happen
+    # while the TSX is actually open.  If a pre-close run is triggered off-hours
+    # (e.g. a systemd Persistent catch-up or a manual run), fall back to daily
+    # bars and suppress sells so we never transact on stale prices.
+    market_open = is_market_open()
+    use_intraday = mode == PositionMonitorMode.PRE_CLOSE and market_open
+    execute_sells = mode == PositionMonitorMode.PRE_CLOSE and market_open
+
+    if mode == PositionMonitorMode.PRE_CLOSE and not market_open:
+        log(service, run_id, "sells_suppressed_market_closed")
+        print(f"  {Fore.YELLOW}⚠  Market closed — running informational only, sells suppressed.{Style.RESET_ALL}")
 
     print(f"\n{'=' * 65}")
     print(f"  {Fore.YELLOW}📊  Position Monitor{Style.RESET_ALL}")

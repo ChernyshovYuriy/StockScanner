@@ -66,6 +66,60 @@ def start_of_market_day(tz: ZoneInfo = TSX_TZ) -> datetime:
     return datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=tz)
 
 
+# ── TSX regular session + holiday calendar ───────────────────────────────────
+# TSX regular trading session, in minutes past midnight Eastern Time.
+_MARKET_OPEN_MINUTES = 9 * 60 + 30   # 09:30 ET
+_MARKET_CLOSE_MINUTES = 16 * 60      # 16:00 ET
+
+# TSX statutory holidays when the exchange is fully closed (observed dates;
+# weekend holidays roll forward to the next business day).  Maintain yearly —
+# an out-of-date list only weakens the holiday layer; the weekday + session-hours
+# checks in is_market_open() still block off-hours runs regardless.
+TSX_HOLIDAYS: frozenset = frozenset({
+    # 2026
+    "2026-01-01",  # New Year's Day
+    "2026-02-16",  # Family Day
+    "2026-04-03",  # Good Friday
+    "2026-05-18",  # Victoria Day
+    "2026-07-01",  # Canada Day
+    "2026-08-03",  # Civic Holiday
+    "2026-09-07",  # Labour Day
+    "2026-10-12",  # Thanksgiving
+    "2026-12-25",  # Christmas Day
+    "2026-12-28",  # Boxing Day (observed; Dec 26 is a Saturday)
+    # 2027
+    "2027-01-01",  # New Year's Day
+    "2027-02-15",  # Family Day
+    "2027-03-26",  # Good Friday
+    "2027-05-24",  # Victoria Day
+    "2027-07-01",  # Canada Day
+    "2027-08-02",  # Civic Holiday
+    "2027-09-06",  # Labour Day
+    "2027-10-11",  # Thanksgiving
+    "2027-12-27",  # Christmas Day (observed; Dec 25 is a Saturday)
+    "2027-12-28",  # Boxing Day (observed; Dec 26 is a Sunday)
+})
+
+
+def is_market_open(tz: ZoneInfo = TSX_TZ) -> bool:
+    """
+    Return True only when the TSX is in its regular session *right now*:
+    a weekday, within 09:30-16:00 ET, and not a TSX holiday.
+
+    Used as a safety guard so the scheduled services never transact on stale
+    data when triggered outside trading hours (e.g. a systemd Persistent
+    catch-up, a manual run, or a holiday).  Routes through market_now(), so it
+    is deterministic under set_backtest_clock().
+    """
+    now = market_now(tz)
+    if now.weekday() >= 5:  # Saturday=5, Sunday=6
+        return False
+    if now.strftime(ISO_DATE_EXTENDED) in TSX_HOLIDAYS:
+        return False
+    minutes = now.hour * 60 + now.minute
+    return _MARKET_OPEN_MINUTES <= minutes < _MARKET_CLOSE_MINUTES
+
+
 def date_to_iso_basic(date: datetime) -> str:
     return date.strftime(ISO_DATE_BASIC)
 

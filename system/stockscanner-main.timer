@@ -3,7 +3,7 @@ Description=Run StockScanner main pipeline at 16:30 local time Mon-Fri
 
 [Timer]
 OnCalendar=Mon..Fri 16:30
-Persistent=true
+Persistent=false
 Unit=stockscanner-main.service
 
 [Install]

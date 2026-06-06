@@ -3,7 +3,7 @@ Description=Run StockScanner virtual buy at 09:30 local time Mon-Fri
 
 [Timer]
 OnCalendar=Mon..Fri 09:45
-Persistent=true
+Persistent=false
 Unit=stockscanner-buy.service
 
 [Install]

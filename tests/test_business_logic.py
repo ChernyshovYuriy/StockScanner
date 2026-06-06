@@ -8,7 +8,8 @@ Full coverage of every previously-untested public function across:
                      state_transition_label, invalidation_check,
                      _is_market_in_uptrend)
   - position_monitor (wilder_atr, trading_days_since_entry, parse_positions_csv,
-                       execute_virtual_sells, is_market_open)
+                       execute_virtual_sells)
+  - time_utils       (is_market_open)
   - virtual_buy      (load_intents_csv, persist_intent_updates,
                        validate_intents_csv, load_positions, append_position)
   - canadian_stock_screener (analyze_stock, calculate_rs)
@@ -551,61 +552,105 @@ class TestTradingDaysSinceEntry:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestIsMarketOpen:
+    """time_utils.is_market_open — weekday + 09:30-16:00 ET + TSX holiday guard.
+
+    Times are pinned deterministically via the backtest clock; market_now()
+    (and therefore is_market_open()) reads it, so no network or patching needed.
+    2026-06-05 is a Friday and 2026-06-06 a Saturday.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _restore_clock(self):
+        yield
+        from time_utils import set_backtest_clock
+        set_backtest_clock(None)
+
+    def _pin(self, y, mo, d, hh, mm):
+        from time_utils import set_backtest_clock, TSX_TZ
+        set_backtest_clock(datetime(y, mo, d, hh, mm, tzinfo=TSX_TZ))
+
     def test_returns_bool(self):
-        from position_monitor import is_market_open
-        result = is_market_open()
-        assert isinstance(result, bool)
-
-    def test_closed_on_weekend(self):
-        """Patch market_now to return a Saturday."""
-        from unittest.mock import patch
-        from zoneinfo import ZoneInfo
-        import position_monitor
-
-        TSX_TZ = ZoneInfo("America/Toronto")
-        saturday_noon = datetime(2024, 1, 6, 12, 0, tzinfo=TSX_TZ)  # Saturday
-
-        with patch("position_monitor.market_now", return_value=saturday_noon):
-            # Saturday noon has minutes within 9:30-16:00 but it's a weekend
-            # The function only checks time, not weekday — this tests the time logic
-            result = position_monitor.is_market_open()
-            # Saturday noon ET falls in session hours — is_market_open() checks
-            # only clock time, not weekday. So this returns True (time-only check).
-            # This is by design — the system timer only fires on weekdays anyway.
-            assert isinstance(result, bool)
+        from time_utils import is_market_open
+        self._pin(2026, 6, 5, 11, 0)
+        assert isinstance(is_market_open(), bool)
 
     def test_open_during_session(self):
-        from unittest.mock import patch
-        from zoneinfo import ZoneInfo
-        import position_monitor
+        from time_utils import is_market_open
+        self._pin(2026, 6, 5, 11, 0)  # Friday 11:00 ET
+        assert is_market_open() is True
 
-        TSX_TZ = ZoneInfo("America/Toronto")
-        weekday_noon = datetime(2024, 1, 8, 12, 0, tzinfo=TSX_TZ)  # Monday noon
-
-        with patch("position_monitor.market_now", return_value=weekday_noon):
-            assert position_monitor.is_market_open() is True
+    def test_open_at_open_boundary(self):
+        from time_utils import is_market_open
+        self._pin(2026, 6, 5, 9, 30)  # 09:30 inclusive
+        assert is_market_open() is True
 
     def test_closed_before_open(self):
-        from unittest.mock import patch
-        from zoneinfo import ZoneInfo
-        import position_monitor
+        from time_utils import is_market_open
+        self._pin(2026, 6, 5, 8, 0)
+        assert is_market_open() is False
 
-        TSX_TZ = ZoneInfo("America/Toronto")
-        pre_open = datetime(2024, 1, 8, 8, 0, tzinfo=TSX_TZ)  # 8am
+    def test_closed_at_close_boundary(self):
+        from time_utils import is_market_open
+        self._pin(2026, 6, 5, 16, 0)  # 16:00 exclusive
+        assert is_market_open() is False
 
-        with patch("position_monitor.market_now", return_value=pre_open):
-            assert position_monitor.is_market_open() is False
+    def test_closed_after_hours(self):
+        from time_utils import is_market_open
+        self._pin(2026, 6, 5, 19, 54)  # the Persistent catch-up time
+        assert is_market_open() is False
 
-    def test_closed_after_close(self):
-        from unittest.mock import patch
-        from zoneinfo import ZoneInfo
-        import position_monitor
+    def test_closed_on_weekend(self):
+        from time_utils import is_market_open
+        self._pin(2026, 6, 6, 12, 0)  # Saturday noon — in session hours but weekend
+        assert is_market_open() is False
 
-        TSX_TZ = ZoneInfo("America/Toronto")
-        after_close = datetime(2024, 1, 8, 16, 30, tzinfo=TSX_TZ)  # 4:30pm
+    def test_closed_on_tsx_holiday(self):
+        from time_utils import is_market_open
+        self._pin(2026, 7, 1, 11, 0)  # Canada Day — weekday, in-hours, but closed
+        assert is_market_open() is False
 
-        with patch("position_monitor.market_now", return_value=after_close):
-            assert position_monitor.is_market_open() is False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# virtual_buy — market-hours guard
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestVirtualBuyMarketGuard:
+    """A live (non-dry-run) buy must be a no-op when the market is closed —
+    regression for the off-hours Persistent catch-up that filled stale quotes."""
+
+    def test_closed_market_blocks_live_buy(self, tmp_path, monkeypatch):
+        import db as db_module
+        import virtual_buy
+        from time_utils import set_backtest_clock, TSX_TZ
+
+        db_module.init_db(tmp_path / "trading.db")
+        db_module.set_cash(50_000)
+        db_module.save_intents([{
+            "ticker": "RY.TO", "alert_state": "CONFIRMED", "priority": 1,
+            "pattern": "BASE", "entry_price_planned": 100.0, "stop_price": 95.0,
+            "target_price": 110.0, "rr": 2.0,
+        }])
+
+        # If the guard fails, run_virtual_buy would reach the price fetch — fail loud.
+        def _boom(_ticker):
+            raise AssertionError("fetch_latest_price called while market closed")
+        monkeypatch.setattr(virtual_buy, "fetch_latest_price", _boom)
+
+        try:
+            set_backtest_clock(datetime(2026, 6, 5, 19, 54, tzinfo=TSX_TZ))  # closed
+            virtual_buy.run_virtual_buy(top_n=10, dry_run=False)
+            # Read state back while DB_PATH still points at the temp DB.
+            positions_empty = db_module.get_open_positions_df().empty
+            cash = db_module.get_cash()
+            pending = list(db_module.load_pending_intents()["ticker"])
+        finally:
+            set_backtest_clock(None)
+            db_module.DB_PATH = tmp_path / "reset.db"
+
+        # Nothing bought, cash untouched, intent still PENDING.
+        assert positions_empty
+        assert cash == 50_000
+        assert pending == ["RY.TO"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
