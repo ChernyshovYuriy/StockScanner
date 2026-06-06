@@ -37,16 +37,26 @@ from send_report import send_text_email
 from time_utils import TSX_TZ, market_now
 
 from edgar import store
+from edgar.activist import accession_from_url, fetch_activist_filing
 from edgar.core import load_cik_to_ticker
 from edgar.digest import build_digest
 from edgar.insiders import get_recent_insider_activity, open_market_buys
 from edgar.scanner import scan_range
 
-# Daily-index categories (from scanner.FORMS_OF_INTEREST) that flag as activist.
-_ACTIVIST_CATEGORIES = {
-    "activist_stake", "activist_stake_amend",
-    "passive_stake", "passive_stake_amend",
-}
+
+def _dedup_by_accession(hits):
+    """Collapse the per-CIK duplicate index rows for one filing (same accession).
+
+    A 13D is listed under both the filer and the subject-company CIK; keep one,
+    preferring the row that resolved a ticker (the subject company).
+    """
+    by_acc = {}
+    for h in hits:
+        acc = accession_from_url(h.get("url", ""))
+        cur = by_acc.get(acc)
+        if cur is None or (not cur.get("ticker") and h.get("ticker")):
+            by_acc[acc] = h
+    return list(by_acc.values())
 
 
 def run_collector(run_id, dry_run=False, backfill_days=None):
@@ -80,11 +90,30 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
         log("edgar", run_id, "already_sent_today", date=today_str)
         return
 
-    # ── Activist: market-wide, filed today ────────────────────────────────────
-    activist_hits = [
+    # ── Activist: the EMAIL flags FRESH 13D only (activist intent, highest
+    #    signal). 13D/A amendments and all 13G are already collected in scan_hits
+    #    as references for the analysis layer; they are not emailed. Each filing
+    #    is indexed under both the filer and subject CIK, so dedup by accession.
+    #    Fetch + parse each flagged body for filer / percent and keep the raw
+    #    text as evidence; one bad filing must not sink the run, so guard it. ──
+    fresh_13d = _dedup_by_accession([
         h for h in real
-        if h.get("category") in _ACTIVIST_CATEGORIES and h.get("date") == today_str
-    ]
+        if h.get("category") == "activist_stake" and h.get("date") == today_str
+    ])
+    activist_hits = []
+    for h in fresh_13d:
+        try:
+            parsed = fetch_activist_filing(h.get("url", ""))
+        except Exception as exc:
+            log("edgar", run_id, "activist_parse_failed", url=h.get("url"), error=str(exc))
+            parsed = {}
+        h["filer"] = parsed.get("filer")
+        h["pct"] = parsed.get("pct")
+        h["subject"] = parsed.get("subject")
+        h["accession"] = parsed.get("accession") or accession_from_url(h.get("url", ""))
+        if not dry_run:
+            store.save_activist_filing(conn, {**h, "raw_text": parsed.get("raw_text")})
+        activist_hits.append(h)
 
     # ── Insider buys: watchlist CIKs with a Form 4 today (bounded fetch) ───────
     insider_buys = []

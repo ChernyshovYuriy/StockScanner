@@ -56,8 +56,15 @@ EDGAR_CACHE_PATH = CACHE_PATH / "edgar"
 # Minimum open-market insider buy ($ = shares × price) to flag in the digest.
 EDGAR_MIN_BUY_VALUE = 250_000
 
-# SEC forms the daily-index event loop collects.
-EDGAR_FORMS = ("4", "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A", "8-K")
+# SEC forms the daily-index event loop collects. The daily index labels the
+# Schedule 13D/G forms as "SCHEDULE 13D" (the submissions API uses "SC 13D"),
+# so both spellings are accepted defensively.
+EDGAR_FORMS = (
+    "4",
+    "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A",
+    "SCHEDULE 13D", "SCHEDULE 13D/A", "SCHEDULE 13G", "SCHEDULE 13G/A",
+    "8-K",
+)
 
 # Each run re-scans this many business days (accession-deduped) to self-heal
 # after downtime/holidays.

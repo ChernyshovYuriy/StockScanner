@@ -17,10 +17,12 @@ FOOTER = (
     "position); sells are intentionally never flagged. not financial advice."
 )
 
-# Daily-index form string -> short label for the digest.
+# Daily-index form string -> short label for the digest (both spellings).
 _ACTIVIST_FORMS = {
     "SC 13D": "13D", "SC 13D/A": "13D/A",
     "SC 13G": "13G", "SC 13G/A": "13G/A",
+    "SCHEDULE 13D": "13D", "SCHEDULE 13D/A": "13D/A",
+    "SCHEDULE 13G": "13G", "SCHEDULE 13G/A": "13G/A",
 }
 
 
@@ -54,7 +56,14 @@ def build_digest(digest_date, insider_buys, activist_hits):
         for h in activist_hits:
             ticker = h.get("ticker") or f"CIK{h.get('cik', '?')}"
             form = _ACTIVIST_FORMS.get(h.get("form"), h.get("form", ""))
-            lines.append(f"  {ticker:<8} {form:<6} {h.get('date', '')}   {h.get('url', '')}")
+            bits = [f"  {ticker:<8} {form:<6} {h.get('date', '')}"]
+            if h.get("filer"):
+                bits.append(f"by {h['filer']}")
+            if h.get("pct") is not None:
+                bits.append(f"{h['pct']:.1f}%")
+            lines.append("   ".join(bits))
+            if h.get("url"):
+                lines.append(f"           {h['url']}")
         lines.append("")
 
     lines.append(FOOTER)

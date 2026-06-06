@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS email_log (
     hit_count INTEGER,
     sent INTEGER
 );
+CREATE TABLE IF NOT EXISTS activist_filings (
+    accession TEXT PRIMARY KEY,
+    cik INTEGER, ticker TEXT, form TEXT,
+    filer TEXT, subject TEXT, pct REAL,
+    filing_date TEXT, url TEXT,
+    raw_text TEXT       -- full submission text, kept for later (LLM) analysis
+);
 """
 
 
@@ -77,6 +84,24 @@ def save_insider_buys(conn, cik, buys):
         "INSERT OR IGNORE INTO insider_buys"
         "(cik,accession,owner,shares,price,txn_date,is_officer,is_director)"
         " VALUES(?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+
+
+def save_activist_filing(conn, row):
+    """Upsert one parsed 13D/13G filing (structured fields + raw evidence text).
+
+    Keyed on accession (INSERT OR IGNORE) so re-scans within the backfill window
+    are idempotent. `raw_text` is retained so a later analysis layer can re-read
+    the filing for anything the v1 regex parse missed.
+    """
+    conn.execute(
+        "INSERT OR IGNORE INTO activist_filings"
+        "(accession,cik,ticker,form,filer,subject,pct,filing_date,url,raw_text)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (row.get("accession"), row.get("cik"), row.get("ticker"), row.get("form"),
+         row.get("filer"), row.get("subject"), row.get("pct"),
+         row.get("filing_date") or row.get("date"), row.get("url"), row.get("raw_text")),
+    )
     conn.commit()
 
 

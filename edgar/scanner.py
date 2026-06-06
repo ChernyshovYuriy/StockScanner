@@ -25,10 +25,16 @@ FORMS_OF_INTEREST = {
     "4": "insider_txn",
     "3": "insider_init",
     "5": "insider_annual",
+    # The daily index labels these "SCHEDULE 13D" etc.; the submissions API uses
+    # "SC 13D". Map both spellings to the same category.
     "SC 13D": "activist_stake",
     "SC 13D/A": "activist_stake_amend",
     "SC 13G": "passive_stake",
     "SC 13G/A": "passive_stake_amend",
+    "SCHEDULE 13D": "activist_stake",
+    "SCHEDULE 13D/A": "activist_stake_amend",
+    "SCHEDULE 13G": "passive_stake",
+    "SCHEDULE 13G/A": "passive_stake_amend",
     "8-K": "material_event",
     "13F-HR": "institutional_holdings",
 }
@@ -37,6 +43,18 @@ FORMS_OF_INTEREST = {
 def _daily_index_url(year, quarter, yyyymmdd):
     return (f"https://www.sec.gov/Archives/edgar/daily-index/"
             f"{year}/QTR{quarter}/master.{yyyymmdd}.idx")
+
+
+def _iso_date(s):
+    """Normalise an index Date Filed to ISO 'YYYY-MM-DD'.
+
+    The daily index has used both 'YYYYMMDD' and 'YYYY-MM-DD' over time; downstream
+    code (digest 'today' filter, storage) assumes ISO, so normalise here.
+    """
+    s = (s or "").strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
 
 
 def fetch_daily_index(d):
@@ -54,7 +72,7 @@ def fetch_daily_index(d):
             continue
         cik, name, form, fdate, fname = parts
         rows.append({"cik": int(cik), "name": name, "form": form.strip(),
-                     "date": fdate, "filename": fname})
+                     "date": _iso_date(fdate), "filename": fname})
     return rows
 
 
