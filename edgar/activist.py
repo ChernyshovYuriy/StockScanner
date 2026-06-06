@@ -27,6 +27,21 @@ def accession_from_url(url):
     return tail[:-4] if tail.endswith(".txt") else tail
 
 
+def dedup_by_accession(hits):
+    """Collapse the per-CIK duplicate index rows for one filing (same accession).
+
+    A 13D is listed under both the filer and the subject-company CIK; keep one,
+    preferring the row that resolved a ticker (the subject company).
+    """
+    by_acc = {}
+    for h in hits:
+        acc = accession_from_url(h.get("url", ""))
+        cur = by_acc.get(acc)
+        if cur is None or (not cur.get("ticker") and h.get("ticker")):
+            by_acc[acc] = h
+    return list(by_acc.values())
+
+
 def _header_company(text, label):
     """COMPANY CONFORMED NAME within the SEC-HEADER block following `label`.
 
