@@ -73,6 +73,17 @@ def no_emails(monkeypatch):
     monkeypatch.setattr("position_monitor.send_transaction_email", lambda **_: None)
 
 
+@pytest.fixture(autouse=True)
+def market_open():
+    """Pin the clock to a known TSX session so run_virtual_buy's market-hours
+    guard is satisfied — 2026-05-14 is a Thursday, 11:00 ET, not a holiday."""
+    from time_utils import set_backtest_clock, TSX_TZ
+    from datetime import datetime
+    set_backtest_clock(datetime(2026, 5, 14, 11, 0, tzinfo=TSX_TZ))
+    yield
+    set_backtest_clock(None)
+
+
 def _intent(**overrides) -> dict:
     base = {
         "ticker": "RY.TO",
