@@ -16,8 +16,12 @@ Three scheduled services cooperate across the trading day:
 | Time (ET) | Service | What it does |
 |---|---|---|
 | **4:30 PM** | `main.py` | Checks market regime → rebuilds universe → runs screener → detects patterns → queues buy candidates |
-| **9:30 AM** | `virtual_buy.py` | Reads the candidate queue, fetches live prices, sizes and executes virtual buys → sends trade email |
-| **3:30 PM** | `position_monitor.py` | Evaluates open positions against exit rules using intraday data → executes virtual sells → sends trade email |
+| **9:45 AM** | `virtual_buy.py` | Reads the candidate queue, fetches live prices, sizes and executes virtual buys → sends trade email |
+| **3:50 PM** | `position_monitor.py` | Evaluates open positions against exit rules using intraday data → executes virtual sells → sends trade email |
+
+> The live services no-op outside TSX trading hours (weekday, 09:30–16:00 ET,
+> non-holiday) via `is_market_open()`, so an off-schedule trigger never
+> transacts on stale prices.
 
 All state — cash, positions, trades, signals, intents — lives in a single
 **DuckDB database** at `data/trading.db`.
@@ -101,10 +105,10 @@ schedule. To run them manually:
 # End-of-day (after 4:30 PM ET)
 python main.py
 
-# Next morning (at/after 9:30 AM ET open)
+# Next morning (at/after 9:45 AM ET open)
 python virtual_buy.py
 
-# Pre-close (around 3:30 PM ET, market still open)
+# Pre-close (around 3:50 PM ET, market still open)
 python position_monitor.py --mode pre-close
 
 # Optional post-close informational run
@@ -178,6 +182,11 @@ systemctl status stockscanner-main.service
 sudo systemctl start stockscanner-main.service
 ```
 
+> The timers use `Persistent=false`, so a slot missed while the host is down is
+> skipped rather than run late on stale prices. Combined with the
+> `is_market_open()` guard, starting a `*.service` manually outside trading
+> hours is a safe no-op for live buys/sells (a report may still be generated).
+
 ### Tickers URL
 
 The main service is started with `--tickers-url` pointing to a remote file
@@ -210,7 +219,7 @@ conn.close()
 | Table | Contents |
 |---|---|
 | `account` | Current cash balance |
-| `positions` | Open virtual positions (ticker, entry date, price, shares) |
+| `positions` | Open virtual positions (ticker, entry date, price, shares, planned stop) |
 | `trades` | Permanent closed-trade log with full P&L |
 | `transactions` | Unified ledger — every BUY and SELL in chronological order |
 | `signals` | Pipeline signal state machine (rebuilt each run) |
@@ -278,6 +287,12 @@ Each position is evaluated against four exit rules (defaults):
 | Profit giveback | Max profit ≥ 6% and current profit drops ≥ 3% below peak |
 | Time stop | ≥ 20 trading days held with profit < 0% |
 
+When a position carries a `stop_price` persisted from its buy intent (the
+swing-low-aware planned stop), that level is used as the initial stop instead
+of the `Entry − 1.5 × ATR(14)` formula, so the exit matches the stop the trade
+was sized against. Legacy positions without a stored stop fall back to the ATR
+formula.
+
 ---
 
 ## Backtesting
@@ -317,8 +332,8 @@ Output files are written to `out/`:
 ```
 .
 ├── main.py                  # end-of-day service (4:30 PM)
-├── virtual_buy.py           # morning buy execution (9:30 AM)
-├── position_monitor.py      # pre/post-close monitor (3:30 PM)
+├── virtual_buy.py           # morning buy execution (9:45 AM)
+├── position_monitor.py      # pre/post-close monitor (3:50 PM)
 ├── auto_pipeline.py         # pattern detection + signal state machine
 ├── canadian_stock_screener.py
 ├── run_backtest.py          # backtest CLI

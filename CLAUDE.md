@@ -30,8 +30,8 @@ pytest -v -m characterization  # golden-value business logic locks
 
 # Run the three scheduled services manually
 python main.py   # end-of-day pipeline (4:30 PM); --tickers-url overrides CAN_TICKERS_URL from config.py
-python virtual_buy.py                             # virtual entry execution (9:30 AM)
-python position_monitor.py --mode pre-close       # position monitoring with sells (3:30 PM)
+python virtual_buy.py                             # virtual entry execution (9:45 AM)
+python position_monitor.py --mode pre-close       # position monitoring with sells (3:50 PM)
 python position_monitor.py --mode post-close      # informational EOD run
 
 # Run backtest
@@ -60,8 +60,8 @@ print('Positions:', get_open_positions())
 The system runs as three separate scheduled entrypoints that must remain independent:
 
 - **`main.py`** — End-of-day pipeline (4:30 PM). Runs: regime check (XIU.TO vs 200-day SMA) → universe builder → screener → entry pipeline → send report. Skips signal generation in bear regime but still sends a report.
-- **`virtual_buy.py`** — Virtual entry execution (9:30 AM). Reads pending intents and cash from the database, sizes positions using `RISK_PER_TRADE_PCT` from `config.py`, and writes new positions back to the database.
-- **`position_monitor.py`** — Position monitoring / virtual exits (3:30 PM pre-close and post-close). Reads open positions from the database and applies exit rules.
+- **`virtual_buy.py`** — Virtual entry execution (9:45 AM). Reads pending intents and cash from the database, sizes positions using `RISK_PER_TRADE_PCT` from `config.py`, and writes new positions back to the database, persisting each intent's planned `stop_price` onto the position. Skips execution outside TSX trading hours via `is_market_open()` (a `--dry-run` is still allowed any time).
+- **`position_monitor.py`** — Position monitoring / virtual exits (3:50 PM pre-close and post-close). Reads open positions from the database and applies exit rules, honouring the position's persisted `stop_price` as the initial stop when present. Off-hours pre-close runs fall back to daily bars and suppress sells via `is_market_open()`.
 
 ### Data flow
 
@@ -79,8 +79,8 @@ The system runs as three separate scheduled entrypoints that must remain indepen
 ### Key modules
 
 - **`config.py`** — `CAN_TICKERS_URL` (the single ticker list URL), output paths, and trading parameters (`MAX_POSITIONS`, `RISK_PER_TRADE_PCT`, `GAP_FILTER_PCT`, `PositionMonitorMode`).
-- **`db.py`** — DuckDB persistence layer. All live-mode state lives in `data/trading.db`. Call `init_db()` at the start of each service. Six tables: `account` (cash), `positions` (open), `trades` (closed, append-only), `signals` (pipeline state machine), `intents` (buy queue), `transactions` (unified BUY+SELL ledger). Schema changes are straightforward — DuckDB supports full `ALTER TABLE`.
-- **`time_utils.py`** — Injectable backtest clock. `set_backtest_clock(dt)` pins time for simulation; `None` restores live wall-clock. All time-dependent code calls `market_now()` / `market_today()` from here.
+- **`db.py`** — DuckDB persistence layer. All live-mode state lives in `data/trading.db`. Call `init_db()` at the start of each service. Six tables: `account` (cash), `positions` (open, incl. the planned `stop_price`), `trades` (closed, append-only), `signals` (pipeline state machine), `intents` (buy queue), `transactions` (unified BUY+SELL ledger). Schema changes are straightforward — DuckDB supports full `ALTER TABLE`; `init_db()` self-migrates the `stop_price` column via `ADD COLUMN IF NOT EXISTS`.
+- **`time_utils.py`** — Injectable backtest clock. `set_backtest_clock(dt)` pins time for simulation; `None` restores live wall-clock. All time-dependent code calls `market_now()` / `market_today()` from here. `is_market_open()` (weekday + 09:30–16:00 ET + TSX holiday set) guards the live services from transacting off-hours and is deterministic under the backtest clock.
 - **`market_data.py`** — Two data providers behind a structural interface (`MarketDataProvider`): `LiveDataProvider` (wraps yfinance for live mode) and `HistoricalSliceProvider` (pre-loaded dict with strict `as_of` cutoff to prevent lookahead bias).
 - **`backtest_runner.py`** `BacktestConfig.gap_filter_pct` — `None` (default) = no gap filter, matching pre-2026-05 backtest behaviour. Set to e.g. `2.0` to simulate the live `GAP_FILTER_PCT` from `config.py` (skip buys where open > intent_entry × 1.02).
 - **`portfolio.py`** — In-memory `PortfolioState` for backtesting only. No file I/O; the live-mode equivalent is `db.py`.

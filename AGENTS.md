@@ -13,8 +13,8 @@ Codex must optimize for:
 This repo intentionally uses three separate scheduled entrypoints.
 
 - `main.py` runs at 4:30 PM and is the end-of-day pipeline service.
-- `virtual_buy.py` runs at 9:30 AM and is the virtual entry execution service.
-- `positions_monitor.py` runs at 3:30 PM and is the position monitoring / virtual exit service.
+- `virtual_buy.py` runs at 9:45 AM and is the virtual entry execution service.
+- `positions_monitor.py` runs at 3:50 PM and is the position monitoring / virtual exit service.
 
 Do not merge these services unless the task explicitly requests that architecture change.
 

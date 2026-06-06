@@ -1,5 +1,5 @@
 [Unit]
-Description=Run StockScanner positions monitor at 15:30 local time Mon-Fri
+Description=Run StockScanner positions monitor at 15:50 local time Mon-Fri
 
 [Timer]
 OnCalendar=Mon..Fri 15:50
