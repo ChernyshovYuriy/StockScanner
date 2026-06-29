@@ -68,7 +68,7 @@ CACHE_DATA_DIR = Path(CACHE_PATH)
 ATR_PERIOD = 14
 LOOKBACK_DAYS_BEFORE_ENTRY = 80  # enough pre-entry bars for a stable ATR
 MIN_BARS_REQUIRED = 25
-INITIAL_STOP_ATR_K = 1.5
+INITIAL_STOP_ATR_K = 2.0
 CHAND_TRAIL_ATR_K = 2.5
 
 # Profit giveback rule
@@ -88,7 +88,7 @@ TIME_STOP_MIN_PROFIT_PCT = 0.0  # just require break-even; don't hold dead money
 # Stop trigger mode:
 #   "low"   -> fire if today's low  <= stop  (catches intraday breach)
 #   "close" -> fire if today's close < stop  (more conservative, EOD-only)
-STOP_TRIGGER = "low"
+STOP_TRIGGER = "close"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
