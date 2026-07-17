@@ -145,6 +145,27 @@ class BacktestConfig:
     # Set to e.g. 2.0 to match the live GAP_FILTER_PCT=2.0 in config.py.
     gap_filter_pct: Optional[float] = None
 
+    # Live-parity position cap: max concurrent open positions.
+    # None = unlimited (pre-2026-07 backtest behaviour, cash is the only limit).
+    # Set to 8 to match the live MAX_POSITIONS in config.py.
+    max_positions: Optional[int] = None
+
+    # Position sizing mode for buys:
+    #   "equal_split" — allocation = cash / n_actionable per morning
+    #                   (pre-2026-07 backtest behaviour)
+    #   "live"        — mirrors virtual_buy.py: shares = min(risk-based, cap-based)
+    #                   where dollar_risk = base × risk_pct% against the intent's
+    #                   planned entry−stop, and the position value is capped at
+    #                   base / max_positions.  Falls back to cap-only sizing when
+    #                   the intent carries no usable stop (same as live).
+    sizing: str = "equal_split"
+
+    # Base amount the "live" sizing formulas draw from:
+    #   "cash"   — uninvested cash only (parity with current virtual_buy.py)
+    #   "equity" — cash + mark-to-market of open positions (proposed fix so the
+    #              per-slot cap stays constant as the book fills)
+    sizing_basis: str = "cash"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULT CONTAINER
@@ -622,10 +643,14 @@ def _execute_buys(
     """
     Execute buy intents at the D+1 open price.
 
-    Applies the same equal-allocation rule as virtual_buy.py:
-      allocation_per_ticker = cash / n_actionable
-      shares = int(allocation / price)   — whole shares only
+    Sizing follows cfg.sizing:
+      "equal_split" — allocation_per_ticker = cash / n_actionable,
+                      shares = int(allocation / price)  (whole shares only)
+      "live"        — virtual_buy.py formula: risk-based share count from the
+                      intent's planned entry−stop, capped at base/max_positions
+                      per position, base per cfg.sizing_basis ("cash"/"equity").
 
+    If cfg.max_positions is set, buys stop when the book is full.
     If cfg.regime_filter is True, buys are blocked when benchmark is below
     its 200-day SMA.  Sells and position management are never blocked.
 
@@ -644,10 +669,29 @@ def _execute_buys(
     actionable = [i for i in intents
                   if i["ticker"] not in owned][:cfg.top_n_buys]
 
+    # Position cap — trim candidates to open slots (mirrors virtual_buy.py)
+    if cfg.max_positions is not None:
+        slots = cfg.max_positions - len(portfolio.open_positions)
+        if slots <= 0:
+            return []
+        actionable = actionable[:slots]
+
     if not actionable:
         return []
 
-    allocation = portfolio.cash / len(actionable)
+    if cfg.sizing == "live":
+        # Base is read once per morning, matching virtual_buy.py which reads
+        # cash a single time before processing all of the day's intents.
+        base = portfolio.cash
+        if cfg.sizing_basis == "equity":
+            base += _mark_to_market(portfolio.open_positions, provider, after)
+        n_slots = cfg.max_positions if cfg.max_positions is not None \
+            else max(len(actionable), 1)
+        dollar_risk = base * cfg.risk_pct / 100
+        max_position_value = base / n_slots
+    else:
+        allocation = portfolio.cash / len(actionable)
+
     bought = []
 
     for intent in actionable:
@@ -659,7 +703,22 @@ def _execute_buys(
             planned = intent.get("entry", 0.0)
             if planned and planned > 0 and price > planned * (1 + cfg.gap_filter_pct / 100):
                 continue
-        shares = int(allocation / price)
+        if cfg.sizing == "live":
+            planned_entry = float(intent.get("entry") or 0.0)
+            planned_stop = float(intent.get("stop") or 0.0)
+            per_share_risk = planned_entry - planned_stop
+            if per_share_risk > 0:
+                shares_by_risk = int(dollar_risk / per_share_risk)
+                shares_by_cap = int(max_position_value / price)
+                shares = min(shares_by_risk, shares_by_cap)
+            else:
+                # No usable stop — equal-split fallback (same as live)
+                shares = int(max_position_value / price)
+            # With an equity base the per-slot cap can exceed remaining cash;
+            # never overdraw (live equivalent: bound by available funds).
+            shares = min(shares, int(portfolio.cash / price))
+        else:
+            shares = int(allocation / price)
         if shares <= 0:
             continue
         cost = price * shares

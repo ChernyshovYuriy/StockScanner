@@ -140,6 +140,10 @@ def _run_single(
         regime_filter      = args.regime_filter,
         exit_params        = ep,
         _provider          = provider,
+        gap_filter_pct     = args.gap_filter,
+        max_positions      = args.max_positions,
+        sizing             = args.sizing,
+        sizing_basis       = args.sizing_basis,
     )
 
     print(f"\n{'─'*60}")
@@ -151,6 +155,10 @@ def _run_single(
     print(f"  Exit     : {ep.summary()}")
     regime_str = "ON  (buys blocked when XIU.TO < 200d SMA)" if args.regime_filter else "OFF"
     print(f"  Regime   : {regime_str}")
+    max_pos_str = str(args.max_positions) if args.max_positions else "unlimited"
+    sizing_str = f"{args.sizing}" + (f" (basis={args.sizing_basis})" if args.sizing == "live" else "")
+    gap_str = f"{args.gap_filter}%" if args.gap_filter is not None else "OFF"
+    print(f"  Sizing   : {sizing_str}   max_pos={max_pos_str}   gap_filter={gap_str}")
     print(f"{'─'*60}\n")
 
     results = BacktestRunner(cfg).run(verbose=not args.quiet)
@@ -663,6 +671,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stop-trigger",   dest="stop_trigger",   default="close",
                    choices=["low", "close"],
                    help="Stop trigger: 'low' (intraday) or 'close' (EOD)  (default close)")
+
+    # Live-parity knobs (mirror the live services' rules in simulation)
+    p.add_argument("--gap-filter", dest="gap_filter", type=float, default=None,
+                   help="Skip buys where open > planned entry + N%% (live GAP_FILTER_PCT=2.0; default off)")
+    p.add_argument("--max-positions", dest="max_positions", type=int, default=None,
+                   help="Cap concurrent open positions (live MAX_POSITIONS=8; default unlimited)")
+    p.add_argument("--sizing", choices=["equal_split", "live"], default="equal_split",
+                   help="Buy sizing: equal_split (backtest default) or live (virtual_buy.py formula)")
+    p.add_argument("--sizing-basis", dest="sizing_basis", choices=["cash", "equity"], default="cash",
+                   help="Base for live sizing: cash (current live behaviour) or equity (proposed fix)")
 
     # Modes
     p.add_argument("--regime-filter", dest="regime_filter", action="store_true",
