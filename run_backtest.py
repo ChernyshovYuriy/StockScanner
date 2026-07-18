@@ -505,6 +505,9 @@ def _run_walk_forward_gap(
             atr_stop_mult      = args.atr_mult,
             exit_params        = base_ep,
             gap_filter_pct     = gap,
+            max_positions      = args.max_positions,
+            sizing             = args.sizing,
+            sizing_basis       = args.sizing_basis,
             _provider          = provider,
             _screener_cache    = sub_cache,
         )
