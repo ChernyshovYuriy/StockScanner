@@ -44,7 +44,6 @@ from db import (
     load_pending_intents,
     mark_intent_executed,
     mark_intent_skipped,
-    set_cash,
 )
 from log_utils import log
 from send_report import send_transaction_email
@@ -57,9 +56,18 @@ from schema_keys import (
     SIGNAL_COL_PATTERN,
     SIGNAL_COL_TICKER,
 )
-from time_utils import is_market_open, market_today
+from time_utils import is_market_open, market_today, previous_trading_day
 
 init(autoreset=True)
+
+
+def _parse_signal_date(row: pd.Series):
+    """Return the intent's signal_date as a date, or None if missing/unparseable."""
+    raw = str(row.get("signal_date", "") or "").strip()
+    try:
+        return pd.Timestamp(raw).date()
+    except (ValueError, TypeError):
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -166,6 +174,18 @@ def run_virtual_buy(
                 mark_intent_skipped(intent_id, "invalid_ticker")
             skipped_count += 1
             continue
+
+        # Expire intents that missed their execution slot: an intent is only
+        # valid on the first trading day after its signal date (same rule as
+        # the backtest, and the Persistent=false philosophy — a missed slot is
+        # skipped, never executed late on a stale setup).
+        signal_date = _parse_signal_date(row)
+        if signal_date is not None and signal_date < previous_trading_day(market_today().date()):
+            if not dry_run:
+                mark_intent_skipped(intent_id, "stale_intent")
+            skipped_count += 1
+            continue
+
         if ticker in duplicate_seen:
             if not dry_run:
                 mark_intent_skipped(intent_id, "duplicate_pending")
@@ -334,6 +354,7 @@ def run_virtual_buy(
                 rec[POSITION_COL_SHARES],
                 pattern=rec.get("pattern"),
                 stop_price=rec.get("stop_price"),
+                cash_delta=-(rec[POSITION_COL_SHARES] * rec[POSITION_COL_ENTRY_PRICE]),
             )
             mark_intent_executed(rec["intent_id"], rec[POSITION_COL_ENTRY_PRICE], rec[POSITION_COL_SHARES])
         print(f"{Fore.GREEN}✓ Inserted {len(buy_records)} position(s) into database{Style.RESET_ALL}")
@@ -346,7 +367,7 @@ def run_virtual_buy(
     if dry_run:
         print(f"{Fore.CYAN}[DRY RUN] Would update cash → ${remaining:,.2f}{Style.RESET_ALL}")
     else:
-        set_cash(remaining)
+        # Cash was already deducted atomically with each insert_position above.
         print(f"{Fore.GREEN}✓ Cash updated → ${remaining:,.2f} remaining{Style.RESET_ALL}")
 
     print(f"  Tickers bought : {len(buy_records)}")

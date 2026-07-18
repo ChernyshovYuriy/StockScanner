@@ -361,7 +361,7 @@ pytest -v -m phase1    # clock injection
 pytest -v -m phase2    # MarketDataProvider
 pytest -v -m phase3    # PortfolioState
 pytest -v -m phase4    # BacktestRunner
-mppytest -v -m phase5    # HTML report
+pytest -v -m phase5    # HTML report
 pytest -v -m phase6    # CLI entry point
 
 # Specific files

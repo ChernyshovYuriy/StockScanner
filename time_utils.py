@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date as date_cls, datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -118,6 +118,18 @@ def is_market_open(tz: ZoneInfo = TSX_TZ) -> bool:
         return False
     minutes = now.hour * 60 + now.minute
     return _MARKET_OPEN_MINUTES <= minutes < _MARKET_CLOSE_MINUTES
+
+
+def previous_trading_day(day: "date_cls") -> "date_cls":
+    """
+    Return the last TSX trading day strictly before `day` (skips weekends and
+    TSX_HOLIDAYS). Used to expire buy intents that missed their execution slot:
+    an intent is only valid on the first trading day after its signal date.
+    """
+    d = day - timedelta(days=1)
+    while d.weekday() >= 5 or d.strftime(ISO_DATE_EXTENDED) in TSX_HOLIDAYS:
+        d -= timedelta(days=1)
+    return d
 
 
 def date_to_iso_basic(date: datetime) -> str:

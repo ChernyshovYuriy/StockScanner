@@ -213,6 +213,21 @@ def set_cash(cash: float) -> None:
         )
 
 
+def _adjust_cash(conn: duckdb.DuckDBPyConnection, delta: float) -> None:
+    """Apply a cash delta inside an existing transaction (atomic with the caller's writes)."""
+    from time_utils import market_now
+    row = conn.execute("SELECT cash FROM account WHERE id = 1").fetchone()
+    current = float(row[0]) if row else 0.0
+    conn.execute(
+        """
+        INSERT INTO account (id, cash, updated_at) VALUES (1, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET cash = excluded.cash,
+                                       updated_at = excluded.updated_at
+        """,
+        [round(current + delta, 4), market_now().isoformat()],
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TRANSACTIONS (unified buy + sell ledger)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -298,11 +313,13 @@ def get_open_positions_df() -> pd.DataFrame:
 
 
 def insert_position(ticker: str, entry_date: str, entry_price: float, shares: float, pattern: str | None = None,
-                    stop_price: float | None = None) -> None:
+                    stop_price: float | None = None, cash_delta: float | None = None) -> None:
     """Add a new open position and record a BUY transaction. Raises if ticker is already open.
 
     stop_price is the planned exit stop carried from the buy intent; position_monitor
     honours it as the initial stop so the exit matches the stop the trade was sized against.
+    cash_delta (normally -cost) is applied to the account balance in the same
+    transaction, so a crash can never leave a position without its cash deduction.
     """
     from time_utils import market_now
     now = market_now().isoformat()
@@ -314,6 +331,8 @@ def insert_position(ticker: str, entry_date: str, entry_price: float, shares: fl
              round(stop_price, 4) if stop_price is not None else None, now],
         )
         _record_transaction(conn, "BUY", ticker, entry_date, entry_price, shares, reason=pattern)
+        if cash_delta is not None:
+            _adjust_cash(conn, cash_delta)
 
 
 def delete_position(ticker: str) -> None:
@@ -337,11 +356,21 @@ def insert_trade(
         pnl_dollars: float,
         pnl_pct: float,
         reason: str,
+        cash_delta: float | None = None,
+        remove_position: bool = False,
 ) -> None:
-    """Append one closed trade to the permanent trade log and record a SELL transaction."""
+    """Append one closed trade to the permanent trade log and record a SELL transaction.
+
+    cash_delta (normally +proceeds) is applied to the account balance and, when
+    remove_position is True, the open position row is deleted — all in the same
+    transaction, so a crash can never lose a sale's proceeds or leave the position
+    both open and closed.
+    """
     from time_utils import market_now
     now = market_now().isoformat()
     with _connect() as conn:
+        if remove_position:
+            conn.execute("DELETE FROM positions WHERE ticker = ?", [ticker.upper()])
         conn.execute(
             """
             INSERT INTO trades
@@ -364,6 +393,8 @@ def insert_trade(
             ],
         )
         _record_transaction(conn, "SELL", ticker, sell_date, sell_price, shares, pnl_dollars, pnl_pct, reason)
+        if cash_delta is not None:
+            _adjust_cash(conn, cash_delta)
 
 
 def get_all_trades() -> pd.DataFrame:

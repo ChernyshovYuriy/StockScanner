@@ -44,8 +44,6 @@ def __check_regime() -> bool:
             print(f"{Fore.YELLOW}  Regime check: no data for {BENCHMARK} — defaulting to BULL{Style.RESET_ALL}")
             return True
 
-        if isinstance(df.columns, yf.core.frame.Column if hasattr(yf, 'core') else type(df.columns)):
-            pass
         close = df["Close"].squeeze().dropna()
         if len(close) < REGIME_SMA_PERIOD:
             print(f"{Fore.YELLOW}  Regime check: insufficient history — defaulting to BULL{Style.RESET_ALL}")

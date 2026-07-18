@@ -1,30 +1,34 @@
 """
 position_monitor.py
 
-Reads a positions CSV (format: ticker,entry_date,entry_price,shares),
-downloads OHLCV data, computes ATR-based risk controls, and prints a
-HOLD/SELL table + writes a daily log CSV.
+Reads open positions from the trading database (data/trading.db), downloads
+OHLCV data, computes ATR-based risk controls, and prints a HOLD/SELL table +
+writes a daily log CSV.  A position's persisted stop_price (carried from the
+buy intent) is honoured as the initial stop when present.
 
 Run modes
 ---------
-Pre-close  (e.g. 3:30 PM ET, market still open):
-    python position_monitor.py --execute-sells
+Pre-close  (e.g. 3:50 PM ET, market still open):
+    python position_monitor.py --mode pre-close
     - Fetches today's live intraday snapshot (5-min bars) so that last_low
       and last_close reflect what has already happened *today*, not yesterday.
-    - Any SELL signals are acted on immediately: the position is removed from
-      the positions file and the proceeds are added back to the funds file.
+    - Any SELL signals are acted on immediately: the position is removed,
+      the closed trade is recorded, and the proceeds are credited to cash —
+      all in the database.  Off-hours runs fall back to daily bars and
+      suppress sells via is_market_open().
 
 Post-close / EOD (e.g. 4:30 PM ET, after market close):
-    python position_monitor.py
-    - Uses the completed daily bar (same behaviour as before).
+    python position_monitor.py --mode post-close
+    - Uses the completed daily bar.
     - No positions are removed; output is informational only.
-    - Typically followed by the screener + pipeline run to find tomorrow's buys.
 
-Exit logic (defaults tuned for ~1-2 week swing holds):
-    * Initial stop     = entry - 1.5 * ATR(14)
-    * Chandelier trail = HH_since_entry - 2.5 * ATR(14)
-    * Profit giveback  : if max_profit >= 3% and current <= max_profit - 2% => SELL
-    * Time stop        : if >= 7 trading days and profit < +0.5% => SELL
+    Add --dry-run to either mode to print planned sells without writing.
+
+Exit logic (defaults are the module-level constants below; see ExitParams):
+    * Initial stop     = persisted intent stop, else entry - INITIAL_STOP_ATR_K * ATR(14)
+    * Chandelier trail = HH_since_entry - CHAND_TRAIL_ATR_K * ATR(14),
+                         armed only after profit >= CHAND_ARM_PCT
+    * Profit giveback and time stop per GIVEBACK_* / TIME_STOP_* constants.
 
 Dependencies:
     pip install pandas yfinance colorama
@@ -46,7 +50,7 @@ from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
 from config import CACHE_PATH, LOGS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, ALERTS_PATH
-from db import delete_position, get_cash, get_open_positions_df, init_db, insert_trade, set_cash
+from db import get_cash, get_open_positions_df, init_db, insert_trade
 from log_utils import log
 from report_html import append_positions_report
 from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, \
@@ -545,7 +549,8 @@ def execute_virtual_sells(
     sell_date = market_now(TSX_TZ).date().isoformat()
     for rec in sold_records:
         ticker = rec[SIGNAL_COL_TICKER]
-        delete_position(ticker)
+        # Position removal, trade record, and cash credit happen in ONE
+        # transaction — a crash mid-sell can no longer lose the proceeds.
         insert_trade(
             ticker=ticker,
             entry_date=str(rec[POSITION_COL_ENTRY_DATE]),
@@ -557,6 +562,8 @@ def execute_virtual_sells(
             pnl_dollars=float(rec[POSITION_COL_PNL_DOLLARS]),
             pnl_pct=float(rec[POSITION_COL_PNL_PCT]),
             reason=str(rec[POSITION_COL_REASON]),
+            cash_delta=float(rec["proceeds"]),
+            remove_position=True,
         )
 
     remaining_count = len(get_open_positions_df())
@@ -565,10 +572,9 @@ def execute_virtual_sells(
     )
     print(f"    Remaining open positions: {remaining_count}")
 
-    # ── Update cash ───────────────────────────────────────────────────────────
-    current_funds = get_cash()
-    new_funds = current_funds + total_proceeds
-    set_cash(new_funds)
+    # ── Cash already credited atomically with each insert_trade above ─────────
+    new_funds = get_cash()
+    current_funds = new_funds - total_proceeds
 
     print(
         f"  {Fore.GREEN}✓ Cash: "
@@ -724,6 +730,11 @@ def main() -> None:
         help="pre-close: uses live intraday data + executes sells (default). "
              "post-close: uses completed daily bars, read-only (no sells).",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Evaluate exit rules and print planned sells without writing to the database.",
+    )
     args = parser.parse_args()
     mode = (
         PositionMonitorMode.PRE_CLOSE
@@ -743,7 +754,7 @@ def main() -> None:
     log(service, run_id, "start", mode=mode)
 
     init_db()
-    dry_run = False
+    dry_run = args.dry_run
     funds_before = get_cash()
     funds_after = funds_before
     funds_gained = 0.0
