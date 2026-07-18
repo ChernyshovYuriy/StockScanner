@@ -156,8 +156,8 @@ class BacktestConfig:
     #   "live"        — mirrors virtual_buy.py: shares = min(risk-based, cap-based)
     #                   where dollar_risk = base × risk_pct% against the intent's
     #                   planned entry−stop, and the position value is capped at
-    #                   base / max_positions.  Falls back to cap-only sizing when
-    #                   the intent carries no usable stop (same as live).
+    #                   base / remaining open slots.  Falls back to cap-only
+    #                   sizing when the intent carries no usable stop (same as live).
     sizing: str = "equal_split"
 
     # Base amount the "live" sizing formulas draw from:
@@ -647,7 +647,7 @@ def _execute_buys(
       "equal_split" — allocation_per_ticker = cash / n_actionable,
                       shares = int(allocation / price)  (whole shares only)
       "live"        — virtual_buy.py formula: risk-based share count from the
-                      intent's planned entry−stop, capped at base/max_positions
+                      intent's planned entry−stop, capped at base/remaining_slots
                       per position, base per cfg.sizing_basis ("cash"/"equity").
 
     If cfg.max_positions is set, buys stop when the book is full.
@@ -685,7 +685,9 @@ def _execute_buys(
         base = portfolio.cash
         if cfg.sizing_basis == "equity":
             base += _mark_to_market(portfolio.open_positions, provider, after)
-        n_slots = cfg.max_positions if cfg.max_positions is not None \
+        # Divide by REMAINING slots, matching the 2026-07 virtual_buy.py fix
+        # (dividing by total MAX_POSITIONS left ~(7/8)^8 of cash undeployable).
+        n_slots = slots if cfg.max_positions is not None \
             else max(len(actionable), 1)
         dollar_risk = base * cfg.risk_pct / 100
         max_position_value = base / n_slots
