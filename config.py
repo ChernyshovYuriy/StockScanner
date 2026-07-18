@@ -27,7 +27,9 @@ RISK_PER_TRADE_PCT = 1.0
 
 # Maximum % a stock's open price may exceed the planned entry before the buy
 # is skipped. Protects against gap-ups that destroy the signal's R:R.
-GAP_FILTER_PCT = 2.0
+# None disables the filter — fixed-value head-to-head backtest (2022→2026-07,
+# live parity) showed the filter reduced returns at every tested level.
+GAP_FILTER_PCT = None
 
 
 class PositionMonitorMode(Enum):

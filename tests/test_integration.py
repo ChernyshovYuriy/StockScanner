@@ -248,13 +248,14 @@ def test_virtual_buy_dry_run_writes_nothing():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_virtual_buy_skips_intent_on_gap_up():
-    from config import GAP_FILTER_PCT
+    gap_pct = 2.0
     set_cash(10_000.0)
     planned = 42.50
-    gapped_price = planned * (1 + GAP_FILTER_PCT / 100 + 0.01)  # just over the limit
+    gapped_price = planned * (1 + gap_pct / 100 + 0.01)  # just over the limit
     save_intents([_intent(entry_price_planned=planned)])
 
-    with patch("virtual_buy.fetch_latest_price", return_value=gapped_price):
+    with patch("virtual_buy.fetch_latest_price", return_value=gapped_price), \
+         patch("virtual_buy.GAP_FILTER_PCT", gap_pct):
         run_virtual_buy(top_n=None, dry_run=False)
 
     assert get_open_positions() == []
@@ -262,13 +263,27 @@ def test_virtual_buy_skips_intent_on_gap_up():
 
 
 def test_virtual_buy_executes_when_price_within_gap_filter():
-    from config import GAP_FILTER_PCT
+    gap_pct = 2.0
     set_cash(10_000.0)
     planned = 42.50
-    within_price = planned * (1 + GAP_FILTER_PCT / 100 - 0.005)  # just under the limit
+    within_price = planned * (1 + gap_pct / 100 - 0.005)  # just under the limit
     save_intents([_intent(entry_price_planned=planned, stop_price=40.00)])
 
-    with patch("virtual_buy.fetch_latest_price", return_value=within_price):
+    with patch("virtual_buy.fetch_latest_price", return_value=within_price), \
+         patch("virtual_buy.GAP_FILTER_PCT", gap_pct):
+        run_virtual_buy(top_n=None, dry_run=False)
+
+    assert len(get_open_positions()) == 1
+
+
+def test_virtual_buy_ignores_gap_up_when_filter_disabled():
+    set_cash(10_000.0)
+    planned = 42.50
+    gapped_price = planned * 1.10  # far above any gap limit
+    save_intents([_intent(entry_price_planned=planned, stop_price=40.00)])
+
+    with patch("virtual_buy.fetch_latest_price", return_value=gapped_price), \
+         patch("virtual_buy.GAP_FILTER_PCT", None):
         run_virtual_buy(top_n=None, dry_run=False)
 
     assert len(get_open_positions()) == 1

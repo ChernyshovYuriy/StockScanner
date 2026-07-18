@@ -677,7 +677,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Live-parity knobs (mirror the live services' rules in simulation)
     p.add_argument("--gap-filter", dest="gap_filter", type=float, default=None,
-                   help="Skip buys where open > planned entry + N%% (live GAP_FILTER_PCT=2.0; default off)")
+                   help="Skip buys where open > planned entry + N%% (live GAP_FILTER_PCT is None/off since 2026-07; default off)")
     p.add_argument("--max-positions", dest="max_positions", type=int, default=None,
                    help="Cap concurrent open positions (live MAX_POSITIONS=8; default unlimited)")
     p.add_argument("--sizing", choices=["equal_split", "live"], default="equal_split",

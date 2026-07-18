@@ -142,7 +142,8 @@ class BacktestConfig:
 
     # Gap filter: skip a buy if open price > intent_entry * (1 + gap_filter_pct/100).
     # None = no filter (buy at any open price, matches pre-2026-05 backtest behaviour).
-    # Set to e.g. 2.0 to match the live GAP_FILTER_PCT=2.0 in config.py.
+    # Set to match the live GAP_FILTER_PCT in config.py (None — disabled — since
+    # 2026-07; was 2.0 before the fixed-value head-to-head showed it hurt).
     gap_filter_pct: Optional[float] = None
 
     # Live-parity position cap: max concurrent open positions.

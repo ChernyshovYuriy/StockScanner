@@ -265,23 +265,24 @@ def run_virtual_buy(
         # ── Gap filter: skip if price has moved too far above planned entry ───
         # A gap-up invalidates the R:R — the stop hasn't moved but the entry
         # price has, so the trade no longer has the expected reward profile.
-        try:
-            planned_entry_for_gap = float(
-                str(row[INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
-            )
-            max_allowed = planned_entry_for_gap * (1 + GAP_FILTER_PCT / 100)
-            if price > max_allowed:
-                print(
-                    f"{Fore.YELLOW}gap-up skip: open ${price:.2f} > "
-                    f"entry ${planned_entry_for_gap:.2f} + {GAP_FILTER_PCT}% "
-                    f"(${max_allowed:.2f}){Style.RESET_ALL}"
+        if GAP_FILTER_PCT is not None:
+            try:
+                planned_entry_for_gap = float(
+                    str(row[INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
                 )
-                if not dry_run:
-                    mark_intent_skipped(intent_id, f"gap_up_{price:.2f}_vs_{planned_entry_for_gap:.2f}")
-                skipped_count += 1
-                continue
-        except (ValueError, TypeError):
-            pass  # no planned entry recorded — proceed without gap check
+                max_allowed = planned_entry_for_gap * (1 + GAP_FILTER_PCT / 100)
+                if price > max_allowed:
+                    print(
+                        f"{Fore.YELLOW}gap-up skip: open ${price:.2f} > "
+                        f"entry ${planned_entry_for_gap:.2f} + {GAP_FILTER_PCT}% "
+                        f"(${max_allowed:.2f}){Style.RESET_ALL}"
+                    )
+                    if not dry_run:
+                        mark_intent_skipped(intent_id, f"gap_up_{price:.2f}_vs_{planned_entry_for_gap:.2f}")
+                    skipped_count += 1
+                    continue
+            except (ValueError, TypeError):
+                pass  # no planned entry recorded — proceed without gap check
 
         # ── Risk-based sizing using stop from the candidates queue ────────────
         raw_entry = str(row[INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
