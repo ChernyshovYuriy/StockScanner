@@ -79,9 +79,7 @@
         <td><span class="badge badge-{{ row.get('status', 'unknown')|lower }}">{{ row.get('status', '—') }}</span></td>
         <td>{{ row.get('reason', '') }}</td>
         <td>
-          {% if row.get('status') in ['HOLD', 'SELL'] %}
           <button class="sell-btn" data-ticker="{{ row.get('ticker') }}">Sell</button>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}

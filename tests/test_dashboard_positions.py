@@ -67,6 +67,34 @@ def test_build_live_positions_no_data_row_when_insufficient_bars(monkeypatch):
     monkeypatch.setattr("dashboard_positions.is_market_open", lambda: False)
 
     rows = dashboard_positions.build_live_positions()
+    assert rows[0]["status"] == "NO_DATA"
+    # No fallback price was available (empty df, market closed) — the row
+    # must not carry a fabricated $0 value into the dashboard's totals.
+    assert "pnl_$" not in rows[0]
+
+
+def test_build_live_positions_no_data_row_still_valued_from_stale_cache(monkeypatch):
+    """A ticker with a broken live feed (e.g. Yahoo has no data for it) but
+    a thin local cache (fewer than MIN_BARS_REQUIRED bars) must still
+    contribute its real value to the dashboard's Positions Value / P&L
+    totals — not silently drop to $0, which understates the account by the
+    entire position's value (this is exactly what happened with BLN.TO)."""
+    set_cash(0.0)
+    insert_position("BLN.TO", "2026-06-23", 9.00, 76)
+
+    thin_df = pd.DataFrame({"Close": [9.05], "High": [9.07], "Low": [9.02]},
+                            index=pd.to_datetime(["2026-07-03"]))
+    monkeypatch.setattr("dashboard_positions.load_or_fetch_data", lambda ticker, start: thin_df)
+    monkeypatch.setattr("dashboard_positions.is_market_open", lambda: False)
+
+    rows = dashboard_positions.build_live_positions()
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["status"] == "NO_DATA"
+    assert row["last_close"] == 9.05
+    assert row["pnl_$"] == pytest.approx((9.05 - 9.00) * 76, rel=1e-4)
+    assert "stale-cache" in row["reason"]
 
     assert len(rows) == 1
     assert rows[0]["status"] == "NO_DATA"
