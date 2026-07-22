@@ -12,6 +12,7 @@
   --hold-bg: #f0fdf7;
   --header-bg: #1a1d2e;
   --header-text: #ffffff;
+  --accent: #2f55d4;
 }
 
 * { box-sizing: border-box; }
@@ -45,21 +46,26 @@ h1 { font-size: 18px; margin: 20px 0 10px; }
   display: flex;
   align-items: center;
   gap: 12px;
+  margin: 20px 0 10px;
 }
-.header-row h1 { margin: 20px 0 10px; }
+.header-row h1 { margin: 0; }
 
 .refresh-btn {
   background: var(--card-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 5px 12px;
+  padding: 4px 12px;
   cursor: pointer;
   font-size: 13px;
+  line-height: 1.4;
 }
 .refresh-btn:hover { background: var(--page-bg); }
 
 .stat { color: var(--text-muted); font-weight: 600; }
+
+a { color: var(--accent, #2f55d4); text-decoration: none; }
+a:hover { text-decoration: underline; }
 
 .banner-error {
   background: var(--sell-bg);
@@ -94,6 +100,20 @@ thead th {
   text-align: right;
 }
 thead th:first-child { text-align: left; }
+
+.sortable-col {
+  cursor: pointer;
+  user-select: none;
+}
+.sortable-col:hover { color: var(--text); }
+.sortable-col::after {
+  content: "⇅";
+  opacity: 0.35;
+  margin-left: 4px;
+  font-size: 11px;
+}
+.sortable-col.sort-asc::after { content: "▲"; opacity: 1; }
+.sortable-col.sort-desc::after { content: "▼"; opacity: 1; }
 
 .pnl-pos { color: var(--hold); font-weight: 600; }
 .pnl-neg { color: var(--sell); font-weight: 600; }

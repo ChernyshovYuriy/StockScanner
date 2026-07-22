@@ -75,10 +75,14 @@ def create_app() -> Flask:
         except (duckdb.Error, OSError):
             rows, cash = [], None
             error = "Database temporarily unavailable — retrying on next refresh."
+        total_pnl = sum(
+            row["pnl_$"] for row in rows if isinstance(row.get("pnl_$"), (int, float))
+        ) if rows else None
         return render_template(
             "monitor.html",
             rows=rows,
             cash=cash,
+            total_pnl=total_pnl,
             error=error,
         )
 

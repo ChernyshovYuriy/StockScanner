@@ -10,13 +10,20 @@
     <p class="banner banner-error">{{ error }}</p>
   {% endif %}
 
-  <p class="stat">Cash: {{ "$%.2f"|format(cash) if cash is not none else "—" }}</p>
+  <p class="stat">
+    Cash: {{ "$%.2f"|format(cash) if cash is not none else "—" }}
+    &nbsp;&nbsp;
+    Unrealized P&amp;L:
+    <span class="{{ 'pnl-pos' if total_pnl is not none and total_pnl >= 0 else 'pnl-neg' if total_pnl is not none else '' }}">
+      {{ "%+.2f"|format(total_pnl) if total_pnl is not none else "—" }}
+    </span>
+  </p>
 
   {% if not rows %}
     <p>No open positions.</p>
   {% else %}
   <div class="table-wrap">
-  <table>
+  <table class="sortable">
     <thead>
       <tr>
         <th>Ticker</th><th>Entry Date</th><th>Entry</th><th>Shares</th>
@@ -27,7 +34,9 @@
     <tbody>
       {% for row in rows %}
       <tr>
-        <td>{{ row.get('ticker') }}</td>
+        <td>
+          <a href="https://ca.finance.yahoo.com/quote/{{ row.get('ticker') }}" target="_blank" rel="noopener">{{ row.get('ticker') }}</a>
+        </td>
         <td>{{ row.get('entry_date', '—') }}</td>
         <td>{{ "%.2f"|format(row['entry_price']) if row.get('entry_price') is not none else "—" }}</td>
         <td>{{ row.get('shares', '—') }}</td>
