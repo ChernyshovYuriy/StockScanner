@@ -64,6 +64,28 @@ def test_monitor_page_renders_open_position(client, monkeypatch):
     assert b"Sell" in resp.data
 
 
+def test_monitor_page_shows_initial_capital_and_total_equity(client, monkeypatch):
+    # 10,000 starting capital, spend 4,250 on a position that's now worth 4,500.
+    set_cash(10_000.0)
+    insert_position("RY.TO", "2026-05-01", 42.50, 100, cash_delta=-4_250.0)
+    row = {
+        "ticker": "RY.TO", "entry_date": "2026-05-01", "entry_price": 42.5,
+        "shares": 100.0, "last_close": 45.0, "pnl_%": 5.88, "pnl_$": 250.0,
+        "stop_price": 40.0, "R_mult": 1.0, "tdays": 5, "status": "HOLD", "reason": "OK",
+    }
+    monkeypatch.setattr("dashboard_app.build_live_positions", lambda: [row])
+
+    resp = client.get("/")
+    html = resp.data.decode()
+
+    assert resp.status_code == 200
+    assert "$10000.00" in html.replace(",", "")  # initial capital recovered from the ledger
+    assert "$5750.00" in html.replace(",", "")   # cash after the buy
+    assert "$4500.00" in html.replace(",", "")   # positions value (100 * 45.00)
+    assert "$10250.00" in html.replace(",", "")  # total equity (5750 cash + 4500 value)
+    assert "+250.00" in html                     # total return since inception (+2.50%)
+
+
 def test_history_page_renders_trades_and_transactions(client):
     set_cash(0.0)
     insert_position("RY.TO", "2026-05-01", 42.50, 100)

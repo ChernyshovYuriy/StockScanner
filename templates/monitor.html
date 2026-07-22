@@ -10,14 +10,40 @@
     <p class="banner banner-error">{{ error }}</p>
   {% endif %}
 
-  <p class="stat">
-    Cash: {{ "$%.2f"|format(cash) if cash is not none else "—" }}
-    &nbsp;&nbsp;
-    Unrealized P&amp;L:
-    <span class="{{ 'pnl-pos' if total_pnl is not none and total_pnl >= 0 else 'pnl-neg' if total_pnl is not none else '' }}">
-      {{ "%+.2f"|format(total_pnl) if total_pnl is not none else "—" }}
-    </span>
-  </p>
+  <div class="stats-row">
+    <div class="stat-chip">
+      <span class="stat-label">Initial Capital</span>
+      <span class="stat-value">{{ "$%.2f"|format(initial_capital) if initial_capital is not none else "—" }}</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Cash</span>
+      <span class="stat-value">{{ "$%.2f"|format(cash) if cash is not none else "—" }}</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Positions Value</span>
+      <span class="stat-value">{{ "$%.2f"|format(market_value) if market_value is not none else "—" }}</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Total Equity</span>
+      <span class="stat-value">{{ "$%.2f"|format(total_equity) if total_equity is not none else "—" }}</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Unrealized P&amp;L</span>
+      <span class="stat-value {{ 'pnl-pos' if total_pnl is not none and total_pnl >= 0 else 'pnl-neg' if total_pnl is not none else '' }}">
+        {{ "%+.2f"|format(total_pnl) if total_pnl is not none else "—" }}
+      </span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Total Return (since inception)</span>
+      <span class="stat-value {{ 'pnl-pos' if total_return is not none and total_return >= 0 else 'pnl-neg' if total_return is not none else '' }}">
+        {% if total_return is not none %}
+          {{ "%+.2f"|format(total_return) }} ({{ "%+.2f"|format(total_return_pct) }}%)
+        {% else %}
+          —
+        {% endif %}
+      </span>
+    </div>
+  </div>
 
   {% if not rows %}
     <p>No open positions.</p>

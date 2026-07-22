@@ -37,6 +37,20 @@ _ERROR_STATUS = {
 }
 
 
+def _compute_initial_capital(cash: float, transactions) -> float:
+    """Derive starting capital from the current cash balance and the
+    all-time BUY/SELL ledger: cash_now = initial - buys + sells, so
+    initial = cash_now + buys - sells. db.py has no separate "initial
+    capital" field — set_cash() is only ever called once, at first-time
+    setup (see CLAUDE.md), so this holds as long as cash was never manually
+    adjusted again after go-live."""
+    if transactions.empty:
+        return cash
+    buys = transactions.loc[transactions["side"] == "BUY", "amount"].sum()
+    sells = transactions.loc[transactions["side"] == "SELL", "amount"].sum()
+    return cash + buys - sells
+
+
 def _read_with_retry(fn: Callable[[], Any], retries: int = 2, backoff: float = 0.3) -> Any:
     """Best-effort retry for a DB read that lands on DuckDB's writer lock
     while a scheduled service (main/buy/monitor) is mid-write. db.py itself
@@ -71,18 +85,45 @@ def create_app() -> Flask:
         try:
             rows = _read_with_retry(build_live_positions)
             cash = _read_with_retry(get_cash)
+            transactions = _read_with_retry(get_transactions)
             error = None
         except (duckdb.Error, OSError):
-            rows, cash = [], None
+            rows, cash, transactions = [], None, None
             error = "Database temporarily unavailable — retrying on next refresh."
-        total_pnl = sum(
-            row["pnl_$"] for row in rows if isinstance(row.get("pnl_$"), (int, float))
-        ) if rows else None
+
+        total_pnl = None
+        market_value = None
+        initial_capital = None
+        total_equity = None
+        total_return = None
+        total_return_pct = None
+
+        if rows:
+            total_pnl = sum(
+                row["pnl_$"] for row in rows if isinstance(row.get("pnl_$"), (int, float))
+            )
+            market_value = sum(
+                row["last_close"] * row["shares"] for row in rows
+                if isinstance(row.get("last_close"), (int, float)) and isinstance(row.get("shares"), (int, float))
+            )
+        if cash is not None:
+            total_equity = cash + (market_value or 0.0)
+        if cash is not None and transactions is not None:
+            initial_capital = _compute_initial_capital(cash, transactions)
+        if total_equity is not None and initial_capital:
+            total_return = total_equity - initial_capital
+            total_return_pct = (total_equity / initial_capital - 1.0) * 100.0
+
         return render_template(
             "monitor.html",
             rows=rows,
             cash=cash,
             total_pnl=total_pnl,
+            market_value=market_value,
+            initial_capital=initial_capital,
+            total_equity=total_equity,
+            total_return=total_return,
+            total_return_pct=total_return_pct,
             error=error,
         )
 
