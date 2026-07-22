@@ -5,13 +5,19 @@ Manually sell one open position at the current market price.
 
 Usage:
     python manual_sell.py TICKER
-    python manual_sell.py TICKER --dry-run   # print the planned sell, write nothing
+    python manual_sell.py TICKER --dry-run          # print the planned sell, write nothing
+    python manual_sell.py TICKER --price 12.34       # skip market-price lookup, sell at this price
 
 Fetches a best-effort current price (live 5-min intraday snapshot, falling back
 to the last completed daily close), then closes the position through the same
 execute_virtual_sells() path used by position_monitor.py — removing the
 position, crediting cash, recording the trade, and sending the usual
 transaction email.
+
+--price is an escape hatch for tickers Yahoo Finance has no live quote for
+(e.g. a stale/delisted symbol with an open position that would otherwise be
+unsellable) — it bypasses get_market_price() entirely and uses the given
+value as the sell price.
 """
 
 from __future__ import annotations
@@ -55,13 +61,17 @@ def get_market_price(ticker: str) -> tuple[float, str] | tuple[None, None]:
     return float(df["Close"].iloc[-1]), "daily-close"
 
 
-def sell_position(ticker: str, dry_run: bool = False) -> dict:
+def sell_position(ticker: str, dry_run: bool = False, price: float | None = None) -> dict:
     """
     Close one open position at the current market price.
 
     Acquires the "manual_sell" lock itself (the same lock name used
     regardless of caller, so the CLI and the web dashboard can never race
     each other or double-sell the same ticker).
+
+    price: if given, skips get_market_price() entirely and sells at this
+    value instead — the manual escape hatch for a ticker Yahoo Finance has
+    no live quote for.
 
     Returns a dict:
       ok=True  : {"ok": True, "ticker", "price", "source",
@@ -98,11 +108,14 @@ def sell_position(ticker: str, dry_run: bool = False) -> dict:
             return {"ok": False, "ticker": ticker, "error": "no_position",
                     "message": f"No open position for {ticker}."}
 
-        price, source = get_market_price(ticker)
-        if price is None:
-            log(service, run_id, "no_price", ticker=ticker)
-            return {"ok": False, "ticker": ticker, "error": "no_price",
-                    "message": f"Could not fetch a market price for {ticker}."}
+        if price is not None:
+            source = "manual"
+        else:
+            price, source = get_market_price(ticker)
+            if price is None:
+                log(service, run_id, "no_price", ticker=ticker)
+                return {"ok": False, "ticker": ticker, "error": "no_price",
+                        "message": f"Could not fetch a market price for {ticker}."}
 
         print(f"  Price source: {source}  →  ${price:.4f}")
 
@@ -146,12 +159,15 @@ def main() -> None:
     parser.add_argument("ticker", help="Ticker of the open position to sell (e.g. SLF.TO)")
     parser.add_argument("--dry-run", action="store_true",
                          help="Print the planned sell without writing to the database")
+    parser.add_argument("--price", type=float, default=None,
+                         help="Sell at this price instead of looking one up "
+                              "(use when Yahoo Finance has no live quote for the ticker)")
     args = parser.parse_args()
 
     from db import init_db
     init_db()
 
-    result = sell_position(args.ticker, dry_run=args.dry_run)
+    result = sell_position(args.ticker, dry_run=args.dry_run, price=args.price)
 
     if not result["ok"]:
         print(f"{Fore.RED}{result['message']}{Style.RESET_ALL}")

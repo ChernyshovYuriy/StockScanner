@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable
 
 import duckdb
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 from config import DASHBOARD_HOST, DASHBOARD_PORT
 from dashboard_positions import build_live_positions
@@ -104,7 +104,19 @@ def create_app() -> Flask:
 
     @app.post("/api/positions/<ticker>/sell")
     def sell(ticker: str):
-        result = sell_position(ticker)
+        body = request.get_json(silent=True) or {}
+        price = body.get("price")
+        if price is not None:
+            try:
+                price = float(price)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "ticker": ticker, "error": "bad_price",
+                                 "message": "Price must be a number."}), 400
+            if price <= 0:
+                return jsonify({"ok": False, "ticker": ticker, "error": "bad_price",
+                                 "message": "Price must be positive."}), 400
+
+        result = sell_position(ticker, price=price)
         status = 200 if result["ok"] else _ERROR_STATUS.get(result["error"], 500)
         return jsonify(result), status
 

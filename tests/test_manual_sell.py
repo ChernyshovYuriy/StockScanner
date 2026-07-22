@@ -129,6 +129,30 @@ def test_sell_position_dry_run_writes_nothing(monkeypatch):
     assert get_all_trades().empty
 
 
+def test_sell_position_uses_manual_price_when_given(monkeypatch):
+    """A ticker with no live quote (e.g. Yahoo Finance has stopped carrying
+    it) must still be sellable via an explicit price override, bypassing
+    get_market_price() entirely."""
+    from db import set_cash
+    set_cash(0.0)
+    insert_position("BLN.TO", "2026-06-23", 9.00, 76)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("get_market_price() should not be called when price is given")
+
+    monkeypatch.setattr("manual_sell.fetch_intraday_snapshot", _boom)
+    monkeypatch.setattr("manual_sell.download_ohlc", _boom)
+
+    result = sell_position("BLN.TO", price=8.50)
+
+    assert result["ok"] is True
+    assert result["price"] == 8.50
+    assert result["source"] == "manual"
+    assert get_open_positions() == []
+    trades = get_all_trades()
+    assert trades.iloc[0]["sell_price"] == 8.50
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # helpers
 # ─────────────────────────────────────────────────────────────────────────────

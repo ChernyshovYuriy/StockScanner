@@ -35,6 +35,15 @@ function makeSortable(table) {
 
 document.querySelectorAll("table.sortable").forEach(makeSortable);
 
+function postSell(ticker, price) {
+  const body = price === undefined ? {} : { price };
+  return fetch(`/api/positions/${encodeURIComponent(ticker)}/sell`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(async (res) => ({ res, data: await res.json() }));
+}
+
 document.addEventListener("click", (event) => {
   const btn = event.target.closest(".sell-btn");
   if (!btn) return;
@@ -45,13 +54,43 @@ document.addEventListener("click", (event) => {
   btn.disabled = true;
   btn.textContent = "Selling…";
 
-  fetch(`/api/positions/${encodeURIComponent(ticker)}/sell`, { method: "POST" })
-    .then(async (res) => {
-      const data = await res.json();
+  postSell(ticker)
+    .then(({ res, data }) => {
       if (res.ok && data.ok) {
         location.reload();
         return;
       }
+
+      // No live quote for this ticker (e.g. a stale/delisted symbol) —
+      // offer a manual price instead of leaving the position stuck.
+      if (data.error === "no_price") {
+        const manual = prompt(
+          `No live price available for ${ticker}. Enter a price to sell at manually, or Cancel:`
+        );
+        if (manual === null) {
+          btn.disabled = false;
+          btn.textContent = "Sell";
+          return;
+        }
+        const price = parseFloat(manual);
+        if (isNaN(price) || price <= 0) {
+          alert("Enter a valid positive number.");
+          btn.disabled = false;
+          btn.textContent = "Sell";
+          return;
+        }
+        postSell(ticker, price).then(({ res: res2, data: data2 }) => {
+          if (res2.ok && data2.ok) {
+            location.reload();
+            return;
+          }
+          alert(data2.message || "Sell failed.");
+          btn.disabled = false;
+          btn.textContent = "Sell";
+        });
+        return;
+      }
+
       alert(data.message || "Sell failed.");
       btn.disabled = false;
       btn.textContent = "Sell";

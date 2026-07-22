@@ -85,8 +85,8 @@ def test_history_page_renders_trades_and_transactions(client):
 def test_sell_endpoint_happy_path(client, monkeypatch):
     monkeypatch.setattr(
         "dashboard_app.sell_position",
-        lambda ticker: {"ok": True, "ticker": ticker, "price": 45.0, "source": "5m-intraday",
-                         "pnl_dollars": 250.0, "pnl_pct": 5.88, "funds_state": {}},
+        lambda ticker, price=None: {"ok": True, "ticker": ticker, "price": 45.0, "source": "5m-intraday",
+                                     "pnl_dollars": 250.0, "pnl_pct": 5.88, "funds_state": {}},
     )
 
     resp = client.post("/api/positions/RY.TO/sell")
@@ -103,10 +103,41 @@ def test_sell_endpoint_happy_path(client, monkeypatch):
 def test_sell_endpoint_maps_errors_to_status_codes(client, monkeypatch, error, expected_status):
     monkeypatch.setattr(
         "dashboard_app.sell_position",
-        lambda ticker: {"ok": False, "ticker": ticker, "error": error, "message": "nope"},
+        lambda ticker, price=None: {"ok": False, "ticker": ticker, "error": error, "message": "nope"},
     )
 
     resp = client.post("/api/positions/RY.TO/sell")
 
     assert resp.status_code == expected_status
+    assert resp.get_json()["ok"] is False
+
+
+def test_sell_endpoint_forwards_manual_price(client, monkeypatch):
+    received = {}
+
+    def _fake_sell(ticker, price=None):
+        received["ticker"] = ticker
+        received["price"] = price
+        return {"ok": True, "ticker": ticker, "price": price, "source": "manual",
+                "pnl_dollars": -50.0, "pnl_pct": -6.7, "funds_state": {}}
+
+    monkeypatch.setattr("dashboard_app.sell_position", _fake_sell)
+
+    resp = client.post("/api/positions/BLN.TO/sell", json={"price": 8.50})
+
+    assert resp.status_code == 200
+    assert received == {"ticker": "BLN.TO", "price": 8.50}
+    assert resp.get_json()["source"] == "manual"
+
+
+@pytest.mark.parametrize("bad_price", ["not-a-number", -5, 0])
+def test_sell_endpoint_rejects_invalid_manual_price(client, monkeypatch, bad_price):
+    monkeypatch.setattr(
+        "dashboard_app.sell_position",
+        lambda ticker, price=None: pytest.fail("sell_position should not be called with a bad price"),
+    )
+
+    resp = client.post("/api/positions/BLN.TO/sell", json={"price": bad_price})
+
+    assert resp.status_code == 400
     assert resp.get_json()["ok"] is False
