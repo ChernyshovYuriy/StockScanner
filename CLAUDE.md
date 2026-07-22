@@ -34,6 +34,10 @@ python virtual_buy.py                             # virtual entry execution (9:4
 python position_monitor.py --mode pre-close       # position monitoring with sells (3:50 PM)
 python position_monitor.py --mode post-close      # informational EOD run
 
+# Manual sell — close one open position at the current market price, on demand
+python manual_sell.py SLF.TO                      # sells SLF.TO now
+python manual_sell.py SLF.TO --dry-run             # preview only, no DB write
+
 # EDGAR collector — separate 4th service (US SEC filings; ~6:30 PM ET)
 python edgar_service.py                            # scan + store + email digest of flagged hits
 python edgar_service.py --dry-run                  # build & print the digest, send nothing
@@ -99,6 +103,7 @@ The system runs as three separate scheduled entrypoints that must remain indepen
 - **`send_report.py`** — Gmail SMTP sender. Has two distinct responsibilities: `send_report()` sends the daily HTML pipeline report (called from `main.py` and `position_monitor.py`); `send_transaction_email()` / `build_transaction_html()` sends a trade notification email after every buy or sell (called from `virtual_buy.py` and `position_monitor.py`). `send_text_email(subject, body)` sends a plain-text email (used by the EDGAR collector). Credentials are read from `.env` (`GMAIL_SENDER`, `GMAIL_APP_PASSWORD`, `GMAIL_RECIPIENT`). Silently skips if not configured.
 - **`edgar_service.py`** / **`edgar/`** — Separate 4th service (US SEC EDGAR), the fundamentals/ownership counterweight to the TSX momentum system. Daily after the US close it sweeps EDGAR's daily index, stores filings in its OWN SQLite DB (`data/edgar.db`, keyed on CIK+accession — NOT `trading.db`), and emails a plain-text digest of flagged hits (interim: watchlist insider open-market buys + all SC 13D/13G) via `send_report.send_text_email()`. Quiet day = no email. Reuses shared config/email/logging/lock; stays independent of the TSX trio (US filers only). Config in the `EDGAR_*` block of `config.py`; dev sandbox + specs in `edgar/`. Every filing is a lagged disclosure — a research trigger, not a price predictor. `edgar_report.py` is a separate on-demand command that parses already-collected 13D bodies from `scan_hits` and emails a digest.
 - **Support modules** — `report.py` (console dump of the live trading DB: cash, positions, trades, signals, intents), `report_html.py` (light-theme HTML email report — Gmail forcibly overrides dark backgrounds), `schema_keys.py` (shared column/field keys used across pipeline, buy, monitor, and report modules), `concurrent_utils.py` (fcntl file lock in `out/locks/` preventing overlapping service runs), `log_utils.py` (JSON run logging via `market_now()`).
+- **`manual_sell.py`** — on-demand CLI to close one open position at the current market price (live 5-min intraday snapshot, falling back to the last daily close). Takes a single ticker argument; reuses `position_monitor.execute_virtual_sells()` so the position removal, cash credit, trade record, and transaction email match every other sell path. `--dry-run` previews without writing.
 
 ### Scope discipline
 
