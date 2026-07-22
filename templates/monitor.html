@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Monitor — StockScanner{% endblock %}
+{% block head %}
+  <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+{% endblock %}
+{% block content %}
+  <h1>Open Positions</h1>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  <p class="stat">Cash: {{ "$%.2f"|format(cash) if cash is not none else "—" }}</p>
+
+  {% if not rows %}
+    <p>No open positions.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Ticker</th><th>Entry Date</th><th>Entry</th><th>Shares</th>
+        <th>Last</th><th>PnL %</th><th>PnL $</th><th>Stop</th>
+        <th>R</th><th>Days</th><th>Status</th><th>Reason</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.get('ticker') }}</td>
+        <td>{{ row.get('entry_date', '—') }}</td>
+        <td>{{ "%.2f"|format(row['entry_price']) if row.get('entry_price') is not none else "—" }}</td>
+        <td>{{ row.get('shares', '—') }}</td>
+        <td>{{ "%.2f"|format(row['last_close']) if row.get('last_close') is not none else "—" }}</td>
+        <td class="{{ 'pnl-pos' if row.get('pnl_%', 0) and row['pnl_%'] >= 0 else 'pnl-neg' if row.get('pnl_%') is not none else '' }}">
+          {{ "%.2f"|format(row['pnl_%']) ~ "%" if row.get('pnl_%') is not none else "—" }}
+        </td>
+        <td class="{{ 'pnl-pos' if row.get('pnl_$', 0) and row['pnl_$'] >= 0 else 'pnl-neg' if row.get('pnl_$') is not none else '' }}">
+          {{ "%.2f"|format(row['pnl_$']) if row.get('pnl_$') is not none else "—" }}
+        </td>
+        <td>{{ "%.2f"|format(row['stop_price']) if row.get('stop_price') is not none else "—" }}</td>
+        <td>{{ row.get('R_mult', '—') if row.get('R_mult') is not none else "—" }}</td>
+        <td>{{ row.get('tdays', '—') }}</td>
+        <td><span class="badge badge-{{ row.get('status', 'unknown')|lower }}">{{ row.get('status', '—') }}</span></td>
+        <td>{{ row.get('reason', '') }}</td>
+        <td>
+          {% if row.get('status') in ['HOLD', 'SELL'] %}
+          <button class="sell-btn" data-ticker="{{ row.get('ticker') }}">Sell</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}

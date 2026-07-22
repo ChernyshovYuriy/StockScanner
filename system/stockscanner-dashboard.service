@@ -1,0 +1,18 @@
+[Unit]
+Description=StockScanner web dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nvidia
+WorkingDirectory=/home/nvidia/dev/stock-scanner
+ExecStart=/usr/local/bin/python3.12 /home/nvidia/dev/stock-scanner/dashboard_app.py
+Restart=on-failure
+RestartSec=5
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}History — StockScanner{% endblock %}
+{% block content %}
+  <h1>Trade History</h1>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  {% if not trades %}
+    <p>No closed trades yet.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Ticker</th><th>Entry Date</th><th>Entry</th><th>Shares</th>
+        <th>Sell Date</th><th>Sell</th><th>Proceeds</th><th>PnL $</th><th>PnL %</th><th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in trades %}
+      <tr>
+        <td>{{ t.ticker }}</td>
+        <td>{{ t.entry_date }}</td>
+        <td>{{ "%.2f"|format(t.entry_price) }}</td>
+        <td>{{ t.shares }}</td>
+        <td>{{ t.sell_date }}</td>
+        <td>{{ "%.2f"|format(t.sell_price) }}</td>
+        <td>{{ "%.2f"|format(t.proceeds) }}</td>
+        <td class="{{ 'pnl-pos' if t.pnl_dollars >= 0 else 'pnl-neg' }}">{{ "%.2f"|format(t.pnl_dollars) }}</td>
+        <td class="{{ 'pnl-pos' if t.pnl_pct >= 0 else 'pnl-neg' }}">{{ "%.2f"|format(t.pnl_pct) }}%</td>
+        <td>{{ t.reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  <h1>Transactions</h1>
+
+  {% if not transactions %}
+    <p>No transactions yet.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Side</th><th>Ticker</th><th>Date</th><th>Price</th><th>Shares</th>
+        <th>Amount</th><th>PnL $</th><th>PnL %</th><th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for tx in transactions %}
+      <tr class="side-{{ tx.side|lower }}">
+        <td>{{ tx.side }}</td>
+        <td>{{ tx.ticker }}</td>
+        <td>{{ tx.trade_date }}</td>
+        <td>{{ "%.2f"|format(tx.price) }}</td>
+        <td>{{ tx.shares }}</td>
+        <td>{{ "%.2f"|format(tx.amount) }}</td>
+        <td>{{ "%.2f"|format(tx.pnl_dollars) if tx.pnl_dollars is not none else "—" }}</td>
+        <td>{{ "%.2f"|format(tx.pnl_pct) ~ "%" if tx.pnl_pct is not none else "—" }}</td>
+        <td>{{ tx.reason or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}

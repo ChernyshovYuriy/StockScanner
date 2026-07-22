@@ -38,6 +38,15 @@ class PositionMonitorMode(Enum):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Web dashboard (Jetson, LAN-only, no auth — deliberate choice)
+# ─────────────────────────────────────────────────────────────────────────────
+DASHBOARD_HOST = "0.0.0.0"
+DASHBOARD_PORT = 8080
+DASHBOARD_REFRESH_SECONDS = 20  # <meta http-equiv="refresh"> cadence on the Monitor page
+DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS = 15  # server-side cache for build_live_positions()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EDGAR collector (separate 4th service — see edgar_service.py)
 # ─────────────────────────────────────────────────────────────────────────────
 # The EDGAR collector is the fundamentals/ownership counterweight to this TSX

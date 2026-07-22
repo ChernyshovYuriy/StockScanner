@@ -1,0 +1,116 @@
+/* Minimal light-theme palette borrowed from report_html.py's C dict, for
+   visual consistency with the emailed reports. */
+:root {
+  --page-bg: #f4f6f9;
+  --card-bg: #ffffff;
+  --border: #dde1ea;
+  --text: #1a1d2e;
+  --text-muted: #5a6080;
+  --sell: #c0152f;
+  --sell-bg: #fff0f2;
+  --hold: #0a7c4e;
+  --hold-bg: #f0fdf7;
+  --header-bg: #1a1d2e;
+  --header-text: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+}
+
+.topnav {
+  background: var(--header-bg);
+  color: var(--header-text);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.topnav .brand { font-weight: 700; margin-right: 12px; }
+.topnav a { color: var(--header-text); text-decoration: none; opacity: 0.85; }
+.topnav a:hover { opacity: 1; text-decoration: underline; }
+
+main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+
+h1 { font-size: 18px; margin: 20px 0 10px; }
+
+.stat { color: var(--text-muted); font-weight: 600; }
+
+.banner-error {
+  background: var(--sell-bg);
+  color: var(--sell);
+  border: 1px solid var(--sell);
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.table-wrap { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+}
+
+th, td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+th:first-child, td:first-child { text-align: left; }
+
+thead th {
+  background: var(--page-bg);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: right;
+}
+thead th:first-child { text-align: left; }
+
+.pnl-pos { color: var(--hold); font-weight: 600; }
+.pnl-neg { color: var(--sell); font-weight: 600; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.badge-hold { background: var(--hold-bg); color: var(--hold); }
+.badge-sell { background: var(--sell-bg); color: var(--sell); }
+.badge-no_data { background: var(--border); color: var(--text-muted); }
+
+.side-buy { color: var(--hold); }
+.side-sell { color: var(--sell); }
+
+.sell-btn {
+  background: var(--sell);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.sell-btn:disabled { opacity: 0.5; cursor: default; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #14161f;
+    --card-bg: #1c1f2c;
+    --border: #2c3040;
+    --text: #e7e9f2;
+    --text-muted: #9099b8;
+  }
+}

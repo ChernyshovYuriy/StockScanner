@@ -9,3 +9,5 @@ pydantic
 pytest
 duckdb
 requests
+Flask
+waitress

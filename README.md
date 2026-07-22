@@ -150,7 +150,15 @@ sudo systemctl enable stockscanner-monitor.timer
 sudo systemctl start stockscanner-main.timer
 sudo systemctl start stockscanner-buy.timer
 sudo systemctl start stockscanner-monitor.timer
+
+# The web dashboard is always-on (not timer-driven) — enable and start it directly
+sudo systemctl enable --now stockscanner-dashboard.service
 ```
+
+The dashboard listens on `DASHBOARD_HOST:DASHBOARD_PORT` from `config.py`
+(default `0.0.0.0:8080`, LAN-only, no authentication — deliberate for a
+home-network deployment). Browse to `http://<jetson-lan-ip>:8080/` from any
+device on the LAN.
 
 ### After editing a .service or .timer file
 

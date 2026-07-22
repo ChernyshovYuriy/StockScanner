@@ -1,0 +1,117 @@
+"""
+dashboard_app.py
+=================
+Read/write web dashboard for the trading system: shows live open positions
+(Monitor), trade history + transaction ledger (History), and lets a human
+close a position at market price via manual_sell.sell_position().
+
+LAN-only, no authentication — deliberate choice for a home-network Jetson
+deployment; anyone on the LAN can view and sell.
+
+Local dev:
+    python dashboard_app.py
+    curl localhost:8080/healthz
+
+Deployed on the Jetson via system/stockscanner-dashboard.service, which runs
+this same entrypoint under Waitress (pure-Python WSGI server, no C-extension
+build step on ARM).
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any, Callable
+
+import duckdb
+from flask import Flask, jsonify, render_template
+
+from config import DASHBOARD_HOST, DASHBOARD_PORT, DASHBOARD_REFRESH_SECONDS
+from dashboard_positions import build_live_positions
+from db import get_all_trades, get_cash, get_transactions
+from manual_sell import sell_position
+
+_ERROR_STATUS = {
+    "locked": 409,
+    "no_position": 404,
+    "no_price": 503,
+}
+
+
+def _read_with_retry(fn: Callable[[], Any], retries: int = 2, backoff: float = 0.3) -> Any:
+    """Best-effort retry for a DB read that lands on DuckDB's writer lock
+    while a scheduled service (main/buy/monitor) is mid-write. db.py itself
+    is left unchanged; this wrapper only exists here because the dashboard
+    reads far more often (continuous polling) than the old world (4 short
+    runs a day)."""
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return fn()
+        except (duckdb.Error, OSError) as exc:
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(backoff)
+    raise last_exc  # noqa: B904 — re-raising the last captured DB error as-is
+
+
+def create_app() -> Flask:
+    """Build the Flask app. Does not call init_db() itself — the caller
+    (the __main__ entrypoint below, or a test fixture) is responsible for
+    that, since db.init_db()'s bare (no-arg) form always resets DB_PATH back
+    to the production default, which would clobber a test's tmp_path DB if
+    called again in here."""
+    app = Flask(__name__)
+
+    @app.get("/healthz")
+    def healthz():
+        return jsonify({"ok": True})
+
+    @app.get("/")
+    def monitor():
+        try:
+            rows = _read_with_retry(build_live_positions)
+            cash = _read_with_retry(get_cash)
+            error = None
+        except (duckdb.Error, OSError):
+            rows, cash = [], None
+            error = "Database temporarily unavailable — retrying on next refresh."
+        return render_template(
+            "monitor.html",
+            rows=rows,
+            cash=cash,
+            error=error,
+            refresh_seconds=DASHBOARD_REFRESH_SECONDS,
+        )
+
+    @app.get("/history")
+    def history():
+        try:
+            trades = _read_with_retry(get_all_trades).to_dict("records")
+            transactions = _read_with_retry(get_transactions).to_dict("records")
+            error = None
+        except (duckdb.Error, OSError):
+            trades, transactions = [], []
+            error = "Database temporarily unavailable — try again shortly."
+        return render_template(
+            "history.html",
+            trades=trades,
+            transactions=transactions,
+            error=error,
+        )
+
+    @app.post("/api/positions/<ticker>/sell")
+    def sell(ticker: str):
+        result = sell_position(ticker)
+        status = 200 if result["ok"] else _ERROR_STATUS.get(result["error"], 500)
+        return jsonify(result), status
+
+    return app
+
+
+if __name__ == "__main__":
+    from waitress import serve
+
+    from db import init_db
+
+    init_db()
+    serve(create_app(), host=DASHBOARD_HOST, port=DASHBOARD_PORT)

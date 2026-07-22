@@ -4,6 +4,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now stockscanner-main.timer
 sudo systemctl enable --now stockscanner-buy.timer
 sudo systemctl enable --now stockscanner-monitor.timer
+sudo systemctl enable --now stockscanner-dashboard.service
 
 systemctl list-timers --all | grep stockscanner
 
@@ -14,3 +15,4 @@ sudo systemctl start stockscanner-monitor.service
 journalctl -u stockscanner-main.service -n 100 --no-pager
 journalctl -u stockscanner-buy.service -n 100 --no-pager
 journalctl -u stockscanner-monitor.service -n 100 --no-pager
+journalctl -u stockscanner-dashboard.service -n 100 --no-pager
