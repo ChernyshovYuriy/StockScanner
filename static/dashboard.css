@@ -41,6 +41,24 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 
 h1 { font-size: 18px; margin: 20px 0 10px; }
 
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header-row h1 { margin: 20px 0 10px; }
+
+.refresh-btn {
+  background: var(--card-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.refresh-btn:hover { background: var(--page-bg); }
+
 .stat { color: var(--text-muted); font-weight: 600; }
 
 .banner-error {

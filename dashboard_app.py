@@ -25,7 +25,7 @@ from typing import Any, Callable
 import duckdb
 from flask import Flask, jsonify, render_template
 
-from config import DASHBOARD_HOST, DASHBOARD_PORT, DASHBOARD_REFRESH_SECONDS
+from config import DASHBOARD_HOST, DASHBOARD_PORT
 from dashboard_positions import build_live_positions
 from db import get_all_trades, get_cash, get_transactions
 from manual_sell import sell_position
@@ -80,7 +80,6 @@ def create_app() -> Flask:
             rows=rows,
             cash=cash,
             error=error,
-            refresh_seconds=DASHBOARD_REFRESH_SECONDS,
         )
 
     @app.get("/history")

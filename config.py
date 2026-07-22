@@ -42,7 +42,6 @@ class PositionMonitorMode(Enum):
 # ─────────────────────────────────────────────────────────────────────────────
 DASHBOARD_HOST = "0.0.0.0"
 DASHBOARD_PORT = 8080
-DASHBOARD_REFRESH_SECONDS = 20  # <meta http-equiv="refresh"> cadence on the Monitor page
 DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS = 15  # server-side cache for build_live_positions()
 
 
