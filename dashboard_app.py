@@ -35,6 +35,7 @@ _ERROR_STATUS = {
     "locked": 409,
     "no_position": 404,
     "no_price": 503,
+    "already_closed": 409,
 }
 
 

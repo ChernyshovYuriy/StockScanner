@@ -530,11 +530,12 @@ def execute_virtual_sells(
 
     # ── Remove sold positions and record trades in database ───────────────────
     sell_date = market_now(TSX_TZ).date().isoformat()
+    actually_sold: List[Dict] = []
     for rec in sold_records:
         ticker = rec[SIGNAL_COL_TICKER]
         # Position removal, trade record, and cash credit happen in ONE
         # transaction — a crash mid-sell can no longer lose the proceeds.
-        insert_trade(
+        recorded = insert_trade(
             ticker=ticker,
             entry_date=str(rec[POSITION_COL_ENTRY_DATE]),
             entry_price=float(rec[POSITION_COL_ENTRY_PRICE]),
@@ -548,10 +549,25 @@ def execute_virtual_sells(
             cash_delta=float(rec["proceeds"]),
             remove_position=True,
         )
+        if recorded:
+            actually_sold.append(rec)
+        else:
+            # A concurrent process (e.g. a manual_sell.py dashboard click, or
+            # the other run mode) already closed this position first — do NOT
+            # credit cash or log a trade a second time for one real sale.
+            print(
+                f"  {Fore.YELLOW}⚠ {ticker}: already closed by another process "
+                f"— skipped (no duplicate credit written){Style.RESET_ALL}"
+            )
+
+    # Recompute totals from only the sells that were actually written — a
+    # skipped race above must not inflate the reported proceeds/P&L.
+    total_proceeds = round(sum(float(r["proceeds"]) for r in actually_sold), 2)
+    total_pnl = round(sum(float(r.get(POSITION_COL_PNL_DOLLARS, 0) or 0) for r in actually_sold), 2)
 
     remaining_count = len(get_open_positions_df())
     print(
-        f"\n  {Fore.GREEN}✓ Removed {len(sold_records)} position(s) and recorded trades in database{Style.RESET_ALL}"
+        f"\n  {Fore.GREEN}✓ Removed {len(actually_sold)} position(s) and recorded trades in database{Style.RESET_ALL}"
     )
     print(f"    Remaining open positions: {remaining_count}")
 
@@ -566,14 +582,15 @@ def execute_virtual_sells(
     )
     print(f"{'─' * 60}\n")
 
-    send_transaction_email(
-        buys=[],
-        sells=sold_records,
-        cash_before=current_funds,
-        cash_after=new_funds,
-        open_positions_count=remaining_count,
-        label=label,
-    )
+    if actually_sold:
+        send_transaction_email(
+            buys=[],
+            sells=actually_sold,
+            cash_before=current_funds,
+            cash_after=new_funds,
+            open_positions_count=remaining_count,
+            label=label,
+        )
 
     return {
         "funds_before": current_funds,

@@ -66,6 +66,12 @@ def _best_effort_price(ticker: str, df: pd.DataFrame, use_intraday: bool) -> tup
 
 def _no_data_row(pos, reason: str, use_intraday: bool, df: pd.DataFrame) -> Dict:
     row = {SIGNAL_COL_TICKER: pos.ticker, POSITION_COL_STATUS: "NO_DATA", POSITION_COL_REASON: reason}
+    # A zero/negative entry_price would divide-by-zero below and crash the
+    # whole dashboard page for every position, not just this one — same
+    # class of bug as position_monitor.compute_signals(), independently
+    # reachable here since this fallback path doesn't go through it.
+    if pos.entry_price <= 0:
+        return row
     fallback = _best_effort_price(pos.ticker, df, use_intraday)
     if fallback is not None:
         price, source = fallback

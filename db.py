@@ -358,19 +358,32 @@ def insert_trade(
         reason: str,
         cash_delta: float | None = None,
         remove_position: bool = False,
-) -> None:
+) -> bool:
     """Append one closed trade to the permanent trade log and record a SELL transaction.
 
     cash_delta (normally +proceeds) is applied to the account balance and, when
     remove_position is True, the open position row is deleted — all in the same
     transaction, so a crash can never lose a sale's proceeds or leave the position
     both open and closed.
+
+    Returns True if the trade was actually recorded, False if remove_position
+    was True but the position was already gone — i.e. a concurrent process
+    (e.g. position_monitor.py's scheduled sell racing a manual_sell.py
+    dashboard click that read the position moments earlier, before the first
+    sell committed) already closed it first. Without this check the caller
+    would silently credit cash and log a trade a second time for one real
+    sale, since DELETE on a missing row is a no-op, not an error.
     """
     from time_utils import market_now
     now = market_now().isoformat()
     with _connect() as conn:
         if remove_position:
-            conn.execute("DELETE FROM positions WHERE ticker = ?", [ticker.upper()])
+            deleted = conn.execute(
+                "DELETE FROM positions WHERE ticker = ? RETURNING ticker",
+                [ticker.upper()],
+            ).fetchall()
+            if not deleted:
+                return False  # already closed by a concurrent process — no-op
         conn.execute(
             """
             INSERT INTO trades
@@ -395,6 +408,7 @@ def insert_trade(
         _record_transaction(conn, "SELL", ticker, sell_date, sell_price, shares, pnl_dollars, pnl_pct, reason)
         if cash_delta is not None:
             _adjust_cash(conn, cash_delta)
+    return True
 
 
 def get_all_trades() -> pd.DataFrame:

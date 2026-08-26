@@ -77,7 +77,7 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
       ok=True  : {"ok": True, "ticker", "price", "source",
                   "pnl_dollars", "pnl_pct", "funds_state"}
       ok=False : {"ok": False, "ticker",
-                  "error": "locked" | "no_position" | "no_price",
+                  "error": "locked" | "no_position" | "no_price" | "already_closed",
                   "message": "<human readable>"}
 
     Does not raise for expected failure paths — callers branch on result["ok"].
@@ -134,6 +134,17 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
         }
 
         funds_state = execute_virtual_sells([sell_row], dry_run=dry_run)
+
+        # execute_virtual_sells() silently skips (no cash credit, no trade
+        # record) a ticker that a concurrent process already closed first —
+        # e.g. this function's own position read above was already stale by
+        # the time the price lookup finished. Report that honestly instead
+        # of claiming success for a sell that was never actually written.
+        if not dry_run and funds_state.get("funds_gained", 0.0) == 0.0:
+            log(service, run_id, "already_closed", ticker=ticker)
+            return {"ok": False, "ticker": ticker, "error": "already_closed",
+                    "message": f"{ticker} was already closed by another process "
+                               f"(e.g. the scheduled monitor) moments ago — nothing sold."}
 
         log(service, run_id, "done", ticker=ticker, price=price, dry_run=dry_run)
         return {
