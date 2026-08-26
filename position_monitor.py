@@ -297,6 +297,13 @@ def compute_signals(
     ep = exit_params if exit_params is not None else ExitParams()
     entry_dt = pd.Timestamp(pos.entry_date)
 
+    # A zero/negative entry_price would divide-by-zero below (pnl_pct, r_multiple)
+    # and crash the whole per-position loop in main() for every other position in
+    # the same run, since there is no per-position try/except around this call.
+    if pos.entry_price <= 0:
+        return {"ticker": pos.ticker, "status": "BAD_DATA",
+                "reason": f"Invalid entry_price ({pos.entry_price})"}
+
     df = df.copy()
     _required = {"High", "Low", "Close"}
     if df.empty or not _required.issubset(df.columns):
