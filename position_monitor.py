@@ -45,13 +45,13 @@ from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
 from config import CACHE_PATH, LOGS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, ALERTS_PATH
 from db import get_cash, get_open_positions_df, init_db, insert_trade
 from log_utils import log
+from market_data import DEFAULT_PROVIDER, TodayBar
 from report_html import append_positions_report
 from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, \
     POSITION_COL_PNL_DOLLARS, \
@@ -151,13 +151,9 @@ class Position:
     stop_price: Optional[float] = None  # planned exit stop carried from the buy intent
 
 
-@dataclass
-class TodayBar:
-    """Live intraday snapshot for the current session."""
-    low: float
-    close: float  # latest traded price (last 5-min close)
-    high: float  # session high so far
-    source: str  # e.g. "5m-intraday"
+# TodayBar now lives in market_data.py (the canonical shape shared by every
+# provider); re-imported here so existing internal references and
+# momentum_monitor.py's `from position_monitor import TodayBar` keep working.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -172,35 +168,11 @@ def fetch_intraday_snapshot(ticker: str) -> Optional[TodayBar]:
       - high  : the session high so far
 
     Returns None on any failure; caller falls back to completed daily bar.
+
+    Delegates to market_data.DEFAULT_PROVIDER.get_intraday_snapshot() — the
+    single place this fetch logic now lives (see market_data.py).
     """
-    try:
-        df = yf.download(
-            tickers=ticker,
-            period="1d",
-            interval="5m",
-            auto_adjust=True,
-            progress=False,
-        )
-        if df is None or df.empty:
-            return None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df = df.dropna(subset=["High", "Low", "Close"])
-        if df.empty:
-            return None
-
-        return TodayBar(
-            low=float(df["Low"].min()),
-            close=float(df["Close"].iloc[-1]),
-            high=float(df["High"].max()),
-            source="5m-intraday",
-        )
-
-    except Exception as e:
-        print(f"    {Fore.YELLOW}Intraday snapshot failed for {ticker}: {e}{Style.RESET_ALL}")
-        return None
+    return DEFAULT_PROVIDER.get_intraday_snapshot(ticker)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,26 +180,22 @@ def fetch_intraday_snapshot(ticker: str) -> Optional[TodayBar]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def download_ohlc(ticker: str, start: date, end: Optional[date] = None) -> pd.DataFrame:
-    """Download daily OHLCV bars from Yahoo Finance."""
+    """Download daily OHLCV bars from Yahoo Finance.
+
+    Delegates to market_data.DEFAULT_PROVIDER.get() with an explicit date
+    range; returns an empty DataFrame (never raises) on any failure, same
+    contract as before centralization.
+    """
     end_dt = end or (date.today() + timedelta(days=1))
-    df = yf.download(
-        tickers=ticker,
-        start=start.isoformat(),
-        end=end_dt.isoformat(),
-        interval="1d",
-        auto_adjust=True,
-        progress=False,
-        group_by="column",
-    )
-    if df is None or df.empty:
+    try:
+        return DEFAULT_PROVIDER.get(
+            ticker,
+            as_of=pd.Timestamp.now(),
+            start_dt=start.isoformat(),
+            end_dt=end_dt.isoformat(),
+        ).sort_index()
+    except KeyError:
         return pd.DataFrame()
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    df = df.copy()
-    df.index = pd.to_datetime(df.index)
-    return df.sort_index()
 
 
 def load_or_fetch_data(ticker: str, start: date) -> pd.DataFrame:

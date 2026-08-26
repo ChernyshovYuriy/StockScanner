@@ -2,7 +2,7 @@ import argparse
 import sys
 import uuid
 
-import yfinance as yf
+import pandas as pd
 from colorama import Fore, Style
 
 from auto_pipeline import PipelineConfig, run_pipeline
@@ -10,6 +10,7 @@ from canadian_stock_screener import DataManager, StockScreener, CONFIG, display_
 from concurrent_utils import acquire_lock
 from config import ALERTS_PATH, CAN_TICKERS_URL, SCREENER_OUT_PATH, REPORT_PATH
 from log_utils import log
+from market_data import DEFAULT_PROVIDER
 from send_report import SendConfig, send_report
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,12 +35,7 @@ def __check_regime() -> bool:
     network failure never silently prevents the system from running.
     """
     try:
-        df = yf.download(
-            BENCHMARK,
-            period="1y",
-            auto_adjust=True,
-            progress=False,
-        )
+        df = DEFAULT_PROVIDER.get(BENCHMARK, as_of=pd.Timestamp.now())
         if df is None or df.empty:
             print(f"{Fore.YELLOW}  Regime check: no data for {BENCHMARK} — defaulting to BULL{Style.RESET_ALL}")
             return True

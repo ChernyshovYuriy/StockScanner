@@ -44,12 +44,12 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from colorama import Fore, Style, init
 from tabulate import tabulate
 
 from config import ALERTS_PATH, SCREENER_OUT_PATH, OUT_PATH
 from db import get_cash, init_db, load_signals, save_signals, save_intents
+from market_data import DEFAULT_PROVIDER
 from report_html import write_pipeline_report
 from schema_keys import SIGNAL_DB_COLS, SIGNAL_COL_ALERT_SENT, SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS, SIGNAL_COL_DETAIL, \
     SIGNAL_COL_DAYS_IN_STATE, SIGNAL_COL_ENTRY, SIGNAL_COL_FIRST_SEEN, SIGNAL_COL_LAST_SEEN, SIGNAL_COL_PATTERN, \
@@ -681,15 +681,14 @@ def _is_market_in_uptrend(benchmark: str, sma_period: int = 200) -> bool:
     Uses XIU.TO (TSX 60 ETF) as the TSX proxy by default.
     Returns True (permissive) on any data failure so a bad Yahoo fetch never
     blocks the whole pipeline.
+
+    Fetches via market_data.DEFAULT_PROVIDER (live mode only — the
+    backtester has its own _is_market_in_uptrend in backtest_runner.py that
+    takes an injected provider, so this function is never on the simulation
+    path).
     """
     try:
-        df = yf.download(
-            tickers=benchmark,
-            period=f"{sma_period + 20}d",
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-        )
+        df = DEFAULT_PROVIDER.get(benchmark, as_of=pd.Timestamp.now())
         if df is None or df.empty:
             print(f"  {Fore.YELLOW}[regime] No data for {benchmark} — filter disabled{Style.RESET_ALL}")
             return True
@@ -785,13 +784,12 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
     for ticker in tracked:
         print(f"  {ticker:<14}", end=" ", flush=True)
         try:
-            raw = yf.download(
-                ticker,
-                start=start_dt,
-                end=end_dt,
-                auto_adjust=True,
-                progress=False
-            )
+            try:
+                raw = DEFAULT_PROVIDER.get(
+                    ticker, as_of=pd.Timestamp.now(), start_dt=start_dt, end_dt=end_dt
+                )
+            except KeyError:
+                raw = pd.DataFrame()
             if raw.empty or len(raw) < 60:
                 print(f"{Fore.YELLOW}insufficient data{Style.RESET_ALL}")
                 continue
@@ -1213,13 +1211,15 @@ def main():
         print(f"\nDebug mode: analysing {args.ticker}")
         end = market_now()
         start = end - timedelta(days=cfg.price_data_days)
-        raw = yf.download(
-            args.ticker,
-            start=date_to_iso_extended(start),
-            end=date_to_iso_extended(end),
-            auto_adjust=True,
-            progress=False
-        )
+        try:
+            raw = DEFAULT_PROVIDER.get(
+                args.ticker,
+                as_of=pd.Timestamp.now(),
+                start_dt=date_to_iso_extended(start),
+                end_dt=date_to_iso_extended(end),
+            )
+        except KeyError:
+            raw = pd.DataFrame()
         if raw.empty:
             print("No data returned.")
             return

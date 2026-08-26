@@ -30,7 +30,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+
+from market_data import DEFAULT_PROVIDER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -319,14 +320,13 @@ def score_row(row: Dict) -> float:
 
 def fetch_history_batch(tickers: List[str], period: str,
                         interval: str, auto_adjust: bool) -> pd.DataFrame:
-    return yf.download(
-        tickers=tickers,
+    return DEFAULT_PROVIDER.download_raw_batch(
+        tickers,
         period=period,
         interval=interval,
         auto_adjust=auto_adjust,  # FIX #1: must be True
         group_by="ticker",
         threads=True,
-        progress=False,
     )
 
 
@@ -334,9 +334,8 @@ def fetch_benchmark(ticker: str, period: str,
                     interval: str, auto_adjust: bool) -> pd.Series:
     """Download benchmark close series for RS calculation (FIX #5)."""
     try:
-        raw = yf.download(
-            ticker, period=period, interval=interval,
-            auto_adjust=auto_adjust, progress=False
+        raw = DEFAULT_PROVIDER.download_raw_batch(
+            ticker, period=period, interval=interval, auto_adjust=auto_adjust
         )
         close = raw["Close"].dropna()
         close.index = pd.to_datetime(close.index).tz_localize(None)

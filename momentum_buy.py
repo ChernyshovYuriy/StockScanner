@@ -25,11 +25,11 @@ import uuid
 from typing import Optional
 
 import pandas as pd
-import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
 from config import MOMENTUM_DB_PATH, MOMENTUM_MAX_POSITIONS, MOMENTUM_RISK_PER_TRADE_PCT
+from market_data import DEFAULT_PROVIDER
 from db import (
     get_cash,
     get_open_positions_df,
@@ -64,25 +64,11 @@ def _parse_signal_date(row: pd.Series):
 
 
 def fetch_latest_price(ticker: str) -> Optional[float]:
-    """Same strategy as virtual_buy.py — see its docstring."""
-    t = yf.Ticker(ticker)
-    try:
-        price = t.fast_info["last_price"]
-        if price is not None and float(price) > 0:
-            return float(price)
-    except Exception:
-        pass
-    try:
-        df = yf.download(tickers=ticker, period="1d", interval="1m", auto_adjust=True, progress=False)
-        if df is not None and not df.empty:
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            close = df["Close"].dropna()
-            if not close.empty:
-                return float(close.iloc[-1])
-    except Exception as e:
-        print(f"  {Fore.RED}{ticker}: fallback download error — {e}{Style.RESET_ALL}")
-    return None
+    """Same strategy as virtual_buy.py — see its docstring. Delegates to
+    market_data.DEFAULT_PROVIDER.get_quote(), the single place this fetch
+    logic now lives (previously a byte-identical duplicate of
+    virtual_buy.fetch_latest_price)."""
+    return DEFAULT_PROVIDER.get_quote(ticker)
 
 
 def run_momentum_buy(top_n: Optional[int], dry_run: bool, run_id: Optional[str] = None) -> None:

@@ -39,18 +39,88 @@ Non-goals:
   - This module does NOT change any scoring, pattern detection, or sizing logic.
   - It does NOT replace the yfinance dependency for live mode.
   - It does NOT alter how DataManager processes or filters tickers after download.
+
+Beyond daily OHLCV (get/download), the provider also centralizes the three
+other shapes of market data live code needs — a latest quote, an intraday
+snapshot, and a sector classification — so every live call site goes through
+one abstraction instead of each calling yfinance directly with its own
+parameters and its own cache (or none). See get_quote(), get_intraday_snapshot(),
+get_sector() below.
 """
 
 from __future__ import annotations
 
+import json
 import time
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
 import yfinance as yf
+from colorama import Fore, Style
+
+from config import CACHE_PATH
 
 warnings.filterwarnings("ignore")
+
+
+@dataclass
+class TodayBar:
+    """Live intraday snapshot for the current session."""
+    low: float
+    close: float  # latest traded price (last 5-min close)
+    high: float  # session high so far
+    source: str  # e.g. "5m-intraday"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTOR CACHE  (shared by LiveDataProvider.get_sector and
+# HistoricalSliceProvider.get_sector — sector classifications change rarely
+# and aren't tied to a backtest as_of cutoff the way price bars are)
+# ─────────────────────────────────────────────────────────────────────────────
+
+UNKNOWN_SECTOR = "Unknown"
+_SECTOR_CACHE_FILE = Path(CACHE_PATH) / "sector_cache.json"
+
+
+def _load_sector_cache() -> Dict[str, str]:
+    try:
+        return json.loads(_SECTOR_CACHE_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_sector_cache(cache: Dict[str, str]) -> None:
+    try:
+        _SECTOR_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _SECTOR_CACHE_FILE.write_text(json.dumps(cache, indent=1, sort_keys=True))
+    except OSError:
+        pass  # best-effort — a failed write just means next run re-fetches
+
+
+_sector_cache: Dict[str, str] = _load_sector_cache()
+
+
+def _get_sector_cached(ticker: str) -> str:
+    """Return the GICS sector for ticker (cached), fetching via yfinance on a
+    cache miss. Returns UNKNOWN_SECTOR if the lookup fails or the ticker has
+    no sector (e.g. an ETF) — treated as its own bucket by callers, so
+    unclassified tickers are still capped among themselves rather than
+    bypassing the cap entirely."""
+    ticker = ticker.upper()
+    if ticker in _sector_cache:
+        return _sector_cache[ticker]
+    sector = UNKNOWN_SECTOR
+    try:
+        info = yf.Ticker(ticker).info
+        sector = info.get("sector") or UNKNOWN_SECTOR
+    except Exception:
+        pass
+    _sector_cache[ticker] = sector
+    _save_sector_cache(_sector_cache)
+    return sector
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PROTOCOL — structural interface
@@ -88,6 +158,19 @@ class MarketDataProvider:
     ) -> Dict[str, pd.DataFrame]:
         raise NotImplementedError
 
+    def get_quote(self, ticker: str) -> Optional[float]:
+        """Return the latest available price for ticker, or None on failure."""
+        raise NotImplementedError
+
+    def get_intraday_snapshot(self, ticker: str) -> Optional["TodayBar"]:
+        """Return today's session low/close/high, or None on failure /
+        unavailable (e.g. a historical provider, which has no "today")."""
+        raise NotImplementedError
+
+    def get_sector(self, ticker: str) -> str:
+        """Return the GICS sector for ticker, or UNKNOWN_SECTOR."""
+        raise NotImplementedError
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LIVE DATA PROVIDER
@@ -114,20 +197,154 @@ class LiveDataProvider(MarketDataProvider):
     # get() is less useful for live mode (always returns full history)
     # but must exist to satisfy the interface.
     # ------------------------------------------------------------------
-    def get(self, ticker: str, as_of: pd.Timestamp) -> pd.DataFrame:
-        """Download a single ticker.  as_of is ignored in live mode."""
-        raw = yf.download(
-            ticker,
-            period="2y",
-            auto_adjust=True,
-            progress=False,
-            timeout=10,
-        )
+    def get(
+        self,
+        ticker: str,
+        as_of: pd.Timestamp,
+        start_dt: Optional[str] = None,
+        end_dt: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        Download a single ticker.  as_of is ignored in live mode.
+
+        start_dt / end_dt (ISO date strings) are an extra, opt-in override for
+        callers that need an explicit date range (e.g. an exit computation
+        re-fetching from a specific entry date) rather than the default 2y
+        lookback — same override pattern already used by download().
+        """
+        if start_dt is not None or end_dt is not None:
+            raw = yf.download(
+                ticker,
+                start=start_dt,
+                end=end_dt,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                group_by="column",
+            )
+        else:
+            raw = yf.download(
+                ticker,
+                period="2y",
+                auto_adjust=True,
+                progress=False,
+                timeout=10,
+            )
         if raw is None or raw.empty:
             raise KeyError(f"LiveDataProvider: no data returned for {ticker!r}")
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.get_level_values(0)
         return raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+
+    # ------------------------------------------------------------------
+    # get_quote() — latest available price (~15-min delayed quote)
+    # ------------------------------------------------------------------
+    def get_quote(self, ticker: str) -> Optional[float]:
+        """
+        Fetch the latest available market price for a ticker via Yahoo Finance.
+
+        Strategy (in order of preference):
+          1. yf.Ticker.fast_info["last_price"]  — fastest, returns the most
+             recent delayed quote (~15 min) directly without downloading
+             OHLCV bars.
+          2. Fallback: download 1-minute bars for the last 1 trading day and
+             take the last bar's Close — useful outside regular hours when
+             fast_info may return None.
+
+        This intentionally does NOT use daily bars so the price reflects the
+        current session, not yesterday's close.
+        """
+        t = yf.Ticker(ticker)
+
+        try:
+            price = t.fast_info["last_price"]
+            if price is not None and float(price) > 0:
+                return float(price)
+        except Exception:
+            pass
+
+        try:
+            df = yf.download(
+                tickers=ticker,
+                period="1d",
+                interval="1m",
+                auto_adjust=True,
+                progress=False,
+            )
+            if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                close = df["Close"].dropna()
+                if not close.empty:
+                    return float(close.iloc[-1])
+        except Exception as e:
+            print(f"  {Fore.RED}{ticker}: fallback download error — {e}{Style.RESET_ALL}")
+
+        return None
+
+    # ------------------------------------------------------------------
+    # get_intraday_snapshot() — used during pre-close monitor run
+    # ------------------------------------------------------------------
+    def get_intraday_snapshot(self, ticker: str) -> Optional[TodayBar]:
+        """
+        Fetch today's 5-min bars and return a TodayBar with:
+          - low   : the session low so far  (used for stop-hit check)
+          - close : the latest 5-min close  (used for PnL / giveback)
+          - high  : the session high so far
+
+        Returns None on any failure; caller falls back to completed daily bar.
+        """
+        try:
+            df = yf.download(
+                tickers=ticker,
+                period="1d",
+                interval="5m",
+                auto_adjust=True,
+                progress=False,
+            )
+            if df is None or df.empty:
+                return None
+
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
+            df = df.dropna(subset=["High", "Low", "Close"])
+            if df.empty:
+                return None
+
+            return TodayBar(
+                low=float(df["Low"].min()),
+                close=float(df["Close"].iloc[-1]),
+                high=float(df["High"].max()),
+                source="5m-intraday",
+            )
+
+        except Exception as e:
+            print(f"    {Fore.YELLOW}Intraday snapshot failed for {ticker}: {e}{Style.RESET_ALL}")
+            return None
+
+    # ------------------------------------------------------------------
+    # get_sector() — GICS sector classification (cached to disk)
+    # ------------------------------------------------------------------
+    def get_sector(self, ticker: str) -> str:
+        return _get_sector_cached(ticker)
+
+    # ------------------------------------------------------------------
+    # download_raw_batch() — escape hatch: raw yfinance shape, unnormalized
+    # ------------------------------------------------------------------
+    def download_raw_batch(self, tickers, **kwargs) -> pd.DataFrame:
+        """
+        Pass-through to yf.download(), returned exactly as yfinance shapes it
+        (MultiIndex columns for a multi-ticker/group_by="ticker" batch, no
+        dropna, no quality gate) — unlike get()/download(), which always
+        return normalized per-ticker OHLCV.
+
+        This exists for swing_tickers.py's universe builder, which needs the
+        raw batch shape for its own per-symbol reject-reason bookkeeping
+        (why a ticker was excluded, not just whether it loaded). Live-only:
+        never called by the backtester.
+        """
+        return yf.download(tickers=tickers, progress=False, **kwargs)
 
     # ------------------------------------------------------------------
     # download() — batch fetch, identical behaviour to original
@@ -387,6 +604,36 @@ class HistoricalSliceProvider(MarketDataProvider):
         return result
 
     # ------------------------------------------------------------------
+    # get_quote() — backtest parity: last close at-or-before "now"
+    # ------------------------------------------------------------------
+    def get_quote(self, ticker: str) -> Optional[float]:
+        """Return the most recent close in the preloaded dataset (no as_of
+        cutoff is available here — callers needing a specific cutoff should
+        use get()/download() with an explicit as_of instead)."""
+        df = self._data.get(ticker)
+        if df is None or df.empty:
+            return None
+        close = df["Close"].dropna()
+        if close.empty:
+            return None
+        return float(close.iloc[-1])
+
+    # ------------------------------------------------------------------
+    # get_intraday_snapshot() — not applicable to pre-loaded daily bars
+    # ------------------------------------------------------------------
+    def get_intraday_snapshot(self, ticker: str) -> Optional[TodayBar]:
+        """The backtester works off daily bars only; there is no "today"
+        intraday snapshot for historical data. Always returns None so
+        callers fall back to the completed daily bar, same as a live failure."""
+        return None
+
+    # ------------------------------------------------------------------
+    # get_sector() — shares the same disk cache as LiveDataProvider
+    # ------------------------------------------------------------------
+    def get_sector(self, ticker: str) -> str:
+        return _get_sector_cached(ticker)
+
+    # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
     @property
@@ -409,3 +656,10 @@ class HistoricalSliceProvider(MarketDataProvider):
         mn = min(d.min() for d in dates).date()
         mx = max(d.max() for d in dates).date()
         return f"{mn} → {mx}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEFAULT PROVIDER  — the one instance every live call site defaults to
+# ─────────────────────────────────────────────────────────────────────────────
+
+DEFAULT_PROVIDER = LiveDataProvider()

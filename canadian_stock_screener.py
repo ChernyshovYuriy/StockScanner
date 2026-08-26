@@ -26,19 +26,17 @@ from pathlib import Path
 from typing import List, Optional, Dict, Union
 
 from config import CACHE_PATH
-from time_utils import market_today, date_to_iso_extended, market_now, date_to_iso_basic_minutes, date_to_iso_basic
+from market_data import DEFAULT_PROVIDER
+from time_utils import market_now, date_to_iso_basic_minutes, date_to_iso_basic
 
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import timedelta
 from scipy import stats
 from scipy.stats import linregress
 from tabulate import tabulate
 from colorama import Fore, Style, init
-import time
 from pandas.tseries.offsets import BDay
 from pydantic import BaseModel, validator, Field
 
@@ -156,62 +154,13 @@ class DataManager:
             except Exception:
                 pass
 
-        # Download fresh data
-        end = market_today()
-        start = end - timedelta(days=days + 60)
-
+        # Download fresh data — via the shared DEFAULT_PROVIDER (LiveDataProvider)
+        # instead of an inline yf.download batch loop, so live fetches go
+        # through the same batching/quality-gate/cache-free path every other
+        # live call site uses (see market_data.py).
         print(f"\n{Fore.CYAN}Downloading data for {len(all_tickers)} tickers...{Style.RESET_ALL}")
-        data = {}
-
-        # Download in optimized batches
-        batch_size = 30
-        failed_tickers = []
-
-        for i in range(0, len(all_tickers), batch_size):
-            batch = all_tickers[i:i + batch_size]
-            print(f"  Batch {i // batch_size + 1}/{(len(all_tickers) - 1) // batch_size + 1}: "
-                  f"{batch[0]} ... {batch[-1]}")
-
-            try:
-                raw = yf.download(
-                    batch,
-                    start=date_to_iso_extended(start),
-                    end=date_to_iso_extended(end),
-                    auto_adjust=True,
-                    progress=False,
-                    threads=True,
-                    timeout=10
-                )
-
-                for ticker in batch:
-                    try:
-                        if isinstance(raw.columns, pd.MultiIndex):
-                            df = pd.DataFrame({
-                                "Open": raw["Open"][ticker],
-                                "High": raw["High"][ticker],
-                                "Low": raw["Low"][ticker],
-                                "Close": raw["Close"][ticker],
-                                "Volume": raw["Volume"][ticker],
-                            }).dropna()
-                        else:
-                            if ticker != batch[0]:
-                                continue
-                            df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
-
-                        # Basic data quality checks
-                        if len(df) > 200 and df["Close"].iloc[-1] > 0:
-                            data[ticker] = df
-                        else:
-                            failed_tickers.append(ticker)
-
-                    except Exception as e:
-                        failed_tickers.append(ticker)
-
-            except Exception as e:
-                print(f"  {Fore.RED}Batch error: {e}{Style.RESET_ALL}")
-                failed_tickers.extend(batch)
-
-            time.sleep(0.5)  # Rate limiting
+        data = DEFAULT_PROVIDER.download(all_tickers, days=days)
+        failed_tickers = [t for t in all_tickers if t not in data]
 
         # Save to cache
         try:

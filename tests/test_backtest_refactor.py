@@ -1078,6 +1078,115 @@ class TestMarketDataProvider:
         # For now just assert the class exists
         assert DataManager is not None
 
+    def test_default_provider_is_live(self):
+        """market_data.DEFAULT_PROVIDER is the single instance every live
+        call site should default to."""
+        from market_data import DEFAULT_PROVIDER, LiveDataProvider
+        assert isinstance(DEFAULT_PROVIDER, LiveDataProvider)
+
+    def test_historical_provider_get_quote_returns_last_close(self):
+        from market_data import HistoricalSliceProvider
+
+        n = 10
+        idx = pd.bdate_range("2024-01-01", periods=n)
+        close = pd.Series(np.linspace(10, 19, n), index=idx)
+        df = pd.DataFrame({"Open": close, "High": close + 0.1,
+                            "Low": close - 0.1, "Close": close,
+                            "Volume": pd.Series(np.ones(n) * 1e5, index=idx)})
+        provider = HistoricalSliceProvider({"TEST.TO": df})
+        assert provider.get_quote("TEST.TO") == pytest.approx(19.0)
+
+    def test_historical_provider_get_quote_unknown_ticker_returns_none(self):
+        from market_data import HistoricalSliceProvider
+        provider = HistoricalSliceProvider({})
+        assert provider.get_quote("UNKNOWN.TO") is None
+
+    def test_historical_provider_get_intraday_snapshot_returns_none(self):
+        """The backtester has no "today" — always falls back to daily bars."""
+        from market_data import HistoricalSliceProvider
+        provider = HistoricalSliceProvider({})
+        assert provider.get_intraday_snapshot("TEST.TO") is None
+
+    def test_historical_provider_get_sector_returns_string(self):
+        from market_data import HistoricalSliceProvider
+        provider = HistoricalSliceProvider({})
+        assert isinstance(provider.get_sector("RY.TO"), str)
+
+    def test_live_provider_get_quote_fast_info(self, monkeypatch):
+        """get_quote() prefers fast_info["last_price"] over the 1m fallback."""
+        import market_data as md
+
+        class _FakeTicker:
+            fast_info = {"last_price": 42.5}
+
+        monkeypatch.setattr(md.yf, "Ticker", lambda ticker: _FakeTicker())
+        provider = md.LiveDataProvider()
+        assert provider.get_quote("RY.TO") == pytest.approx(42.5)
+
+    def test_live_provider_get_quote_falls_back_to_1m_bar(self, monkeypatch):
+        import market_data as md
+
+        class _FakeTicker:
+            fast_info = {}
+
+        idx = pd.bdate_range("2024-01-01", periods=3, freq="min")
+        fallback_df = pd.DataFrame({"Open": [1, 1, 1], "High": [1, 1, 1],
+                                     "Low": [1, 1, 1], "Close": [1, 1, 7.25],
+                                     "Volume": [10, 10, 10]}, index=idx)
+        monkeypatch.setattr(md.yf, "Ticker", lambda ticker: _FakeTicker())
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: fallback_df)
+        provider = md.LiveDataProvider()
+        assert provider.get_quote("RY.TO") == pytest.approx(7.25)
+
+    def test_live_provider_get_quote_returns_none_on_total_failure(self, monkeypatch):
+        import market_data as md
+
+        class _FakeTicker:
+            fast_info = {}
+
+        monkeypatch.setattr(md.yf, "Ticker", lambda ticker: _FakeTicker())
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: pd.DataFrame())
+        provider = md.LiveDataProvider()
+        assert provider.get_quote("RY.TO") is None
+
+    def test_live_provider_get_intraday_snapshot_shape(self, monkeypatch):
+        import market_data as md
+
+        idx = pd.bdate_range("2024-01-01", periods=3, freq="5min")
+        df = pd.DataFrame({"Open": [10, 11, 12], "High": [10.5, 11.5, 12.5],
+                            "Low": [9.5, 10.5, 11.5], "Close": [10.2, 11.2, 12.2],
+                            "Volume": [100, 100, 100]}, index=idx)
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: df)
+        provider = md.LiveDataProvider()
+        snap = provider.get_intraday_snapshot("RY.TO")
+        assert snap.low == pytest.approx(9.5)
+        assert snap.high == pytest.approx(12.5)
+        assert snap.close == pytest.approx(12.2)
+        assert snap.source == "5m-intraday"
+
+    def test_live_provider_get_intraday_snapshot_none_on_empty(self, monkeypatch):
+        import market_data as md
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: pd.DataFrame())
+        provider = md.LiveDataProvider()
+        assert provider.get_intraday_snapshot("RY.TO") is None
+
+    def test_live_provider_get_sector_uses_cache(self, monkeypatch, tmp_path):
+        import market_data as md
+
+        monkeypatch.setattr(md, "_SECTOR_CACHE_FILE", tmp_path / "sector_cache.json")
+        monkeypatch.setattr(md, "_sector_cache", {})
+
+        class _FakeTicker:
+            info = {"sector": "Financials"}
+
+        monkeypatch.setattr(md.yf, "Ticker", lambda ticker: _FakeTicker())
+        provider = md.LiveDataProvider()
+        assert provider.get_sector("RY.TO") == "Financials"
+        # Second call must not need yf.Ticker again — cache hit
+        monkeypatch.setattr(md.yf, "Ticker",
+                             lambda ticker: (_ for _ in ()).throw(AssertionError("should be cached")))
+        assert provider.get_sector("RY.TO") == "Financials"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 3 — Portfolio state object (skipped until Phase 3 lands)
