@@ -77,7 +77,8 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
       ok=True  : {"ok": True, "ticker", "price", "source",
                   "pnl_dollars", "pnl_pct", "funds_state"}
       ok=False : {"ok": False, "ticker",
-                  "error": "locked" | "no_position" | "no_price" | "already_closed",
+                  "error": "locked" | "no_position" | "no_price" | "invalid_price"
+                           | "already_closed",
                   "message": "<human readable>"}
 
     Does not raise for expected failure paths — callers branch on result["ok"].
@@ -116,6 +117,16 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
                 log(service, run_id, "no_price", ticker=ticker)
                 return {"ok": False, "ticker": ticker, "error": "no_price",
                         "message": f"Could not fetch a market price for {ticker}."}
+
+        if price <= 0:
+            # Nothing downstream (execute_virtual_sells -> db.insert_trade)
+            # rejects a non-positive price — it would sell cleanly, crediting
+            # negative/zero cash and writing a fabricated loss to the trade
+            # ledger. Reject here, the one place both the --price escape
+            # hatch and a fetched market price funnel through.
+            log(service, run_id, "invalid_price", ticker=ticker, price=price)
+            return {"ok": False, "ticker": ticker, "error": "invalid_price",
+                    "message": f"Refusing to sell {ticker} at ${price:.4f} — price must be > 0."}
 
         print(f"  Price source: {source}  →  ${price:.4f}")
 

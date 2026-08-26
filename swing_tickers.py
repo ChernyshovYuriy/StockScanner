@@ -160,10 +160,20 @@ def analyze_symbol(df: pd.DataFrame,
     out["last_close"] = last_close
 
     # ── FIX #10: Stale data check ────────────────────────────────────────────
+    # Uses time_utils.market_today() (America/Toronto, injectable via
+    # set_backtest_clock), not pd.Timestamp.today() — the OS wall clock in
+    # the host's local timezone. Under a backtest clock the old code compared
+    # every historical bar against the REAL current date, so days_stale was
+    # in the thousands and every ticker was rejected as stale unconditionally;
+    # live, it also risked an off-by-one whenever the host's system timezone
+    # isn't America/Toronto (e.g. a UTC-configured Pi) for a run made in the
+    # ~8pm-midnight ET window, where the UTC calendar date has already rolled
+    # to the next day.
+    from time_utils import market_today
     last_date = close.index[-1]
     if hasattr(last_date, "tz_localize"):
         last_date = last_date.tz_localize(None) if last_date.tzinfo else last_date
-    days_stale = (pd.Timestamp.today().normalize() - pd.Timestamp(last_date).normalize()).days
+    days_stale = (market_today().date() - pd.Timestamp(last_date).normalize().date()).days
     out["days_stale"] = int(days_stale)
 
     # ── Liquidity ────────────────────────────────────────────────────────────

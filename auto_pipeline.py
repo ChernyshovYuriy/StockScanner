@@ -602,6 +602,15 @@ def compute_levels(close, high, low, entry: float,
 
 def compute_position_size(account: float, risk_pct: float,
                           entry: float, stop: float) -> Dict:
+    if account <= 0:
+        # A $0 account is a routine live state (freshly initialised DB, or a
+        # fully-invested book with no cash left) — not corrupt input.
+        # acct_pct's division by account was the only unsafe part; every
+        # other figure is already well-defined at exactly zero. Previously
+        # this raised ZeroDivisionError, which run_pipeline's per-ticker
+        # try/except swallowed silently — every candidate that day just
+        # vanished from the alert output looking like "no patterns found."
+        return {"shares": 0, "position_$": 0.0, "risk_$": 0.0, "acct_pct": 0.0}
     dollar_risk = account * (risk_pct / 100)
     per_share_risk = max(entry - stop, 0.01)
     shares = int(dollar_risk / per_share_risk)
@@ -664,6 +673,17 @@ def invalidation_check(ticker: str, df: pd.DataFrame, db_row: pd.Series) -> bool
 
     elif pattern == "BASE":
         # Failed: close back inside base after breakout
+        if db_row.get("state") in (STATE_CONFIRMED, STATE_AT_PIVOT) and pivot > 0:
+            if last_close < pivot * 0.98:
+                return True
+
+    elif pattern == "MOMENTUM":
+        # Failed: close back below the broken-out prior high after breakout
+        # — same rule as BASE, since _detect_momentum_breakout is BASE's
+        # uncapped counterpart (see its docstring). Previously this pattern
+        # had no branch at all and fell through to `return False`
+        # unconditionally, so a CONFIRMED momentum signal could never be
+        # marked FAILED no matter how far price collapsed below its stop.
         if db_row.get("state") in (STATE_CONFIRMED, STATE_AT_PIVOT) and pivot > 0:
             if last_close < pivot * 0.98:
                 return True
