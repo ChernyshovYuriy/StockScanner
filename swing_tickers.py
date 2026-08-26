@@ -318,15 +318,14 @@ def score_row(row: Dict) -> float:
 # DATA FETCH
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_history_batch(tickers: List[str], period: str,
-                        interval: str, auto_adjust: bool) -> pd.DataFrame:
-    return DEFAULT_PROVIDER.download_raw_batch(
-        tickers,
-        period=period,
-        interval=interval,
+def fetch_history_batch(tickers: List[str], period: str, interval: str,
+                        auto_adjust: bool) -> "tuple[Dict[str, pd.DataFrame], Dict[str, str]]":
+    """Returns (data, reasons) — see market_data.DEFAULT_PROVIDER.download_batch_with_reasons().
+    No yfinance-shape knowledge (MultiIndex vs. single-ticker collapse) lives
+    here anymore; that stays inside market_data.py."""
+    return DEFAULT_PROVIDER.download_batch_with_reasons(
+        tickers, period=period, interval=interval,
         auto_adjust=auto_adjust,  # FIX #1: must be True
-        group_by="ticker",
-        threads=True,
     )
 
 
@@ -334,12 +333,13 @@ def fetch_benchmark(ticker: str, period: str,
                     interval: str, auto_adjust: bool) -> pd.Series:
     """Download benchmark close series for RS calculation (FIX #5)."""
     try:
-        raw = DEFAULT_PROVIDER.download_raw_batch(
-            ticker, period=period, interval=interval, auto_adjust=auto_adjust
+        data, reasons = DEFAULT_PROVIDER.download_batch_with_reasons(
+            [ticker], period=period, interval=interval, auto_adjust=auto_adjust
         )
-        close = raw["Close"].dropna()
-        close.index = pd.to_datetime(close.index).tz_localize(None)
-        return close.squeeze()
+        df = data.get(ticker)
+        if df is None:
+            raise RuntimeError(reasons.get(ticker, "no_data"))
+        return df["Close"].dropna().squeeze()
     except Exception as e:
         print(f"  Warning: benchmark {ticker} failed ({e}) — RS scores will be NaN")
         return pd.Series(dtype=float)
@@ -372,7 +372,7 @@ def run_universe_builder(cfg: UniverseBuilderConfig) -> Tuple[pd.DataFrame, pd.D
     for i, batch in enumerate(batches, 1):
         print(f"Fetching batch {i}/{len(batches)} ({len(batch)} tickers)...")
         try:
-            big = fetch_history_batch(
+            data, reasons = fetch_history_batch(
                 batch, cfg.period, cfg.interval, cfg.auto_adjust
             )
         except Exception as e:
@@ -380,37 +380,13 @@ def run_universe_builder(cfg: UniverseBuilderConfig) -> Tuple[pd.DataFrame, pd.D
             time.sleep(cfg.sleep_seconds)
             continue
 
-        if isinstance(big.columns, pd.MultiIndex):
-            for sym in batch:
-                if sym not in big.columns.get_level_values(0):
-                    rows.append({"symbol": sym, "error": "no_data",
-                                 "tradable": False, "reject_reasons": "no_data"})
-                    continue
-                sub = big[sym].dropna(how="all")
-                if sub.empty:
-                    rows.append({"symbol": sym, "error": "no_data",
-                                 "tradable": False, "reject_reasons": "no_data"})
-                    continue
-                # FIX #1: normalize index timezone for alignment with benchmark
-                sub.index = pd.to_datetime(sub.index).tz_localize(None)
-                _process_symbol(sym, sub, bench_close, cfg, rows)
-
-        else:
-            # Single-ticker path
-            sym = batch[0]
-            sub = big.dropna(how="all")
-            needed = {"Open", "High", "Low", "Close", "Volume"}
-            if sub.empty or not needed.issubset(set(sub.columns)):
-                rows.append({"symbol": sym, "error": "missing_ohlcv",
-                             "tradable": False, "reject_reasons": "missing_ohlcv"})
-            else:
-                # FIX #8: check columns are not all-NaN
-                if sub["Close"].dropna().empty:
-                    rows.append({"symbol": sym, "error": "all_nan_close",
-                                 "tradable": False, "reject_reasons": "all_nan_close"})
-                else:
-                    sub.index = pd.to_datetime(sub.index).tz_localize(None)
-                    _process_symbol(sym, sub, bench_close, cfg, rows)
+        for sym in batch:
+            if sym in reasons:
+                r = reasons[sym]
+                rows.append({"symbol": sym, "error": r,
+                             "tradable": False, "reject_reasons": r})
+                continue
+            _process_symbol(sym, data[sym], bench_close, cfg, rows)
 
         time.sleep(cfg.sleep_seconds)
 

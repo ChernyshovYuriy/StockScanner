@@ -788,7 +788,10 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
                 raw = DEFAULT_PROVIDER.get(
                     ticker, as_of=pd.Timestamp.now(), start_dt=start_dt, end_dt=end_dt
                 )
-            except KeyError:
+            except (KeyError, ValueError):
+                # KeyError: no data. ValueError: validate_ohlcv() contract
+                # violation — shouldn't happen with real data, but never
+                # propagate uncaught; same "empty df" fallback either way.
                 raw = pd.DataFrame()
             if raw.empty or len(raw) < 60:
                 print(f"{Fore.YELLOW}insufficient data{Style.RESET_ALL}")
@@ -1218,7 +1221,7 @@ def main():
                 start_dt=date_to_iso_extended(start),
                 end_dt=date_to_iso_extended(end),
             )
-        except KeyError:
+        except (KeyError, ValueError):
             raw = pd.DataFrame()
         if raw.empty:
             print("No data returned.")

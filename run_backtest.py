@@ -29,7 +29,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import yfinance as yf
 
 # ── project imports ───────────────────────────────────────────────────────────
 from backtest_report import write_backtest_report

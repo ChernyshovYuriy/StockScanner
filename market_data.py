@@ -76,6 +76,41 @@ class TodayBar:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OHLCV CONTRACT  — the internal data structure the rest of the codebase
+# relies on. Not yfinance's shape by inheritance: an explicitly owned,
+# validated contract that yfinance's own output happens to already satisfy.
+# Any future provider adapter is "done" when its output passes validate_ohlcv().
+# ─────────────────────────────────────────────────────────────────────────────
+
+OHLCV_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
+
+
+def validate_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enforce the internal OHLCV contract: a DatetimeIndex and float
+    Open/High/Low/Close/Volume columns, in that order.
+
+    An empty DataFrame always passes through unchanged — many callers treat
+    "no data" as a valid, explicitly-checked state, not an error.
+
+    Raises ValueError on a genuine contract violation (missing column, or a
+    non-DatetimeIndex). In practice this should never fire for real yfinance
+    data, since every LiveDataProvider/HistoricalSliceProvider method already
+    slices to exactly these columns before returning — it exists as the
+    acceptance test a *different* future provider's adapter would have to
+    pass.
+    """
+    if df.empty:
+        return df
+    missing = set(OHLCV_COLUMNS) - set(df.columns)
+    if missing:
+        raise ValueError(f"OHLCV contract violation: missing columns {missing}")
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("OHLCV contract violation: index must be a DatetimeIndex")
+    return df[OHLCV_COLUMNS].astype(float)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SECTOR CACHE  (shared by LiveDataProvider.get_sector and
 # HistoricalSliceProvider.get_sector — sector classifications change rarely
 # and aren't tied to a backtest as_of cutoff the way price bars are)
@@ -234,7 +269,7 @@ class LiveDataProvider(MarketDataProvider):
             raise KeyError(f"LiveDataProvider: no data returned for {ticker!r}")
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.get_level_values(0)
-        return raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        return validate_ohlcv(raw[["Open", "High", "Low", "Close", "Volume"]].dropna())
 
     # ------------------------------------------------------------------
     # get_quote() — latest available price (~15-min delayed quote)
@@ -330,21 +365,58 @@ class LiveDataProvider(MarketDataProvider):
         return _get_sector_cached(ticker)
 
     # ------------------------------------------------------------------
-    # download_raw_batch() — escape hatch: raw yfinance shape, unnormalized
+    # download_batch_with_reasons() — used by swing_tickers.py's universe
+    # builder, which needs to know *why* a ticker was excluded (not just
+    # whether it loaded) for its rejected-tickers report.
     # ------------------------------------------------------------------
-    def download_raw_batch(self, tickers, **kwargs) -> pd.DataFrame:
+    def download_batch_with_reasons(
+        self, tickers: List[str], period: str, interval: str, auto_adjust: bool,
+    ) -> "tuple[Dict[str, pd.DataFrame], Dict[str, str]]":
         """
-        Pass-through to yf.download(), returned exactly as yfinance shapes it
-        (MultiIndex columns for a multi-ticker/group_by="ticker" batch, no
-        dropna, no quality gate) — unlike get()/download(), which always
-        return normalized per-ticker OHLCV.
+        Batch-fetch OHLCV for tickers, fully normalizing yfinance's raw
+        MultiIndex/single-ticker-collapse shape into validated per-ticker
+        OHLCV DataFrames — the yfinance-shape awareness (MultiIndex checks,
+        the single-ticker collapse yfinance does for a batch of one) stays
+        contained here instead of leaking to the caller.
 
-        This exists for swing_tickers.py's universe builder, which needs the
-        raw batch shape for its own per-symbol reject-reason bookkeeping
-        (why a ticker was excluded, not just whether it loaded). Live-only:
-        never called by the backtester.
+        Returns (data, reasons):
+          data    : {ticker: validated OHLCV DataFrame} for tickers that loaded
+          reasons : {ticker: "no_data" | "missing_ohlcv" | "all_nan_close"}
+                    for any requested ticker NOT in data.
+
+        Live-only: never called by the backtester.
         """
-        return yf.download(tickers=tickers, progress=False, **kwargs)
+        raw = yf.download(
+            tickers=tickers, period=period, interval=interval,
+            auto_adjust=auto_adjust, group_by="ticker", threads=True, progress=False,
+        )
+        data: Dict[str, pd.DataFrame] = {}
+        reasons: Dict[str, str] = {}
+
+        if isinstance(raw.columns, pd.MultiIndex):
+            for sym in tickers:
+                if sym not in raw.columns.get_level_values(0):
+                    reasons[sym] = "no_data"
+                    continue
+                sub = raw[sym].dropna(how="all")
+                if sub.empty:
+                    reasons[sym] = "no_data"
+                    continue
+                sub.index = pd.to_datetime(sub.index).tz_localize(None)
+                data[sym] = validate_ohlcv(sub[OHLCV_COLUMNS])
+        else:
+            # yfinance collapses a single-ticker batch to plain columns
+            sym = tickers[0]
+            sub = raw.dropna(how="all")
+            if sub.empty or not set(OHLCV_COLUMNS).issubset(set(sub.columns)):
+                reasons[sym] = "missing_ohlcv"
+            elif sub["Close"].dropna().empty:
+                reasons[sym] = "all_nan_close"
+            else:
+                sub.index = pd.to_datetime(sub.index).tz_localize(None)
+                data[sym] = validate_ohlcv(sub[OHLCV_COLUMNS])
+
+        return data, reasons
 
     # ------------------------------------------------------------------
     # download() — batch fetch, identical behaviour to original
@@ -411,7 +483,7 @@ class LiveDataProvider(MarketDataProvider):
 
                         # Same quality gate as original DataManager
                         if len(df) > 200 and df["Close"].iloc[-1] > 0:
-                            data[ticker] = df
+                            data[ticker] = validate_ohlcv(df)
                         else:
                             failed.append(ticker)
                     except Exception:
@@ -457,12 +529,15 @@ class HistoricalSliceProvider(MarketDataProvider):
                The DatetimeIndex must be timezone-naive or consistently tz-aware.
         """
         # Normalise all indexes to tz-naive UTC midnight so comparisons with
-        # pd.Timestamp as_of values are unambiguous.
+        # pd.Timestamp as_of values are unambiguous, and enforce the OHLCV
+        # contract once here (get()/download() only slice rows out of
+        # already-stored data, so this is the one place construction-time
+        # data needs to satisfy it).
         self._data: Dict[str, pd.DataFrame] = {}
         for ticker, df in data.items():
             df = df.copy()
             df.index = pd.to_datetime(df.index).tz_localize(None)
-            self._data[ticker] = df.sort_index()
+            self._data[ticker] = validate_ohlcv(df.sort_index())
 
     # ------------------------------------------------------------------
     # CLASS METHOD — convenience constructor from Yahoo Finance
