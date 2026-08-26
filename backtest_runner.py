@@ -151,6 +151,16 @@ class BacktestConfig:
     # Set to 8 to match the live MAX_POSITIONS in config.py.
     max_positions: Optional[int] = None
 
+    # Sector concentration cap — max concurrent open positions in the same
+    # GICS sector (per sector_map). None = unlimited (default, matches
+    # current live behaviour — no sector control exists anywhere in the
+    # pipeline). Requires sector_map to have any effect.
+    max_per_sector: Optional[int] = None
+
+    # ticker -> GICS sector string, used only by max_per_sector. None/missing
+    # tickers are treated as sector "Unknown" and capped like any other sector.
+    sector_map: Optional[Dict[str, str]] = field(default=None, repr=False)
+
     # Position sizing mode for buys:
     #   "equal_split" — allocation = cash / n_actionable per morning
     #                   (pre-2026-07 backtest behaviour)
@@ -652,6 +662,9 @@ def _execute_buys(
                       per position, base per cfg.sizing_basis ("cash"/"equity").
 
     If cfg.max_positions is set, buys stop when the book is full.
+    If cfg.max_per_sector and cfg.sector_map are set, a candidate is skipped
+    (not deferred) when its sector already holds max_per_sector open
+    positions; lower-priority candidates in other sectors fill the slot.
     If cfg.regime_filter is True, buys are blocked when benchmark is below
     its 200-day SMA.  Sells and position management are never blocked.
 
@@ -667,15 +680,35 @@ def _execute_buys(
 
     # Filter: skip tickers already held
     owned = set(portfolio.open_positions.keys())
-    actionable = [i for i in intents
+    candidates = [i for i in intents
                   if i["ticker"] not in owned][:cfg.top_n_buys]
 
     # Position cap — trim candidates to open slots (mirrors virtual_buy.py)
+    slots = None
     if cfg.max_positions is not None:
         slots = cfg.max_positions - len(portfolio.open_positions)
         if slots <= 0:
             return []
-        actionable = actionable[:slots]
+
+    # Sector cap — skip candidates whose sector already holds max_per_sector
+    # open positions, preserving priority order (later candidates fill the
+    # slot instead). No-op unless both max_per_sector and sector_map are set.
+    if cfg.max_per_sector is not None and cfg.sector_map:
+        sector_counts: Dict[str, int] = {}
+        for t in portfolio.open_positions:
+            sec = cfg.sector_map.get(t, "Unknown")
+            sector_counts[sec] = sector_counts.get(sec, 0) + 1
+        actionable = []
+        for cand in candidates:
+            if slots is not None and len(actionable) >= slots:
+                break
+            sec = cfg.sector_map.get(cand["ticker"], "Unknown")
+            if sector_counts.get(sec, 0) >= cfg.max_per_sector:
+                continue
+            sector_counts[sec] = sector_counts.get(sec, 0) + 1
+            actionable.append(cand)
+    else:
+        actionable = candidates[:slots] if slots is not None else candidates
 
     if not actionable:
         return []

@@ -35,7 +35,7 @@ import yfinance as yf
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import MAX_POSITIONS, RISK_PER_TRADE_PCT, GAP_FILTER_PCT
+from config import MAX_POSITIONS, MAX_POSITIONS_PER_SECTOR, RISK_PER_TRADE_PCT, GAP_FILTER_PCT
 from db import (
     get_cash,
     get_open_positions_df,
@@ -46,6 +46,7 @@ from db import (
     mark_intent_skipped,
 )
 from log_utils import log
+from sector_lookup import get_sector
 from send_report import send_transaction_email
 from schema_keys import (
     INTENT_COL_ENTRY_PRICE_PLANNED,
@@ -229,9 +230,38 @@ def run_virtual_buy(
         )
         return
 
-    # Cap the number of buys to available slots
-    if len(actionable) > remaining_slots:
-        actionable = actionable[:remaining_slots]
+    # Sector concentration cap — skip (not defer) a candidate whose sector
+    # already holds MAX_POSITIONS_PER_SECTOR open positions, preserving
+    # priority order so a lower-priority candidate in another sector fills
+    # the slot instead. Mirrors backtest_runner.py's max_per_sector, walk-
+    # forward validated 2026-08 (no return cost, significant max-drawdown
+    # reduction) — prevents correlated same-sector clusters (e.g. a bank
+    # earnings week) from entering the book together. A candidate beyond
+    # remaining_slots is left untouched (stays pending), same as before.
+    sector_counts: dict[str, int] = {}
+    if MAX_POSITIONS_PER_SECTOR is not None:
+        for t in owned_tickers:
+            sec = get_sector(t)
+            sector_counts[sec] = sector_counts.get(sec, 0) + 1
+
+    filtered_actionable: list[dict] = []
+    for item in actionable:
+        if len(filtered_actionable) >= remaining_slots:
+            break
+        if MAX_POSITIONS_PER_SECTOR is not None:
+            sec = get_sector(item["ticker"])
+            if sector_counts.get(sec, 0) >= MAX_POSITIONS_PER_SECTOR:
+                if not dry_run:
+                    mark_intent_skipped(item["intent_id"], f"sector_cap_{sec}")
+                skipped_count += 1
+                continue
+            sector_counts[sec] = sector_counts.get(sec, 0) + 1
+        filtered_actionable.append(item)
+    actionable = filtered_actionable
+
+    if not actionable:
+        print(f"{Fore.YELLOW}No actionable pending intents after the sector cap — nothing to buy.{Style.RESET_ALL}")
+        return
 
     # Divide cash by REMAINING slots, not MAX_POSITIONS: dividing by the total
     # made each fill take 1/8 of a shrinking cash pile, so ~(7/8)^8 ≈ 34% of

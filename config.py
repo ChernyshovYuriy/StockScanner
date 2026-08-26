@@ -31,6 +31,16 @@ RISK_PER_TRADE_PCT = 1.0
 # live parity) showed the filter reduced returns at every tested level.
 GAP_FILTER_PCT = None
 
+# Maximum number of concurrently open positions in the same GICS sector
+# (see sector_lookup.py). None disables the cap. 16-fold walk-forward
+# (2021-06→2025-06, live-parity backtest, see backtest_runner.py
+# max_per_sector/sector_map): no return cost (p=0.995) but a statistically
+# significant reduction in max drawdown (14/16 folds, p=0.003) — prevents
+# correlated same-sector clusters (e.g. Canadian bank earnings week) from
+# entering and exiting together, which is what actually hurt the live
+# account in 2026-08.
+MAX_POSITIONS_PER_SECTOR = 2
+
 
 class PositionMonitorMode(Enum):
     PRE_CLOSE = 1

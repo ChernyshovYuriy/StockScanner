@@ -74,6 +74,16 @@ def no_emails(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_sector_lookup(monkeypatch):
+    """Sector cap tests aside, keep run_virtual_buy offline/deterministic —
+    get_sector() would otherwise hit yfinance for every owned/candidate
+    ticker. Every ticker lands in the same bucket, which is a no-op against
+    MAX_POSITIONS_PER_SECTOR=2 for every existing test (none fill 3+ distinct
+    tickers in a single run)."""
+    monkeypatch.setattr("virtual_buy.get_sector", lambda ticker: "Unknown")
+
+
+@pytest.fixture(autouse=True)
 def market_open():
     """Pin the clock to a known TSX session so run_virtual_buy's market-hours
     guard is satisfied — 2026-05-14 is a Thursday, 11:00 ET, not a holiday."""
@@ -187,6 +197,49 @@ def test_virtual_buy_skips_already_owned_ticker():
     assert len(get_open_positions()) == 1
     # Cash unchanged
     assert get_cash() == 10_000.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# virtual_buy — sector cap
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FIN_SECTOR = {"RY.TO": "Financial Services", "TD.TO": "Financial Services",
+               "BNS.TO": "Financial Services", "SHOP.TO": "Technology"}
+
+
+def test_virtual_buy_skips_when_sector_at_cap(monkeypatch):
+    """MAX_POSITIONS_PER_SECTOR=2: a third Financial Services candidate is
+    skipped even though a slot and funds are available — the walk-forward-
+    validated defence against a correlated same-sector cluster (e.g. a bank
+    earnings week) filling the whole book together."""
+    monkeypatch.setattr("virtual_buy.get_sector", lambda t: _FIN_SECTOR.get(t, "Unknown"))
+    set_cash(10_000.0)
+    insert_position("RY.TO", "2026-05-01", 42.50, 10)
+    insert_position("TD.TO", "2026-05-01", 85.00, 10)
+    save_intents([_intent(ticker="BNS.TO", entry_price_planned=60.00, stop_price=57.00)])
+
+    with patch("virtual_buy.fetch_latest_price", return_value=60.00):
+        run_virtual_buy(top_n=None, dry_run=False)
+
+    # Sector already holds 2 (the cap) — BNS.TO is not bought.
+    assert len(get_open_positions()) == 2
+    assert get_cash() == 10_000.0
+
+
+def test_virtual_buy_allows_new_sector_when_other_sector_at_cap(monkeypatch):
+    """A candidate in an under-represented sector still fills even while a
+    different sector is at the cap."""
+    monkeypatch.setattr("virtual_buy.get_sector", lambda t: _FIN_SECTOR.get(t, "Unknown"))
+    set_cash(10_000.0)
+    insert_position("RY.TO", "2026-05-01", 42.50, 10)
+    insert_position("TD.TO", "2026-05-01", 85.00, 10)
+    save_intents([_intent(ticker="SHOP.TO", entry_price_planned=100.00, stop_price=95.00)])
+
+    with patch("virtual_buy.fetch_latest_price", return_value=100.00):
+        run_virtual_buy(top_n=None, dry_run=False)
+
+    tickers = {p["ticker"] for p in get_open_positions()}
+    assert tickers == {"RY.TO", "TD.TO", "SHOP.TO"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
