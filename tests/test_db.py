@@ -435,6 +435,42 @@ def test_same_ticker_can_be_traded_multiple_times():
     assert list(df["ticker"]) == ["RY.TO", "RY.TO"]
 
 
+def test_insert_trade_remove_position_returns_true_when_position_existed():
+    insert_position("RY.TO", "2026-05-01", 42.5, 100, cash_delta=-4250.0)
+    recorded = insert_trade("RY.TO", "2026-05-01", 42.5, 100, "2026-05-10", 45.0,
+                            4500.0, 250.0, 5.9, "GIVEBACK", cash_delta=4500.0,
+                            remove_position=True)
+    assert recorded is True
+    assert get_open_positions() == []
+
+
+def test_insert_trade_remove_position_is_noop_on_already_closed_ticker():
+    """
+    Two concurrent processes both deciding to sell the same position from a
+    stale read (e.g. position_monitor.py's scheduled sell racing a
+    manual_sell.py dashboard click) must not both credit cash and log a
+    trade for what was really one sale. The second call's DELETE affects
+    zero rows -- it must return False and skip the cash credit / trade
+    insert entirely, not silently double them.
+    """
+    set_cash(10_000.0)
+    insert_position("RACE.TO", "2026-05-01", 10.0, 100, cash_delta=-1000.0)
+    assert get_cash() == 9000.0
+
+    first = insert_trade("RACE.TO", "2026-05-01", 10.0, 100, "2026-05-10", 12.0,
+                         1200.0, 200.0, 20.0, "STOP_HIT", cash_delta=1200.0,
+                         remove_position=True)
+    assert first is True
+    assert get_cash() == 10200.0
+
+    second = insert_trade("RACE.TO", "2026-05-01", 10.0, 100, "2026-05-10", 12.0,
+                          1200.0, 200.0, 20.0, "MANUAL_SELL", cash_delta=1200.0,
+                          remove_position=True)
+    assert second is False, "Must report the position was already gone"
+    assert get_cash() == 10200.0, "Must NOT credit cash a second time"
+    assert len(get_all_trades()) == 1, "Must NOT log a duplicate trade"
+
+
 # transactions ───────────────────────────────────────────────────────────────
 
 def test_transaction_amount_is_price_times_shares():

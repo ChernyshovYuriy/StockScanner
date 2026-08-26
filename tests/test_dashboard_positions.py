@@ -100,6 +100,26 @@ def test_build_live_positions_no_data_row_still_valued_from_stale_cache(monkeypa
     assert rows[0]["status"] == "NO_DATA"
 
 
+def test_build_live_positions_no_data_row_zero_entry_price_does_not_crash(monkeypatch):
+    """
+    A zero/negative entry_price used to raise an uncaught ZeroDivisionError
+    in the stale-cache fallback pricing (price/pos.entry_price), crashing
+    the whole dashboard page for every position, not just the corrupted one.
+    """
+    set_cash(0.0)
+    insert_position("BAD.TO", "2026-06-23", 0.0, 76)
+
+    thin_df = pd.DataFrame({"Close": [9.05], "High": [9.07], "Low": [9.02]},
+                            index=pd.to_datetime(["2026-07-03"]))
+    monkeypatch.setattr("dashboard_positions.load_or_fetch_data", lambda ticker, start: thin_df)
+    monkeypatch.setattr("dashboard_positions.is_market_open", lambda: False)
+
+    rows = dashboard_positions.build_live_positions()  # must not raise
+    assert len(rows) == 1
+    assert rows[0]["status"] == "NO_DATA"
+    assert "pnl_$" not in rows[0]
+
+
 def test_build_live_positions_returns_compute_signals_row(monkeypatch):
     set_cash(0.0)
     df = _fake_df()
