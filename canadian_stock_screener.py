@@ -317,7 +317,16 @@ class ScoreCalculator:
         # Check price position relative to MA30
         price_above_ma30 = last_price > last_ma30
 
-        if not (ma_rising and price_above_ma30):
+        # Weinstein Stage II requires the fast (10w) MA to have actually
+        # crossed above the slow (30w) MA — that crossover is the signal
+        # that distinguishes a confirmed Stage II advance from a Stage I
+        # base (see /home/yurii/dev/pythonfintech/market-stage-detection,
+        # the reference StageDetector's stage_ii condition). Previously this
+        # was only a +10 bonus below, not a gate, so a ticker could score as
+        # Stage II while its own short-term trend hadn't confirmed yet.
+        ma10_above_ma30 = last_ma10 > last_ma30
+
+        if not (ma_rising and price_above_ma30 and ma10_above_ma30):
             return 0.0
 
         # Calculate how extended (percentage above MA30)
@@ -333,9 +342,11 @@ class ScoreCalculator:
         else:
             stage_score = max(0, 100 - (pct_above - 25) * 4)  # Penalize extended
 
-        # Bonus for MA10 > MA30 (strong trend)
-        if last_ma10 > last_ma30:
-            stage_score = min(100, stage_score + 10)
+        # MA10 > MA30 is now a hard gate above (ma10_above_ma30), not extra
+        # credit — the +10 bonus that used to live here is removed since it
+        # would now fire unconditionally (every ticker reaching this line
+        # already satisfies it). Max attainable score is accordingly ~10
+        # points lower than before the gate was tightened.
 
         # Bonus for price > MA10 (very strong)
         if last_price > last_ma10:

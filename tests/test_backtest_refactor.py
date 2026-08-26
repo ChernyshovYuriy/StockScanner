@@ -259,8 +259,13 @@ class TestScoreCalculatorGoldens:
 
     def test_score_stage2_golden(self):
         # seed=42, n=300, trend=0.05 uptrend → strong Stage II
+        # Golden value dropped 84.9 -> 74.9 when ma10w > ma30w became a hard
+        # gate instead of a +10 bonus (2026-08, matching the reference
+        # StageDetector in /home/yurii/dev/pythonfintech/market-stage-detection —
+        # the fixture already satisfied ma10>ma30, so only the bonus's
+        # removal shows up here, not the gate itself).
         s = self.sc.score_stage2(self.close)
-        assert s == pytest.approx(84.9, abs=0.5), f"stage2 golden changed: {s}"
+        assert s == pytest.approx(74.9, abs=0.5), f"stage2 golden changed: {s}"
 
     def test_score_macd_range(self):
         s = self.sc.score_macd(self.close)
