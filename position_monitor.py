@@ -386,7 +386,16 @@ def compute_signals(
 
     # 2. Profit giveback
     if max_pnl_pct >= ep.giveback_activate_pct:
-        if pnl_pct <= (max_pnl_pct - ep.giveback_allow_pct):
+        # pnl_pct and max_pnl_pct are each an independently-rounded
+        # (price/entry - 1)*100 ratio; at an exact-tie boundary the two can
+        # land on opposite sides of a plain "<=" purely from float noise
+        # (verified: peak 115 vs entry 100 and a current price of 112 gives
+        # pnl_pct=12.00000000000001 but threshold=11.999999999999991, so the
+        # documented inclusive boundary silently failed to fire for that
+        # exact, entirely plausible round-number case). A tiny epsilon
+        # restores the documented inclusive "<=" without being wide enough
+        # to ever change a genuinely different comparison.
+        if pnl_pct <= (max_pnl_pct - ep.giveback_allow_pct) + 1e-9:
             sell = True
             reasons.append(f"GIVEBACK(peak {max_pnl_pct:.1f}% → now {pnl_pct:.1f}%)")
 

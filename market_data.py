@@ -543,7 +543,15 @@ class HistoricalSliceProvider(MarketDataProvider):
         for ticker, df in data.items():
             df = df.copy()
             df.index = pd.to_datetime(df.index).tz_localize(None)
-            self._data[ticker] = validate_ohlcv(df.sort_index())
+            df = df.sort_index()
+            # Drop duplicate-date rows, keeping the last — same convention
+            # already used by position_monitor.load_or_fetch_data's own
+            # cache-merge path. Without this, a duplicate constructor date
+            # silently returned every row from .get()/.download(), with
+            # .iloc[-1] callers getting whichever duplicate happened to
+            # sort last (insertion order), not a clearly-defined "real" bar.
+            df = df[~df.index.duplicated(keep="last")]
+            self._data[ticker] = validate_ohlcv(df)
 
     # ------------------------------------------------------------------
     # CLASS METHOD — convenience constructor from Yahoo Finance
