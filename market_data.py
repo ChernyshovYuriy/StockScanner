@@ -143,16 +143,22 @@ def _get_sector_cached(ticker: str) -> str:
     cache miss. Returns UNKNOWN_SECTOR if the lookup fails or the ticker has
     no sector (e.g. an ETF) — treated as its own bucket by callers, so
     unclassified tickers are still capped among themselves rather than
-    bypassing the cap entirely."""
+    bypassing the cap entirely.
+
+    Only a successful fetch is persisted to the on-disk cache — including one
+    that legitimately finds no sector (e.g. an ETF), which is a real,
+    permanent classification. A fetch that raises (rate limit, timeout,
+    transient network error) returns UNKNOWN_SECTOR for this call only and is
+    NOT cached, so it's retried on the next run instead of mis-bucketing the
+    ticker under MAX_POSITIONS_PER_SECTOR forever from a one-off blip."""
     ticker = ticker.upper()
     if ticker in _sector_cache:
         return _sector_cache[ticker]
-    sector = UNKNOWN_SECTOR
     try:
         info = yf.Ticker(ticker).info
         sector = info.get("sector") or UNKNOWN_SECTOR
     except Exception:
-        pass
+        return UNKNOWN_SECTOR
     _sector_cache[ticker] = sector
     _save_sector_cache(_sector_cache)
     return sector

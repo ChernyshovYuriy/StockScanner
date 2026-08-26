@@ -195,26 +195,32 @@ def run_momentum_buy(top_n: Optional[int], dry_run: bool, run_id: Optional[str] 
         raw_entry = str(row[INTENT_COL_ENTRY_PRICE_PLANNED]).replace("$", "").strip()
         raw_stop = str(row[INTENT_COL_STOP_PRICE]).replace("$", "").strip()
 
-        shares = 0
-        sizing_method = "risk_based"
         stop_price: Optional[float] = None
         try:
             planned_entry = float(raw_entry)
             planned_stop = float(raw_stop)
             per_share_risk = planned_entry - planned_stop
-            if per_share_risk > 0:
-                stop_price = planned_stop
-                shares_by_risk = int(dollar_risk / per_share_risk)
-                shares_by_cap = int(max_position_value / price)
-                shares = min(shares_by_risk, shares_by_cap)
-            else:
-                sizing_method = "fallback_equal"
         except (ValueError, TypeError):
-            sizing_method = "fallback_equal"
+            per_share_risk = None
 
-        if sizing_method == "fallback_equal":
-            print(f"{Fore.YELLOW}[no stop data — equal-split fallback]{Style.RESET_ALL} ", end="")
-            shares = int(max_position_value / price)
+        if per_share_risk is None or per_share_risk <= 0:
+            # Stop missing/invalid (NaN, or at/above entry) — the position
+            # can't be risk-sized. Buying it anyway at full equal-split
+            # allocation used to silently promote a broken setup to the
+            # largest position size in the book with no stop_price persisted
+            # at all (same bug fixed in virtual_buy.py). Skip the candidate
+            # instead; a lower-priority intent in the same run can still
+            # fill the slot.
+            print(f"{Fore.YELLOW}invalid/missing stop data — skipped{Style.RESET_ALL}")
+            if not dry_run:
+                mark_intent_skipped(intent_id, "invalid_stop_data")
+            skipped_count += 1
+            continue
+
+        stop_price = planned_stop
+        shares_by_risk = int(dollar_risk / per_share_risk)
+        shares_by_cap = int(max_position_value / price)
+        shares = min(shares_by_risk, shares_by_cap)
 
         if shares <= 0:
             print(f"{Fore.YELLOW}price ${price:.2f} too high for available allocation — skipped{Style.RESET_ALL}")

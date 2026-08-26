@@ -318,9 +318,35 @@ class BacktestResults:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _trading_days(start: str, end: str) -> List[date]:
-    """Return a sorted list of business days in [start, end)."""
+    """Return a sorted list of TSX trading days in [start, end).
+
+    Business days minus TSX_HOLIDAYS, matching the calendar
+    is_market_open()/previous_trading_day() actually enforce live —
+    otherwise the backtest simulates a full screener/pipeline/monitor pass
+    on days (e.g. Good Friday) the live system would never run on, and the
+    live-only intent-staleness rule (an intent expires if it misses the
+    first trading day after its signal date, skipping holidays) has no
+    backtest equivalent at all. Note TSX_HOLIDAYS in time_utils.py only
+    covers 2026-2027 today, so this is a no-op for older backtest ranges
+    until that list is extended.
+    """
+    from time_utils import TSX_HOLIDAYS, ISO_DATE_EXTENDED
     idx = pd.bdate_range(start=start, end=end, inclusive="left")
-    return [ts.date() for ts in idx]
+    return [ts.date() for ts in idx if ts.strftime(ISO_DATE_EXTENDED) not in TSX_HOLIDAYS]
+
+
+# Max calendar-day gap between a ticker's most recent bar and the current
+# sim date before its data is treated as stale (delisted/halted/vendor
+# dropped coverage) rather than "market closed for a few days". The longest
+# real TSX gap between trading days is the Dec 25 / Boxing Day(observed) /
+# Jan 1 holiday cluster (~5-6 calendar days); 10 gives headroom for that
+# without masking a genuine data outage.
+_STALE_DATA_MAX_GAP_DAYS = 10
+
+
+def _last_bar_age_days(df: pd.DataFrame, as_of: pd.Timestamp) -> int:
+    """Calendar days between df's most recent bar and as_of. df must be non-empty."""
+    return (pd.Timestamp(as_of).normalize() - df.index[-1].normalize()).days
 
 
 def _mark_to_market(
@@ -328,13 +354,24 @@ def _mark_to_market(
         provider: HistoricalSliceProvider,
         as_of: pd.Timestamp,
 ) -> float:
-    """Sum of last-close × shares for all open positions as of as_of."""
+    """Sum of last-close × shares for all open positions as of as_of.
+
+    A ticker whose data has gone stale (see _STALE_DATA_MAX_GAP_DAYS) is
+    treated the same as "data unavailable" below — HistoricalSliceProvider.get()
+    keeps returning the last real bars forever once a ticker's feed stops, so
+    without this check a delisted/halted name would silently mark-to-market
+    at its frozen last-known price for the rest of the backtest instead of
+    hitting the existing missing-data fallback.
+    """
     total = 0.0
     for ticker, pos in open_positions.items():
         try:
             df = provider.get(ticker, as_of=as_of)
-            if not df.empty:
+            if not df.empty and _last_bar_age_days(df, as_of) <= _STALE_DATA_MAX_GAP_DAYS:
                 total += float(df["Close"].iloc[-1]) * pos.shares
+            else:
+                # No fresh data (missing or stale) — use cost basis as fallback
+                total += pos.cost_basis
         except (KeyError, Exception):
             # If data unavailable, use cost basis as fallback
             total += pos.cost_basis
@@ -367,12 +404,22 @@ def _day_close_price(
         provider: HistoricalSliceProvider,
         on: pd.Timestamp,
 ) -> Optional[float]:
-    """Return the Close price for the bar on `on` (exact date match)."""
+    """Return the Close price for the bar on `on` (exact date match).
+
+    Returns None — same as "no data at all" — when the ticker's most recent
+    bar is stale (see _STALE_DATA_MAX_GAP_DAYS): HistoricalSliceProvider.get()
+    keeps returning the last real bars forever once a ticker's feed goes
+    dark, so without this check a delisted/halted name would silently fill a
+    sell at its frozen last-known price instead of the caller's existing
+    flat-exit fallback.
+    """
     try:
         df = provider.get(ticker, as_of=on)
+        if df.empty or _last_bar_age_days(df, on) > _STALE_DATA_MAX_GAP_DAYS:
+            return None
         day = df[df.index.normalize() == on.normalize()]
         if day.empty:
-            return float(df["Close"].iloc[-1])  # fallback: last available
+            return float(df["Close"].iloc[-1])  # fallback: last available (still fresh)
         return float(day["Close"].iloc[-1])
     except Exception:
         return None
@@ -799,6 +846,20 @@ def _run_monitor_step(
             continue
 
         if df.empty or len(df) < 25:
+            continue
+
+        if _last_bar_age_days(df, sim_date) > _STALE_DATA_MAX_GAP_DAYS:
+            # Data has gone dark (delisted/halted/vendor dropped coverage).
+            # df stops growing once this happens, so compute_signals below
+            # would keep seeing the same frozen last bar forever — ATR, stop,
+            # and tdays would never move again, so a normal exit rule could
+            # never fire and the position would sit at a stale mark-to-market
+            # value for the rest of the backtest (see _mark_to_market).
+            # Force a flat exit via the same no-fresh-price fallback already
+            # used below, rather than holding a position with no real data.
+            sell_price = _day_close_price(ticker, provider, sim_date) or pos.entry_price
+            portfolio.sell(ticker, sim_date.date(), sell_price)
+            sold.append(ticker)
             continue
 
         df.index = pd.to_datetime(df.index).tz_localize(None)

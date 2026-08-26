@@ -291,8 +291,23 @@ class TechnicalIndicators:
 
     @staticmethod
     def weekly_resample(daily_series: pd.Series) -> pd.Series:
-        """Resample daily data to weekly (end of week)"""
-        return daily_series.resample('W-FRI').last()
+        """Resample daily data to weekly (end of week).
+
+        Drops the final week's bar if it's still in progress (fewer than 4
+        trading days contributed so far). Without this, a mid-week run folds
+        a 1-2 day partial week into ma10w/ma30w exactly like a completed
+        week — Weinstein Stage II is defined on complete weekly bars, and a
+        partial one can flip score_stage2's ma_rising / price_above_ma30
+        gates purely from which day of the week the screener happened to
+        run, not from any real change in price action. Threshold is 4, not
+        5, so a single-holiday-shortened but otherwise complete week isn't
+        dropped too.
+        """
+        weekly = daily_series.resample('W-FRI').last()
+        counts = daily_series.resample('W-FRI').count()
+        if not weekly.empty and counts.iloc[-1] < 4:
+            weekly = weekly.iloc[:-1]
+        return weekly
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -585,6 +600,15 @@ class ScoreCalculator:
 
             # Annualized return
             total_ret = (1 + period_returns).prod() - 1
+            if (1 + total_ret) <= 0:
+                # A period return <= -100% (e.g. a corrupted zero/negative
+                # price bar in the feed) makes the base of the annualization
+                # power negative. A fractional exponent (252/period) on a
+                # negative base doesn't raise — it silently returns a Python
+                # complex number that only surfaces as an opaque TypeError
+                # several lines later in float(). Skip this period, the same
+                # way a near-zero-volatility period is skipped below.
+                continue
             ann_ret = (1 + total_ret) ** (252 / period) - 1
 
             # Annualized volatility
