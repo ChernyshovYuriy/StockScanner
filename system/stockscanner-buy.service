@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=nvidia
-WorkingDirectory=/home/nvidia/dev/stock-scanner
-ExecStart=/usr/local/bin/python3.12 /home/nvidia/dev/stock-scanner/virtual_buy.py
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/local/bin/python3.12 /home/pi/dev/stock-scanner/virtual_buy.py
 Nice=10
 StandardOutput=journal
 StandardError=journal

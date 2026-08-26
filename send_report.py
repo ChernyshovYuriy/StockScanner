@@ -506,7 +506,7 @@ def send_email(msg: MIMEMultipart, dry_run: bool = False) -> None:
     except (socket.timeout, OSError) as e:
         print(
             f"\n❌  Network error: {e}\n"
-            f"   Check internet connectivity on the Jetson Nano.\n"
+            f"   Check internet connectivity on the host running this service.\n"
             f"   Test with: ping smtp.gmail.com",
             file=sys.stderr,
         )
