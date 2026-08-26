@@ -194,7 +194,10 @@ def download_ohlc(ticker: str, start: date, end: Optional[date] = None) -> pd.Da
             start_dt=start.isoformat(),
             end_dt=end_dt.isoformat(),
         ).sort_index()
-    except KeyError:
+    except (KeyError, ValueError):
+        # KeyError: no data for ticker. ValueError: validate_ohlcv() contract
+        # violation — shouldn't happen with real data, but never propagate
+        # uncaught; same "empty df" fallback either way.
         return pd.DataFrame()
 
 

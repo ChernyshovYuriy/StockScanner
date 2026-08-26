@@ -1187,6 +1187,106 @@ class TestMarketDataProvider:
                              lambda ticker: (_ for _ in ()).throw(AssertionError("should be cached")))
         assert provider.get_sector("RY.TO") == "Financials"
 
+    # ── validate_ohlcv() — the owned internal OHLCV contract ────────────────
+
+    def test_validate_ohlcv_accepts_well_formed_frame(self):
+        import market_data as md
+        idx = pd.bdate_range("2024-01-01", periods=5)
+        df = pd.DataFrame({"Open": [1.0] * 5, "High": [1.0] * 5, "Low": [1.0] * 5,
+                            "Close": [1.0] * 5, "Volume": [100] * 5}, index=idx)
+        out = md.validate_ohlcv(df)
+        assert list(out.columns) == md.OHLCV_COLUMNS
+        assert out["Volume"].dtype.kind == "f"
+
+    def test_validate_ohlcv_passes_through_empty(self):
+        import market_data as md
+        empty = pd.DataFrame()
+        assert md.validate_ohlcv(empty) is empty
+
+    def test_validate_ohlcv_rejects_missing_column(self):
+        import market_data as md
+        idx = pd.bdate_range("2024-01-01", periods=3)
+        df = pd.DataFrame({"Open": [1.0] * 3, "High": [1.0] * 3,
+                            "Low": [1.0] * 3, "Close": [1.0] * 3}, index=idx)  # no Volume
+        with pytest.raises(ValueError):
+            md.validate_ohlcv(df)
+
+    def test_validate_ohlcv_rejects_non_datetime_index(self):
+        import market_data as md
+        df = pd.DataFrame({"Open": [1.0], "High": [1.0], "Low": [1.0],
+                            "Close": [1.0], "Volume": [100]})  # default RangeIndex
+        with pytest.raises(ValueError):
+            md.validate_ohlcv(df)
+
+    # ── download_batch_with_reasons() — no yfinance-shape leakage to callers ──
+
+    def test_download_batch_with_reasons_multi_ticker_happy_path(self, monkeypatch):
+        import market_data as md
+        idx = pd.bdate_range("2024-01-01", periods=5)
+        cols = pd.MultiIndex.from_product([["RY.TO", "TD.TO"], md.OHLCV_COLUMNS])
+        raw = pd.DataFrame(1.0, index=idx, columns=cols)
+        raw[("RY.TO", "Volume")] = 100
+        raw[("TD.TO", "Volume")] = 100
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: raw)
+        provider = md.LiveDataProvider()
+        data, reasons = provider.download_batch_with_reasons(
+            ["RY.TO", "TD.TO"], period="1y", interval="1d", auto_adjust=True
+        )
+        assert set(data.keys()) == {"RY.TO", "TD.TO"}
+        assert reasons == {}
+        assert list(data["RY.TO"].columns) == md.OHLCV_COLUMNS
+
+    def test_download_batch_with_reasons_no_data_for_absent_ticker(self, monkeypatch):
+        import market_data as md
+        idx = pd.bdate_range("2024-01-01", periods=5)
+        cols = pd.MultiIndex.from_product([["RY.TO"], md.OHLCV_COLUMNS])
+        raw = pd.DataFrame(1.0, index=idx, columns=cols)
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: raw)
+        provider = md.LiveDataProvider()
+        data, reasons = provider.download_batch_with_reasons(
+            ["RY.TO", "DELISTED.TO"], period="1y", interval="1d", auto_adjust=True
+        )
+        assert "RY.TO" in data
+        assert reasons.get("DELISTED.TO") == "no_data"
+
+    def test_download_batch_with_reasons_single_ticker_missing_ohlcv(self, monkeypatch):
+        import market_data as md
+        idx = pd.bdate_range("2024-01-01", periods=5)
+        raw = pd.DataFrame({"Close": [1.0] * 5}, index=idx)  # missing Open/High/Low/Volume
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: raw)
+        provider = md.LiveDataProvider()
+        data, reasons = provider.download_batch_with_reasons(
+            ["RY.TO"], period="1y", interval="1d", auto_adjust=True
+        )
+        assert data == {}
+        assert reasons == {"RY.TO": "missing_ohlcv"}
+
+    def test_download_batch_with_reasons_single_ticker_all_nan_close(self, monkeypatch):
+        import market_data as md
+        idx = pd.bdate_range("2024-01-01", periods=5)
+        raw = pd.DataFrame({"Open": [1.0] * 5, "High": [1.0] * 5, "Low": [1.0] * 5,
+                            "Close": [float("nan")] * 5, "Volume": [100] * 5}, index=idx)
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: raw)
+        provider = md.LiveDataProvider()
+        data, reasons = provider.download_batch_with_reasons(
+            ["RY.TO"], period="1y", interval="1d", auto_adjust=True
+        )
+        assert data == {}
+        assert reasons == {"RY.TO": "all_nan_close"}
+
+    def test_download_batch_with_reasons_single_ticker_happy_path(self, monkeypatch):
+        import market_data as md
+        idx = pd.bdate_range("2024-01-01", periods=5)
+        raw = pd.DataFrame({"Open": [1.0] * 5, "High": [1.0] * 5, "Low": [1.0] * 5,
+                            "Close": [1.0] * 5, "Volume": [100] * 5}, index=idx)
+        monkeypatch.setattr(md.yf, "download", lambda **kwargs: raw)
+        provider = md.LiveDataProvider()
+        data, reasons = provider.download_batch_with_reasons(
+            ["RY.TO"], period="1y", interval="1d", auto_adjust=True
+        )
+        assert reasons == {}
+        assert list(data["RY.TO"].columns) == md.OHLCV_COLUMNS
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 3 — Portfolio state object (skipped until Phase 3 lands)
