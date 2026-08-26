@@ -203,7 +203,14 @@ class TechnicalIndicators:
         avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
 
         rs = avg_gain / avg_loss.replace(0, np.nan)
-        return 100 - (100 / (1 + rs))
+        rsi = 100 - (100 / (1 + rs))
+        # avg_loss==0 was replaced with NaN above to dodge a raw division by
+        # zero, but that silently made a pure-gain window (no down-days at
+        # all) produce NaN instead of the textbook-correct limiting value of
+        # 100. A genuinely flat window (avg_gain==0 and avg_loss==0) stays
+        # NaN — RSI is undefined with zero movement in either direction.
+        rsi = rsi.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+        return rsi
 
     @staticmethod
     def macd(series: pd.Series, fast=12, slow=26, signal=9):
@@ -263,12 +270,23 @@ class TechnicalIndicators:
     def linear_regression_slope(series: pd.Series, period: int) -> float:
         """Calculate linear regression slope over period"""
         y = series.iloc[-period:].values
-        if len(y) < 10:
+        # Was hardcoded to `< 10` regardless of `period`, which silently made
+        # every period=5 call (score_macd's hist_slope) return 0.0 always,
+        # since len(y) is capped at period=5 and 5 < 10 is forever true.
+        # max(2, period): a regression still needs >= 2 points even if period=1.
+        if len(y) < max(2, period):
             return 0.0
         x = np.arange(len(y))
         slope, _, r_value, _, _ = linregress(x, y)
-        # Normalize slope by mean price
-        norm_slope = slope / (np.mean(y) + 1e-9)
+        # Normalize slope by mean price. Uses abs(mean) rather than the raw
+        # (signed) mean: for a price/MA series (always positive) this is a
+        # no-op, but the hist_slope caller passes a MACD histogram, which
+        # oscillates around zero -- dividing by a raw negative mean silently
+        # FLIPPED THE SIGN of an unambiguously rising/falling slope. Found
+        # while fixing the len(y)<10 bug above, which had been masking this
+        # one: hist_slope was always exactly 0.0, so the sign flip never
+        # actually surfaced until that dead code was fixed.
+        norm_slope = slope / (abs(np.mean(y)) + 1e-9)
         return norm_slope
 
     @staticmethod
@@ -317,7 +335,16 @@ class ScoreCalculator:
         # Check price position relative to MA30
         price_above_ma30 = last_price > last_ma30
 
-        if not (ma_rising and price_above_ma30):
+        # Weinstein Stage II requires the fast (10w) MA to have actually
+        # crossed above the slow (30w) MA — that crossover is the signal
+        # that distinguishes a confirmed Stage II advance from a Stage I
+        # base (see /home/yurii/dev/pythonfintech/market-stage-detection,
+        # the reference StageDetector's stage_ii condition). Previously this
+        # was only a +10 bonus below, not a gate, so a ticker could score as
+        # Stage II while its own short-term trend hadn't confirmed yet.
+        ma10_above_ma30 = last_ma10 > last_ma30
+
+        if not (ma_rising and price_above_ma30 and ma10_above_ma30):
             return 0.0
 
         # Calculate how extended (percentage above MA30)
@@ -333,9 +360,11 @@ class ScoreCalculator:
         else:
             stage_score = max(0, 100 - (pct_above - 25) * 4)  # Penalize extended
 
-        # Bonus for MA10 > MA30 (strong trend)
-        if last_ma10 > last_ma30:
-            stage_score = min(100, stage_score + 10)
+        # MA10 > MA30 is now a hard gate above (ma10_above_ma30), not extra
+        # credit — the +10 bonus that used to live here is removed since it
+        # would now fire unconditionally (every ticker reaching this line
+        # already satisfies it). Max attainable score is accordingly ~10
+        # points lower than before the gate was tightened.
 
         # Bonus for price > MA10 (very strong)
         if last_price > last_ma10:
@@ -363,10 +392,12 @@ class ScoreCalculator:
                 # Get returns over exact business day period
                 end_date = common_dates[-1]
                 start_date = end_date - BDay(period_days)
+                # get_indexer(method='nearest') always snaps to the closest
+                # available date on a non-empty index — it never returns -1,
+                # so a "does this fall before the start of history" guard here
+                # was dead code (the len(common_dates) < period_days check
+                # above is what actually prevents a too-short lookback).
                 start_idx = common_dates.get_indexer([start_date], method='nearest')[0]
-
-                if start_idx < 0:
-                    return None
 
                 c_ret = c_aligned.iloc[-1] / c_aligned.iloc[start_idx] - 1
                 b_ret = b_aligned.iloc[-1] / b_aligned.iloc[start_idx] - 1

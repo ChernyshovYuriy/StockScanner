@@ -259,16 +259,27 @@ class TestScoreCalculatorGoldens:
 
     def test_score_stage2_golden(self):
         # seed=42, n=300, trend=0.05 uptrend → strong Stage II
+        # Golden value dropped 84.9 -> 74.9 when ma10w > ma30w became a hard
+        # gate instead of a +10 bonus (2026-08, matching the reference
+        # StageDetector in /home/yurii/dev/pythonfintech/market-stage-detection —
+        # the fixture already satisfied ma10>ma30, so only the bonus's
+        # removal shows up here, not the gate itself).
         s = self.sc.score_stage2(self.close)
-        assert s == pytest.approx(84.9, abs=0.5), f"stage2 golden changed: {s}"
+        assert s == pytest.approx(74.9, abs=0.5), f"stage2 golden changed: {s}"
 
     def test_score_macd_range(self):
         s = self.sc.score_macd(self.close)
         assert 0.0 <= s <= 100.0
 
     def test_score_macd_golden(self):
+        # Golden value changed 95.0 -> 100.0 (2026-08) when
+        # TechnicalIndicators.linear_regression_slope's hardcoded `len(y) < 10`
+        # check was fixed to `len(y) < period`. score_macd calls it with
+        # period=5 for hist_slope, so len(y) was always 5 < 10 and hist_slope
+        # was unconditionally 0.0 (dead code) -- this golden had the bug
+        # baked in. See canadian_stock_screener.py's linear_regression_slope.
         s = self.sc.score_macd(self.close)
-        assert s == pytest.approx(95.0, abs=0.5), f"macd golden changed: {s}"
+        assert s == pytest.approx(100.0, abs=0.5), f"macd golden changed: {s}"
 
     def test_score_obv_range(self):
         s = self.sc.score_obv(self.close, self.volume)
@@ -378,9 +389,12 @@ class TestScoreCalculatorGoldens:
         """
         EWM-based MACD produces a value even on 20 bars (no strict min_period).
         Documents current behaviour: do not change without updating this golden.
+
+        Golden changed 75.0 -> 90.0 (2026-08), same linear_regression_slope
+        hist_slope fix as test_score_macd_golden above.
         """
         short = self.close.iloc[:20]
-        assert self.sc.score_macd(short) == pytest.approx(75.0, abs=0.5)
+        assert self.sc.score_macd(short) == pytest.approx(90.0, abs=0.5)
 
     def test_score_vam_insufficient_data_returns_50(self):
         short = self.close.iloc[:30]
@@ -442,17 +456,50 @@ class TestTechnicalIndicators:
         assert len(valid) > 0, "RSI produced no valid values on uptrend"
         assert float(valid.iloc[-1]) > 60, f"Expected RSI > 60 on uptrend, got {float(valid.iloc[-1])}"
 
-    def test_rsi_perfectly_monotone_produces_nan(self):
+    def test_rsi_perfectly_monotone_returns_100(self):
         """
-        Documents a known edge case: a perfectly monotone series (zero losses on
-        every bar) causes avg_loss=0 → NaN propagation throughout RSI.
-        This is existing behaviour — do not silently change it.
+        A perfectly monotone rising series (zero losses on every bar) used to
+        produce all-NaN RSI: avg_loss==0 was replaced with NaN to dodge a raw
+        division by zero, which fed through as NaN instead of the textbook-
+        correct limiting value of 100. Fixed 2026-08 (see rsi()'s docstring /
+        inline comment) — this test now locks in the corrected value.
         """
         up = pd.Series(np.linspace(10, 30, 100))
         rsi = self.ti.rsi(up)
-        assert rsi.dropna().empty, (
-            "Expected all-NaN RSI on perfectly monotone series (zero-loss edge case)"
-        )
+        valid = rsi.dropna()
+        assert not valid.empty
+        assert (valid == 100.0).all(), f"Expected RSI==100 throughout, got {valid.unique()}"
+
+    def test_rsi_perfectly_monotone_falling_returns_0(self):
+        """Mirror case: zero gains on every bar -> RSI should be 0, and always
+        was (this side of the avg_gain/avg_loss asymmetry was never buggy)."""
+        down = pd.Series(np.linspace(30, 10, 100))
+        rsi = self.ti.rsi(down)
+        valid = rsi.dropna()
+        assert not valid.empty
+        assert (valid == 0.0).all(), f"Expected RSI==0 throughout, got {valid.unique()}"
+
+    def test_linear_regression_slope_period_5_matches_period_10(self):
+        """
+        linear_regression_slope's internal minimum-length check used to be
+        hardcoded to `len(y) < 10` regardless of `period`, which made every
+        period=5 caller (score_macd's hist_slope) silently return 0.0 always.
+        A period=5 call on an obviously-rising 5-point series must now return
+        a real, correctly-signed, non-zero slope.
+        """
+        from canadian_stock_screener import TechnicalIndicators
+        rising = pd.Series([-0.05, -0.02, -0.01, 0.001, 0.03])
+        s = TechnicalIndicators.linear_regression_slope(rising, 5)
+        assert s > 0, f"Expected a positive slope on a clearly rising series, got {s}"
+
+        falling = pd.Series([0.05, 0.02, 0.01, -0.001, -0.03])
+        s = TechnicalIndicators.linear_regression_slope(falling, 5)
+        assert s < 0, f"Expected a negative slope on a clearly falling series, got {s}"
+
+    def test_linear_regression_slope_insufficient_data_returns_zero(self):
+        from canadian_stock_screener import TechnicalIndicators
+        short = pd.Series([1.0, 2.0, 3.0])
+        assert TechnicalIndicators.linear_regression_slope(short, 5) == 0.0
 
     def test_macd_histogram_is_line_minus_signal(self):
         line, signal, hist = self.ti.macd(self.close)
@@ -871,6 +918,26 @@ class TestPositionMonitor:
         pos = self._Pos("X.TO", date(2024, 1, 1), 20.0, 10.0)
         r = compute_signals(pos, empty)
         assert r.get("status") in ("NO_DATA", "NO_ATR")
+
+    def test_zero_entry_price_returns_bad_data_not_crash(self):
+        """
+        A zero/negative entry_price used to raise an uncaught ZeroDivisionError
+        (pnl_pct = last_close / entry_price), which would crash the whole
+        per-position loop in main() for every other open position in the same
+        run — not just the corrupted one. Must now fail soft.
+        """
+        from position_monitor import compute_signals
+        df, _ = self._make_pos_fixture()
+        pos = self._Pos("BAD.TO", date(2024, 10, 1), 0.0, 100.0)
+        r = compute_signals(pos, df)  # must not raise
+        assert r["status"] == "BAD_DATA"
+
+    def test_negative_entry_price_returns_bad_data_not_crash(self):
+        from position_monitor import compute_signals
+        df, _ = self._make_pos_fixture()
+        pos = self._Pos("BAD.TO", date(2024, 10, 1), -5.0, 100.0)
+        r = compute_signals(pos, df)  # must not raise
+        assert r["status"] == "BAD_DATA"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
