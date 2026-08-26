@@ -48,6 +48,66 @@ class PositionMonitorMode(Enum):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Momentum sleeve (separate, isolated live experiment — see momentum_*.py)
+# ─────────────────────────────────────────────────────────────────────────────
+# The core sleeve above is structurally built for defined-risk continuation
+# trades: swing_tickers.py's universe builder hard-rejects atr_pct_14 > 5%, and
+# every pattern detector requires a basing/consolidation structure. That's a
+# deliberate design, not a bug — but it means the core sleeve can never catch a
+# vertical sector move (e.g. the 2026-08 gold/silver miner rally: EDR.TO was
+# rejected from the universe with atr_pct_14=0.0657 > 0.05). This block is a
+# fully separate paper account — own DB, own capital, own detector, own wide
+# stops — to test whether a genuinely different, higher-volatility-tolerant
+# strategy can capture what the core sleeve is designed to avoid. Backtest +
+# walk-forward validated before any live wiring (see CLAUDE.md).
+MOMENTUM_DB_PATH = DATA_PATH / "momentum.db"
+MOMENTUM_INITIAL_CAPITAL = 10_000.0
+
+# Smaller, more concentrated book than the core sleeve's MAX_POSITIONS=8 —
+# matches the smaller capital base.
+MOMENTUM_MAX_POSITIONS = 5
+
+# Backtest-validated value for this sleeve's smaller book (see below) — not
+# copied from the core sleeve's RISK_PER_TRADE_PCT=1.0.
+MOMENTUM_RISK_PER_TRADE_PCT = 2.0
+
+# Universe ATR ceiling for this sleeve's own swing_tickers.py run — vs the core
+# sleeve's hard 0.05 (5%) ceiling. This is the actual unblock: without raising
+# it, EDR.TO-style vertical movers never enter the universe at all, regardless
+# of detector logic. Other swing_tickers.py gates (liquidity, above_50d,
+# staleness) are kept.
+MOMENTUM_MAX_ATR_PCT = 0.20
+
+# Wide chandelier trail only — accepts more give-back than the core sleeve's
+# CHAND_TRAIL_ATR_K=2.5 in exchange for room to let a vertical move develop
+# instead of being stopped out by normal noise on a high-ATR name. This is
+# the one exit parameter the 2026-08 walk-forward actually varied (~2x avg
+# fold return vs the core sleeve, ~1.5x avg drawdown) — the *initial* stop
+# distance was left at the same 1.5x-ATR (PipelineConfig.atr_stop_mult
+# default) as the core sleeve in that test, so it stays untouched here too;
+# widening it further is a follow-up experiment, not something to deploy
+# unvalidated. CHAND_ARM_PCT is kept at the core sleeve's backtest-validated
+# value (see position_monitor.py) — "don't trail too early" applies here too.
+MOMENTUM_CHAND_TRAIL_ATR_K = 4.0
+MOMENTUM_CHAND_ARM_PCT = 8.0
+
+# Raw, pre-filter TSX/TSXV/CSE ticker list (same GitHub repo that publishes
+# CAN_TICKERS_URL, which is *already* ATR-filtered upstream and so cannot be
+# reused here — see the diagnosis above). momentum_pipeline.py drops the .NE
+# NEO-exchange interlisting duplicates (same underlying security as the
+# .TO/.V/.CN listing) before running swing_tickers.run_universe_builder()
+# against it with the relaxed MOMENTUM_MAX_ATR_PCT ceiling.
+MOMENTUM_RAW_TICKERS_URL = "https://raw.githubusercontent.com/ChernyshovYuriy/Financing/refs/heads/main/data/can_tickers_full"
+
+# Output paths — kept fully separate from the core sleeve's out/ files.
+MOMENTUM_UNIVERSE_OUT_PATH = OUT_PATH / "can_tickers_momentum"
+MOMENTUM_SCREENER_OUT_PATH = OUT_PATH / "momentum_screener_out"
+MOMENTUM_REPORT_PATH = OUT_PATH / "momentum_report.html"
+MOMENTUM_REPORT_POSITION_PATH = OUT_PATH / "momentum_position_monitor_report.html"
+MOMENTUM_ALERTS_PATH = OUT_PATH / "momentum_alerts"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Web dashboard (Jetson, LAN-only, no auth — deliberate choice)
 # ─────────────────────────────────────────────────────────────────────────────
 DASHBOARD_HOST = "0.0.0.0"

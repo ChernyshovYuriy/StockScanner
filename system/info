@@ -6,13 +6,24 @@ sudo systemctl enable --now stockscanner-buy.timer
 sudo systemctl enable --now stockscanner-monitor.timer
 sudo systemctl enable --now stockscanner-dashboard.service
 
+# Momentum sleeve — separate DB/capital, see config.py MOMENTUM_*
+sudo systemctl enable --now stockscanner-momentum-pipeline.timer
+sudo systemctl enable --now stockscanner-momentum-buy.timer
+sudo systemctl enable --now stockscanner-momentum-monitor.timer
+
 systemctl list-timers --all | grep stockscanner
 
 sudo systemctl start stockscanner-main.service
 sudo systemctl start stockscanner-buy.service
 sudo systemctl start stockscanner-monitor.service
+sudo systemctl start stockscanner-momentum-pipeline.service
+sudo systemctl start stockscanner-momentum-buy.service
+sudo systemctl start stockscanner-momentum-monitor.service
 
 journalctl -u stockscanner-main.service -n 100 --no-pager
 journalctl -u stockscanner-buy.service -n 100 --no-pager
 journalctl -u stockscanner-monitor.service -n 100 --no-pager
 journalctl -u stockscanner-dashboard.service -n 100 --no-pager
+journalctl -u stockscanner-momentum-pipeline.service -n 100 --no-pager
+journalctl -u stockscanner-momentum-buy.service -n 100 --no-pager
+journalctl -u stockscanner-momentum-monitor.service -n 100 --no-pager

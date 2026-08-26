@@ -589,6 +589,68 @@ class TestPatternDetectors:
         r = _detect_vcp(close, df["High"], df["Low"], df["Volume"])
         assert r is None
 
+    def test_momentum_breakout_confirmed_on_fixture(self):
+        """MOMENTUM CONFIRMED when the last bar clears the prior 55-bar high on volume."""
+        from auto_pipeline import _detect_momentum_breakout
+        df = _make_base_breakout_ohlcv()
+        result = _detect_momentum_breakout(df["Close"], df["High"], df["Low"], df["Volume"])
+        assert result is not None, "Expected MOMENTUM to be detected"
+        assert result["pattern"] == "MOMENTUM"
+        assert result["state"] == "CONFIRMED", f"Expected CONFIRMED, got {result['state']}"
+
+    def test_momentum_breakout_catches_vertical_move_base_breakout_misses(self):
+        """The whole point of this detector: fire on a wide-range (>20%) vertical
+        move that _detect_base_breakout's base_range cap correctly rejects —
+        this is what let a gold/silver-miner-style rally through the core
+        sleeve's detectors untouched (see config.py MOMENTUM_* rationale)."""
+        from auto_pipeline import _detect_base_breakout, _detect_momentum_breakout
+        df = _make_trending_ohlcv(n=300, seed=1)
+        close = df["Close"].copy()
+        high = df["High"].copy()
+        low = df["Low"].copy()
+        # Widen the last 40 bars so base_range > 20% (same fixture shape as
+        # test_base_breakout_none_on_wide_range), then break out above it.
+        high.iloc[-40:] = close.iloc[-40:] * 1.15
+        low.iloc[-40:] = close.iloc[-40:] * 0.85
+        volume = df["Volume"].copy()
+        high.iloc[-1] = close.iloc[-1] * 1.30
+        close.iloc[-1] = close.iloc[-1] * 1.28
+        volume.iloc[-1] = volume.iloc[-50:].mean() * 3.0
+
+        base_result = _detect_base_breakout(close, high, low, volume)
+        assert base_result is None, f"Expected BASE to reject the wide-range move, got {base_result}"
+
+        momentum_result = _detect_momentum_breakout(close, high, low, volume)
+        assert momentum_result is not None, "Expected MOMENTUM to catch what BASE rejected"
+        assert momentum_result["state"] == "CONFIRMED"
+
+    def test_momentum_breakout_none_below_prior_high(self):
+        """No signal (not even FORMING) while price sits below the lookback high."""
+        from auto_pipeline import _detect_momentum_breakout
+        df = _make_trending_ohlcv(n=300, seed=42, trend=0.0)  # flat, never makes a new high
+        r = _detect_momentum_breakout(df["Close"], df["High"], df["Low"], df["Volume"])
+        assert r is None
+
+    def test_momentum_breakout_insufficient_data_returns_none(self):
+        from auto_pipeline import _detect_momentum_breakout
+        df = _make_trending_ohlcv(n=50)
+        r = _detect_momentum_breakout(df["Close"], df["High"], df["Low"], df["Volume"])
+        assert r is None
+
+    def test_detect_all_patterns_excludes_momentum_by_default(self):
+        """Core sleeve safety net: detect_all_patterns must never surface MOMENTUM
+        unless the momentum sleeve explicitly opts in."""
+        from auto_pipeline import detect_all_patterns
+        df = _make_base_breakout_ohlcv()
+        patterns = detect_all_patterns("X.TO", df)
+        assert all(p["pattern"] != "MOMENTUM" for p in patterns)
+
+    def test_detect_all_patterns_includes_momentum_when_enabled(self):
+        from auto_pipeline import detect_all_patterns
+        df = _make_base_breakout_ohlcv()
+        patterns = detect_all_patterns("X.TO", df, enable_momentum_breakout=True)
+        assert any(p["pattern"] == "MOMENTUM" for p in patterns)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CHARACTERIZATION — compute_levels & compute_position_size (auto_pipeline.py)

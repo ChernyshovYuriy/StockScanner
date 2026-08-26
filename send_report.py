@@ -382,6 +382,7 @@ def send_transaction_email(
     cash_before: float,
     cash_after: float,
     open_positions_count: int = 0,
+    label: str = "TSX",
 ) -> None:
     """
     Send a trade activity notification email.
@@ -389,6 +390,11 @@ def send_transaction_email(
     Silently skips if Gmail is not configured (so unconfigured systems
     don't crash on every trade).  Always call after DB writes are committed —
     never in dry_run paths.
+
+    label: subject-line prefix, default "TSX" reproduces the exact historical
+    subject text. The momentum sleeve (momentum_buy.py / momentum_monitor.py)
+    passes label="Momentum" so its emails are never confused with the core
+    sleeve's.
     """
     if not buys and not sells:
         return
@@ -402,13 +408,13 @@ def send_transaction_email(
     date_str = market_today_str()
 
     if buys and sells:
-        subject = f"🔄 TSX — {len(buys)} bought, {len(sells)} sold — {date_str}"
+        subject = f"🔄 {label} — {len(buys)} bought, {len(sells)} sold — {date_str}"
     elif buys:
         n = len(buys)
-        subject = f"🟢 TSX — {n} position{'s' if n != 1 else ''} opened — {date_str}"
+        subject = f"🟢 {label} — {n} position{'s' if n != 1 else ''} opened — {date_str}"
     else:
         n = len(sells)
-        subject = f"🔴 TSX — {n} position{'s' if n != 1 else ''} closed — {date_str}"
+        subject = f"🔴 {label} — {n} position{'s' if n != 1 else ''} closed — {date_str}"
 
     html_content = build_transaction_html(buys, sells, cash_before, cash_after, open_positions_count)
 

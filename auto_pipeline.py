@@ -98,6 +98,13 @@ class PipelineConfig:
     regime_benchmark: str = "XIU.TO"
     regime_sma_period: int = 200
 
+    # Momentum sleeve only (see config.py MOMENTUM_* / momentum_pipeline.py).
+    # False = live behaviour unchanged (default; the core sleeve never sets
+    # this). True adds _detect_momentum_breakout to detect_all_patterns() —
+    # a vertical-move detector with no base-range requirement, the pattern-
+    # level counterpart to that sleeve's relaxed universe ATR ceiling.
+    enable_momentum_breakout: bool = False
+
     # Scheduling
     schedule_time: str = "16:30"  # HH:MM ET — after TSX close
 
@@ -471,8 +478,48 @@ def _detect_base_breakout(close, high, low, volume) -> Optional[Dict]:
             "state": state, "detail": detail}
 
 
-def detect_all_patterns(ticker: str, df: pd.DataFrame) -> List[Dict]:
-    """Run all 3 detectors, return list of pattern dicts sorted by state priority."""
+def _detect_momentum_breakout(close, high, low, volume) -> Optional[Dict]:
+    """
+    Momentum sleeve only (see config.py MOMENTUM_* / momentum_pipeline.py).
+
+    Same shape as _detect_base_breakout but deliberately drops its base_range
+    cap: that cap is exactly what makes the core detector reject a vertical
+    move (e.g. a gold/silver miner up 30-49% in a month has no 20%-range
+    base). This is the pattern-level counterpart to the sleeve's relaxed
+    universe ATR ceiling (config.py MOMENTUM_MAX_ATR_PCT) — both gates exist
+    in the core sleeve specifically to keep it away from names like this.
+    """
+    if len(close) < 60:
+        return None
+    LOOKBACK_BARS = 55
+    prior_high = high.iloc[-LOOKBACK_BARS:-1].max()
+
+    last = close.iloc[-1]
+    avg_vol = volume.iloc[-50:].mean()
+    vol_ratio = volume.iloc[-1] / (avg_vol + 1e-9)
+
+    if last > prior_high and vol_ratio >= 1.5:
+        state = STATE_CONFIRMED
+        detail = f"Momentum breakout above {LOOKBACK_BARS}d high ${prior_high:.2f} — vol {vol_ratio:.1f}x"
+    elif last > prior_high:
+        state = STATE_AT_PIVOT
+        detail = f"Breakout above {LOOKBACK_BARS}d high ${prior_high:.2f} — vol weak ({vol_ratio:.1f}x)"
+    elif last >= prior_high * 0.98:
+        state = STATE_AT_PIVOT
+        detail = f"At {LOOKBACK_BARS}d high ${prior_high:.2f} — watch for vol surge"
+    else:
+        return None  # no FORMING state — this detector only fires near/above the high
+
+    return {"pattern": "MOMENTUM", "pivot": round(prior_high, 2),
+            "state": state, "detail": detail}
+
+
+def detect_all_patterns(ticker: str, df: pd.DataFrame, enable_momentum_breakout: bool = False) -> List[Dict]:
+    """Run the pattern detectors, return list of pattern dicts sorted by state priority.
+
+    enable_momentum_breakout: momentum sleeve only (default False — live
+    behaviour of the core sleeve is unchanged). See _detect_momentum_breakout.
+    """
     close = df["Close"].squeeze()
     high = df["High"].squeeze()
     low = df["Low"].squeeze()
@@ -484,6 +531,9 @@ def detect_all_patterns(ticker: str, df: pd.DataFrame) -> List[Dict]:
     patterns.extend(_detect_ema_pullback(close, high, low, volume))
     b = _detect_base_breakout(close, high, low, volume)
     if b:   patterns.append(b)
+    if enable_momentum_breakout:
+        m = _detect_momentum_breakout(close, high, low, volume)
+        if m:   patterns.append(m)
 
     priority = {STATE_CONFIRMED: 0, STATE_AT_PIVOT: 1,
                 STATE_FORMING: 2, STATE_FAILED: 3}
@@ -764,7 +814,7 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
                         print(f"{Fore.RED}FAILED{Style.RESET_ALL} ", end="")
 
             # Run pattern detectors
-            patterns = detect_all_patterns(ticker, raw)
+            patterns = detect_all_patterns(ticker, raw, enable_momentum_breakout=cfg.enable_momentum_breakout)
 
             if not patterns:
                 print(f"{Fore.WHITE}no pattern{Style.RESET_ALL}")

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner momentum sleeve position monitor at 15:50 local time Mon-Fri
+
+[Timer]
+OnCalendar=Mon..Fri 15:50
+Persistent=false
+Unit=stockscanner-momentum-monitor.service
+
+[Install]
+WantedBy=timers.target

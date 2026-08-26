@@ -481,6 +481,7 @@ def parse_positions_from_db() -> list[Position]:
 def execute_virtual_sells(
         sell_rows: List[Dict],
         dry_run: bool = False,
+        label: str = "TSX",
 ) -> Dict[str, float]:
     """
     For each SELL signal:
@@ -488,6 +489,10 @@ def execute_virtual_sells(
       2. Compute proceeds = shares * last_close.
       3. Add proceeds back to cash in the database.
       4. Record the closed trade in the database.
+
+    label: forwarded to send_transaction_email() — default "TSX" reproduces
+    existing behaviour. momentum_monitor.py passes label="Momentum" since it
+    reuses this function directly (see its module docstring).
     """
     if not sell_rows:
         return {"funds_before": 0.0, "funds_after": 0.0, "funds_gained": 0.0}
@@ -589,6 +594,7 @@ def execute_virtual_sells(
         cash_before=current_funds,
         cash_after=new_funds,
         open_positions_count=remaining_count,
+        label=label,
     )
 
     return {

@@ -1,0 +1,16 @@
+[Unit]
+Description=StockScanner momentum sleeve virtual buy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nvidia
+WorkingDirectory=/home/nvidia/dev/stock-scanner
+ExecStart=/usr/local/bin/python3.12 /home/nvidia/dev/stock-scanner/momentum_buy.py
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

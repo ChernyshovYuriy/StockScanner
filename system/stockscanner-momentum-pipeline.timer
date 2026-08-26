@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner momentum sleeve pipeline at 16:30 local time Mon-Fri
+
+[Timer]
+OnCalendar=Mon..Fri 16:30
+Persistent=false
+Unit=stockscanner-momentum-pipeline.service
+
+[Install]
+WantedBy=timers.target

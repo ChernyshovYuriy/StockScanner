@@ -161,6 +161,11 @@ class BacktestConfig:
     # tickers are treated as sector "Unknown" and capped like any other sector.
     sector_map: Optional[Dict[str, str]] = field(default=None, repr=False)
 
+    # Momentum sleeve only (see config.py MOMENTUM_* / auto_pipeline.py
+    # _detect_momentum_breakout). False = live behaviour unchanged (default —
+    # the core sleeve's backtest never sets this).
+    enable_momentum_breakout: bool = False
+
     # Position sizing mode for buys:
     #   "equal_split" — allocation = cash / n_actionable per morning
     #                   (pre-2026-07 backtest behaviour)
@@ -544,7 +549,7 @@ def _run_pipeline_step(
                     db.at[idx, SIGNAL_COL_DETAIL] = "Invalidation rule triggered"
                     db.at[idx, SIGNAL_COL_LAST_SEEN] = sim_date
 
-        patterns = detect_all_patterns(ticker, df)
+        patterns = detect_all_patterns(ticker, df, enable_momentum_breakout=cfg.enable_momentum_breakout)
         if not patterns:
             continue
 

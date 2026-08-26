@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner momentum sleeve virtual buy at 09:45 local time Mon-Fri
+
+[Timer]
+OnCalendar=Mon..Fri 09:45
+Persistent=false
+Unit=stockscanner-momentum-buy.service
+
+[Install]
+WantedBy=timers.target
