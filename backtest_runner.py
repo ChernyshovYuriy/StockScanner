@@ -909,7 +909,7 @@ class BacktestRunner:
                 print(f"[Backtest] Pre-loading data "
                       f"{cfg.start_date} → {cfg.end_date} "
                       f"({len(cfg.tickers)} tickers)...")
-            provider = HistoricalSliceProvider.from_yfinance(
+            provider = HistoricalSliceProvider.from_cache(
                 tickers=cfg.tickers,
                 start=_lookback_start(cfg.start_date, cfg.lookback_days),
                 end=cfg.end_date,

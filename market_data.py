@@ -620,6 +620,47 @@ class HistoricalSliceProvider(MarketDataProvider):
         return cls(data)
 
     # ------------------------------------------------------------------
+    # CLASS METHOD — convenience constructor from the local market data cache
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_cache(
+        cls,
+        tickers: List[str],
+        start: str,
+        end: str,
+        force_refresh: bool = False,
+    ) -> "HistoricalSliceProvider":
+        """
+        Same contract as from_yfinance(), but backed by the local DuckDB
+        market data cache (market_data_cache.py, data/market_cache.db)
+        instead of a fresh download every call: only tickers/date-ranges
+        missing from the cache are fetched from Yahoo Finance, everything
+        else is read straight out of DuckDB.
+
+        force_refresh=True ignores existing cache coverage and re-downloads
+        the full [start, end] window for every ticker.
+        """
+        from market_data_cache import sync_and_load
+
+        raw = sync_and_load(tickers, start=start, end=end, force_refresh=force_refresh)
+
+        # Same quality gate as from_yfinance(): not empty, sane last close.
+        data: Dict[str, pd.DataFrame] = {}
+        failed: List[str] = []
+        for ticker in tickers:
+            df = raw.get(ticker)
+            if df is not None and not df.empty and df["Close"].iloc[-1] > 0:
+                data[ticker] = df
+            else:
+                failed.append(ticker)
+
+        if failed:
+            print(f"  [HistoricalSliceProvider.from_cache] failed to load: {failed[:5]}"
+                  f"{'...' if len(failed) > 5 else ''}")
+
+        return cls(data)
+
+    # ------------------------------------------------------------------
     # get() — single ticker, strictly cutoff-respecting
     # ------------------------------------------------------------------
     def get(self, ticker: str, as_of: pd.Timestamp) -> pd.DataFrame:

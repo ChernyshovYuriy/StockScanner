@@ -65,9 +65,13 @@ def _fetch_provider(
     start_date: str,
     lookback_days: int,
     end_date: str,
+    use_cache: bool = True,
+    refresh_cache: bool = False,
 ) -> tuple[HistoricalSliceProvider, pd.Series | None]:
     """
-    Pre-load all historical data from Yahoo Finance in one pass.
+    Pre-load all historical data in one pass — from the local DuckDB market
+    data cache by default (only missing tickers/date-ranges are fetched from
+    Yahoo Finance), or a fresh Yahoo Finance download when use_cache=False.
 
     Returns (provider, benchmark_close_series).
     benchmark_close_series is None if the fetch fails (report skips overlay).
@@ -78,15 +82,24 @@ def _fetch_provider(
     from backtest_runner import _lookback_start
     fetch_start = _lookback_start(start_date, lookback_days)
 
+    cache_note = "  (cache)" if use_cache else ""
     print(f"\n  Fetching {len(all_tickers)} tickers  "
-          f"{fetch_start} → {end_date}  …", end="", flush=True)
+          f"{fetch_start} → {end_date}{cache_note}  …", end="", flush=True)
 
     t0 = time.perf_counter()
-    provider = HistoricalSliceProvider.from_yfinance(
-        tickers=all_tickers,
-        start=fetch_start,
-        end=end_date,
-    )
+    if use_cache:
+        provider = HistoricalSliceProvider.from_cache(
+            tickers=all_tickers,
+            start=fetch_start,
+            end=end_date,
+            force_refresh=refresh_cache,
+        )
+    else:
+        provider = HistoricalSliceProvider.from_yfinance(
+            tickers=all_tickers,
+            start=fetch_start,
+            end=end_date,
+        )
     elapsed = time.perf_counter() - t0
     print(f"  done in {elapsed:.1f}s  ({len(provider)} tickers loaded)")
 
@@ -698,6 +711,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet",  action="store_true",
                    help="Suppress per-day progress output")
 
+    # Local market data cache (data/market_cache.db)
+    p.add_argument("--no-cache", dest="no_cache", action="store_true",
+                   help="Skip the local market data cache; fetch fresh from Yahoo Finance every run")
+    p.add_argument("--refresh-cache", dest="refresh_cache", action="store_true",
+                   help="Ignore existing cache coverage and re-download the full range for every ticker")
+
     return p
 
 
@@ -731,6 +750,8 @@ def main() -> None:
         start_date   = args.start,
         lookback_days= args.lookback,
         end_date     = args.end,
+        use_cache    = not args.no_cache,
+        refresh_cache= args.refresh_cache,
     )
 
     if len(provider) == 0:
