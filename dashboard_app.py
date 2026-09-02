@@ -30,6 +30,7 @@ from config import DASHBOARD_HOST, DASHBOARD_PORT
 from dashboard_positions import build_live_positions
 from db import get_all_trades, get_cash, get_transactions
 from demand_dashboard_data import build_demand_signals_by_ticker
+from demand_signals.summary import summarize_all
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 
@@ -196,7 +197,8 @@ def create_app() -> Flask:
             rows = {}
             error = "Database temporarily unavailable — retrying on next refresh."
 
-        return render_template("demand_signals.html", rows=rows, error=error)
+        summaries = summarize_all(rows)
+        return render_template("demand_signals.html", rows=rows, summaries=summaries, error=error)
 
     @app.get("/history")
     def history():

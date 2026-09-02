@@ -44,6 +44,16 @@
     </thead>
     <tbody>
       {% for ticker, signals in rows.items() %}
+        {% set summary = summaries[ticker] %}
+        <tr class="summary-row">
+          <td>
+            <a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
+          </td>
+          <td colspan="6">
+            <span class="badge badge-{{ summary.label.replace(' ', '_') }}">{{ summary.label }}</span>
+            <span class="summary-reasons">{{ summary.reasons|join('; ') }}</span>
+          </td>
+        </tr>
         {% for s in signals %}
         <tr>
           <td>

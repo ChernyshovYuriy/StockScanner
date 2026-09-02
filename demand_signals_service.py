@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 import uuid
+from collections import defaultdict
 
 from concurrent_utils import acquire_lock
 from log_utils import log
@@ -30,6 +31,7 @@ from time_utils import market_now
 
 from demand_signals import darkpool, edgar_adapter, options_flow, store
 from demand_signals.options_flow import YahooOptionsProvider
+from demand_signals.summary import summarize_ticker
 from demand_signals.ticker_map import get_us_ticker
 
 from edgar import store as edgar_store
@@ -79,6 +81,17 @@ def run_collector(run_id, dry_run=False):
         for s in all_signals:
             print(f"{s.ticker:<10} {s.source:<16} {s.signal_type:<24} "
                   f"{s.direction:<8} {s.strength:.2f}  {s.date}")
+
+        # ── plain-English composite per ticker, condensing the raw rows
+        #    above -- see demand_signals/summary.py ──
+        by_ticker = defaultdict(list)
+        for s in all_signals:
+            by_ticker[s.ticker].append(vars(s))
+        if by_ticker:
+            print("\nSummary")
+            for ticker in sorted(by_ticker):
+                summary = summarize_ticker(by_ticker[ticker])
+                print(f"{ticker:<10} {summary['label']:<14} ({'; '.join(summary['reasons'])})")
         return
 
     store.save_signals(conn, all_signals)

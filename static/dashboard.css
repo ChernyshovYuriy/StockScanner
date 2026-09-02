@@ -169,6 +169,12 @@ thead th:first-child { text-align: left; }
 .badge-bullish { background: var(--hold-bg); color: var(--hold); }
 .badge-bearish { background: var(--sell-bg); color: var(--sell); }
 .badge-neutral { background: var(--border); color: var(--text-muted); }
+.badge-mild_bullish { background: var(--hold-bg); color: var(--hold); }
+.badge-mild_bearish { background: var(--sell-bg); color: var(--sell); }
+.badge-mixed { background: var(--border); color: var(--text-muted); }
+
+.summary-row td { background: var(--row-alt, rgba(127,127,127,0.06)); font-weight: 600; }
+.summary-reasons { margin-left: 8px; font-weight: 400; color: var(--text-muted); }
 
 .side-buy { color: var(--hold); }
 .side-sell { color: var(--sell); }
