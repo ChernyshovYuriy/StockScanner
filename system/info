@@ -11,6 +11,9 @@ sudo systemctl enable --now stockscanner-momentum-pipeline.timer
 sudo systemctl enable --now stockscanner-momentum-buy.timer
 sudo systemctl enable --now stockscanner-momentum-monitor.timer
 
+# EDGAR collector — 4th service, US SEC filings, own DB (data/edgar.db)
+sudo systemctl enable --now stockscanner-edgar.timer
+
 systemctl list-timers --all | grep stockscanner
 
 sudo systemctl start stockscanner-main.service
@@ -19,6 +22,7 @@ sudo systemctl start stockscanner-monitor.service
 sudo systemctl start stockscanner-momentum-pipeline.service
 sudo systemctl start stockscanner-momentum-buy.service
 sudo systemctl start stockscanner-momentum-monitor.service
+sudo systemctl start stockscanner-edgar.service
 
 journalctl -u stockscanner-main.service -n 100 --no-pager
 journalctl -u stockscanner-buy.service -n 100 --no-pager
@@ -27,3 +31,9 @@ journalctl -u stockscanner-dashboard.service -n 100 --no-pager
 journalctl -u stockscanner-momentum-pipeline.service -n 100 --no-pager
 journalctl -u stockscanner-momentum-buy.service -n 100 --no-pager
 journalctl -u stockscanner-momentum-monitor.service -n 100 --no-pager
+journalctl -u stockscanner-edgar.service -n 100 --no-pager
+
+# After changing stockscanner-edgar.timer's OnCalendar (e.g. the 2026-09
+# 18:30 -> 21:30 fix), daemon-reload alone won't recompute an already-armed
+# timer's next fire — restart it explicitly:
+sudo systemctl restart stockscanner-edgar.timer
