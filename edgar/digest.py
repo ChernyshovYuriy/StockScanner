@@ -46,8 +46,12 @@ def build_digest(digest_date, insider_buys, activist_hits):
             shares = b.get("shares") or 0
             price = b.get("price")
             price_s = f"${price:,.2f}" if price is not None else "$?"
+            # 2+ distinct insiders buying the same name the same day -- the
+            # strongest form of this signal -- gets called out on the line.
+            cluster_s = "   >> CLUSTER" if b.get("cluster") else ""
             lines.append(
-                f"  {ticker:<8} {owner:<24} {shares:>10,.0f} sh @ {price_s}   {b.get('date', '')}"
+                f"  {ticker:<8} {owner:<24} {shares:>10,.0f} sh @ {price_s}   "
+                f"{b.get('date', '')}{cluster_s}"
             )
         lines.append("")
 

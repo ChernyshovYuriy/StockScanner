@@ -31,7 +31,7 @@ import uuid
 from datetime import timedelta
 
 from concurrent_utils import acquire_lock
-from config import EDGAR_BACKFILL_DAYS, EDGAR_FORMS
+from config import EDGAR_BACKFILL_DAYS, EDGAR_FORMS, EDGAR_MIN_BUY_VALUE
 from log_utils import log
 from send_report import send_text_email
 from time_utils import TSX_TZ, market_now
@@ -40,7 +40,7 @@ from edgar import store
 from edgar.activist import accession_from_url, fetch_activist_filing
 from edgar.core import load_cik_to_ticker
 from edgar.digest import build_digest
-from edgar.insiders import get_recent_insider_activity, open_market_buys
+from edgar.insiders import cluster_flag, get_recent_insider_activity, open_market_buys
 from edgar.scanner import scan_range
 
 
@@ -142,10 +142,23 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
             buys = open_market_buys(get_recent_insider_activity(cik))
             todays = [b for b in buys if b.get("filing_date") == flag_date]
             if todays:
+                # Store every buy on this CIK/day as evidence, regardless of
+                # the materiality filter below (so a later change to
+                # EDGAR_MIN_BUY_VALUE can still be reconstructed from history).
                 store.save_insider_buys(conn, cik, todays)
+            # 2+ distinct insiders buying the same name the same day is the
+            # strongest form of this signal (insiders.py's own docstring) --
+            # flag it per company/day, not across the whole digest.
+            is_cluster = cluster_flag(todays)
             for b in todays:
+                # Materiality floor: a token/odd-lot buy is noise, not a
+                # footprint of conviction capital.
+                value = (b.get("shares") or 0) * (b.get("price") or 0)
+                if value < EDGAR_MIN_BUY_VALUE:
+                    continue
                 b["cik"] = cik
                 b["ticker"] = cik2tic.get(cik)
+                b["cluster"] = is_cluster
                 insider_buys.append(b)
 
     # ── Build + send digest (quiet day = silence) ─────────────────────────────

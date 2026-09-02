@@ -39,6 +39,20 @@ def test_insider_only_digest_omits_activist_section():
     assert "ACTIVIST STAKES" not in body
 
 
+def test_insider_buy_cluster_marker_appears_when_flagged():
+    insiders = [{"ticker": "MU", "owner": "DOE JANE", "shares": 1000.0,
+                 "price": 5.0, "date": "2026-06-05", "cluster": True}]
+    _, body = build_digest("2026-06-05", insiders, [])
+    assert ">> CLUSTER" in body
+
+
+def test_insider_buy_without_cluster_flag_has_no_marker():
+    insiders = [{"ticker": "MU", "owner": "DOE JANE", "shares": 1000.0,
+                 "price": 5.0, "date": "2026-06-05"}]
+    _, body = build_digest("2026-06-05", insiders, [])
+    assert ">> CLUSTER" not in body
+
+
 # ── email_log dedup ──────────────────────────────────────────────────────────
 
 def test_email_log_quiet_then_sent(tmp_path):

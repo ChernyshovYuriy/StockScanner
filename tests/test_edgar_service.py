@@ -107,3 +107,116 @@ def test_run_collector_falls_back_when_todays_index_is_missing(tmp_path, monkeyp
     # The flag lands under yesterday's date (the actual filing date), not today's.
     assert store.already_sent(tmp_conn, yesterday) is True
     assert store.already_sent(tmp_conn, today) is False
+
+
+def _seed_watchlist_form4_day(tmp_conn, monkeypatch, today, activity):
+    """Shared setup: one watchlisted CIK with a Form 4 on `today`, backed by
+    the given `activity` (edgar.insiders.get_recent_insider_activity shape)."""
+    store.set_watchlist(tmp_conn, [("MU", 723125)])
+    canned = [
+        {"cik": 723125, "ticker": "MU", "form": "4", "category": "insider_txn",
+         "date": today, "url": "u1"},
+    ]
+    monkeypatch.setattr(edgar_service, "scan_range", lambda *a, **k: canned)
+    monkeypatch.setattr(edgar_service, "load_cik_to_ticker", lambda *a, **k: {723125: "MU"})
+    monkeypatch.setattr(edgar_service, "get_recent_insider_activity", lambda cik: activity)
+
+
+def test_run_collector_filters_buys_below_materiality_floor(tmp_path, monkeypatch):
+    """Regression: EDGAR_MIN_BUY_VALUE was defined in config but never
+    applied -- every open-market buy, however small, got emailed."""
+    tmp_conn = store.connect(tmp_path / "edgar.db")
+    monkeypatch.setattr(edgar_service.store, "connect", lambda *a, **k: tmp_conn)
+    monkeypatch.setattr(edgar_service, "EDGAR_MIN_BUY_VALUE", 10_000)
+
+    today = "2026-06-05"
+    activity = [{
+        "owner": "DOE JANE", "is_officer": False, "is_director": True,
+        "filing_date": today, "accession": "acc-1",
+        "transactions": [{"code": "P", "shares": 100.0, "price": 5.0,
+                           "date": today, "direction": "A"}],   # $500 -> below floor
+    }]
+    _seed_watchlist_form4_day(tmp_conn, monkeypatch, today, activity)
+    monkeypatch.setattr(
+        edgar_service, "send_text_email",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not send: below floor")),
+    )
+
+    set_backtest_clock(datetime(2026, 6, 5, 21, 30, tzinfo=TSX_TZ))
+    try:
+        edgar_service.run_collector("rid", dry_run=False)
+    finally:
+        set_backtest_clock(None)
+
+    # Below the floor -> quiet day (no email), but still stored as evidence.
+    assert store.already_sent(tmp_conn, today) is False
+    assert tmp_conn.execute("SELECT COUNT(*) FROM insider_buys").fetchone()[0] == 1
+
+
+def test_run_collector_flags_cluster_of_distinct_insiders(tmp_path, monkeypatch):
+    """Regression: cluster_flag() (2+ distinct insiders buying) was
+    implemented and unit-tested but never wired into the live digest."""
+    tmp_conn = store.connect(tmp_path / "edgar.db")
+    monkeypatch.setattr(edgar_service.store, "connect", lambda *a, **k: tmp_conn)
+    monkeypatch.setattr(edgar_service, "EDGAR_MIN_BUY_VALUE", 1_000)
+
+    today = "2026-06-05"
+    activity = [
+        {"owner": "DOE JANE", "is_officer": False, "is_director": True,
+         "filing_date": today, "accession": "acc-1",
+         "transactions": [{"code": "P", "shares": 1000.0, "price": 5.0,
+                            "date": today, "direction": "A"}]},   # $5,000
+        {"owner": "SMITH BOB", "is_officer": True, "is_director": False,
+         "filing_date": today, "accession": "acc-2",
+         "transactions": [{"code": "P", "shares": 2000.0, "price": 10.0,
+                            "date": today, "direction": "A"}]},   # $20,000
+    ]
+    _seed_watchlist_form4_day(tmp_conn, monkeypatch, today, activity)
+
+    captured = {}
+    monkeypatch.setattr(
+        edgar_service, "send_text_email",
+        lambda subject, body: captured.update(subject=subject, body=body) or True,
+    )
+
+    set_backtest_clock(datetime(2026, 6, 5, 21, 30, tzinfo=TSX_TZ))
+    try:
+        edgar_service.run_collector("rid", dry_run=False)
+    finally:
+        set_backtest_clock(None)
+
+    assert captured, "expected a digest to be sent"
+    assert "2 insider buys," in captured["subject"]
+    assert "DOE JANE" in captured["body"] and "SMITH BOB" in captured["body"]
+    assert captured["body"].count(">> CLUSTER") == 2
+
+
+def test_run_collector_single_insider_buy_has_no_cluster_marker(tmp_path, monkeypatch):
+    """Negative case: one insider buying alone must not read as a cluster."""
+    tmp_conn = store.connect(tmp_path / "edgar.db")
+    monkeypatch.setattr(edgar_service.store, "connect", lambda *a, **k: tmp_conn)
+    monkeypatch.setattr(edgar_service, "EDGAR_MIN_BUY_VALUE", 1_000)
+
+    today = "2026-06-05"
+    activity = [{
+        "owner": "DOE JANE", "is_officer": False, "is_director": True,
+        "filing_date": today, "accession": "acc-1",
+        "transactions": [{"code": "P", "shares": 1000.0, "price": 5.0,
+                           "date": today, "direction": "A"}],   # $5,000
+    }]
+    _seed_watchlist_form4_day(tmp_conn, monkeypatch, today, activity)
+
+    captured = {}
+    monkeypatch.setattr(
+        edgar_service, "send_text_email",
+        lambda subject, body: captured.update(subject=subject, body=body) or True,
+    )
+
+    set_backtest_clock(datetime(2026, 6, 5, 21, 30, tzinfo=TSX_TZ))
+    try:
+        edgar_service.run_collector("rid", dry_run=False)
+    finally:
+        set_backtest_clock(None)
+
+    assert captured, "expected a digest to be sent"
+    assert ">> CLUSTER" not in captured["body"]
