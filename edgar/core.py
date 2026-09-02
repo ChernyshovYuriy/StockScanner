@@ -92,8 +92,19 @@ def load_ticker_map(force=False):
 
 
 def load_cik_to_ticker(force=False):
-    """Reverse map {cik_int: TICKER} for labelling scan hits."""
-    return {v: k for k, v in load_ticker_map(force=force).items()}
+    """Reverse map {cik_int: TICKER} for labelling scan hits.
+
+    A CIK can have multiple ticker aliases (multiple share classes, e.g.
+    Alphabet's GOOGL/GOOG/GOOGM/GOOGN all share one CIK); SEC's source file
+    lists the primary/most-traded class first, so keep the first ticker
+    seen per CIK rather than the last (a plain {v: k for k, v in ...} dict
+    comprehension silently keeps the LAST one, which for Alphabet lands on
+    the obscure "GOOGN" alias rather than "GOOG").
+    """
+    result = {}
+    for ticker, cik in load_ticker_map(force=force).items():
+        result.setdefault(cik, ticker)
+    return result
 
 
 def cik_for(ticker, ticker_map=None):
