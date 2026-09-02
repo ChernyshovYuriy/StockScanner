@@ -168,8 +168,8 @@ sudo systemctl enable --now stockscanner-dashboard.service
 ```
 
 `system/` also has unit pairs for the EDGAR collector, the momentum sleeve,
-and the demand-signals collector — `system/info` has the complete
-enable/start/journalctl commands for every unit.
+the demand-signals collector, and the macro conviction sleeve — `system/info`
+has the complete enable/start/journalctl commands for every unit.
 
 The dashboard listens on `DASHBOARD_HOST:DASHBOARD_PORT` from `config.py`
 (default `0.0.0.0:8080`, LAN-only, no authentication — deliberate for a

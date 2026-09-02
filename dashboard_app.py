@@ -31,6 +31,7 @@ from dashboard_positions import build_live_positions
 from db import get_all_trades, get_cash, get_transactions
 from demand_dashboard_data import build_demand_signals_by_ticker
 from demand_signals.summary import summarize_all
+from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 
@@ -180,6 +181,66 @@ def create_app() -> Flask:
             total_equity=total_equity,
             total_return=total_return,
             total_return_pct=total_return_pct,
+            error=error,
+        )
+
+    @app.get("/macro")
+    def macro():
+        """Read-only view of the macro conviction sleeve (separate DB/capital
+        — see config.py MACRO_* and macro_dashboard_data.py). No sell action
+        here, same isolation reasoning as /momentum."""
+        try:
+            rows = _read_with_retry(build_macro_positions)
+            cash = _read_with_retry(get_macro_cash)
+            transactions = _read_with_retry(get_macro_transactions)
+            error = None
+        except (duckdb.Error, OSError):
+            rows, cash, transactions = [], None, None
+            error = "Database temporarily unavailable — retrying on next refresh."
+
+        # get_current_regime() makes a live HTTP call (through macro_regime.py's
+        # CachedClient, cache-keyed by day) — _read_with_retry is typed for
+        # duckdb.Error/OSError, not requests exceptions, so this gets its own
+        # try/except rather than reusing that wrapper.
+        try:
+            regime = get_current_regime()
+        except Exception:
+            regime = {"label": "unknown", "composite": None, "votes": {}, "detail": {"error": "unavailable"}}
+
+        total_pnl = None
+        market_value = None
+        initial_capital = None
+        total_equity = None
+        total_return = None
+        total_return_pct = None
+
+        if rows:
+            total_pnl = sum(
+                row["pnl_$"] for row in rows if isinstance(row.get("pnl_$"), (int, float))
+            )
+            market_value = sum(
+                row["last_close"] * row["shares"] for row in rows
+                if isinstance(row.get("last_close"), (int, float)) and isinstance(row.get("shares"), (int, float))
+            )
+        if cash is not None:
+            total_equity = cash + (market_value or 0.0)
+        if cash is not None and transactions is not None:
+            initial_capital = _compute_initial_capital(cash, transactions)
+        if total_equity is not None and initial_capital:
+            total_return = total_equity - initial_capital
+            total_return_pct = (total_equity / initial_capital - 1.0) * 100.0
+
+        return render_template(
+            "macro_monitor.html",
+            rows=rows,
+            cash=cash,
+            total_pnl=total_pnl,
+            market_value=market_value,
+            initial_capital=initial_capital,
+            total_equity=total_equity,
+            total_return=total_return,
+            total_return_pct=total_return_pct,
+            regime=regime,
             error=error,
         )
 

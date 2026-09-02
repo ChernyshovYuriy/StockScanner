@@ -21,6 +21,15 @@ sudo systemctl enable --now stockscanner-edgar.timer
 # without them.
 sudo systemctl enable --now stockscanner-demand-signals.timer
 
+# Macro conviction sleeve — 6th, separate DB/capital, see config.py MACRO_*.
+# Reads the core sleeve's own intents (read-only) instead of running its own
+# screener — no macro-pipeline unit needed. FRED_API_KEY in .env is required
+# for this sleeve to ever buy or force-liquidate on regime; without it
+# macro_regime.py returns a neutral no-op reading and the sleeve stays in
+# cash indefinitely.
+sudo systemctl enable --now stockscanner-macro-buy.timer
+sudo systemctl enable --now stockscanner-macro-monitor.timer
+
 systemctl list-timers --all | grep stockscanner
 
 sudo systemctl start stockscanner-main.service
@@ -31,6 +40,8 @@ sudo systemctl start stockscanner-momentum-buy.service
 sudo systemctl start stockscanner-momentum-monitor.service
 sudo systemctl start stockscanner-edgar.service
 sudo systemctl start stockscanner-demand-signals.service
+sudo systemctl start stockscanner-macro-buy.service
+sudo systemctl start stockscanner-macro-monitor.service
 
 journalctl -u stockscanner-main.service -n 100 --no-pager
 journalctl -u stockscanner-buy.service -n 100 --no-pager
@@ -41,6 +52,8 @@ journalctl -u stockscanner-momentum-buy.service -n 100 --no-pager
 journalctl -u stockscanner-momentum-monitor.service -n 100 --no-pager
 journalctl -u stockscanner-edgar.service -n 100 --no-pager
 journalctl -u stockscanner-demand-signals.service -n 100 --no-pager
+journalctl -u stockscanner-macro-buy.service -n 100 --no-pager
+journalctl -u stockscanner-macro-monitor.service -n 100 --no-pager
 
 # After changing stockscanner-edgar.timer's OnCalendar (e.g. the 2026-09
 # 18:30 -> 21:30 fix), daemon-reload alone won't recompute an already-armed

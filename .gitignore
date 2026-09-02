@@ -13,3 +13,4 @@ data/momentum.db
 data/market_cache.db
 data/edgar.db
 data/demand_signals.db
+data/macro.db

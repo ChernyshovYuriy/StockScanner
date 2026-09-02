@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner macro conviction sleeve virtual buy at 09:45 local time Mon-Fri
+
+[Timer]
+OnCalendar=Mon..Fri 09:45
+Persistent=false
+Unit=stockscanner-macro-buy.service
+
+[Install]
+WantedBy=timers.target

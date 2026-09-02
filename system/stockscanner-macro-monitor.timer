@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner macro conviction sleeve position monitor at 15:50 local time Mon-Fri
+
+[Timer]
+OnCalendar=Mon..Fri 15:50
+Persistent=false
+Unit=stockscanner-macro-monitor.service
+
+[Install]
+WantedBy=timers.target

@@ -165,6 +165,54 @@ def test_sell_endpoint_rejects_invalid_manual_price(client, monkeypatch, bad_pri
     assert resp.get_json()["ok"] is False
 
 
+def test_macro_page_renders_when_no_positions(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.build_macro_positions", lambda: [])
+    monkeypatch.setattr("dashboard_app.get_macro_cash", lambda: 10_000.0)
+    monkeypatch.setattr("dashboard_app.get_macro_transactions", lambda: get_transactions())
+    monkeypatch.setattr(
+        "dashboard_app.get_current_regime",
+        lambda: {"label": "neutral", "composite": 0, "votes": {}, "detail": {}},
+    )
+
+    resp = client.get("/macro")
+
+    assert resp.status_code == 200
+    assert b"No open positions" in resp.data
+    assert b"NEUTRAL" in resp.data
+
+
+def test_macro_page_shows_regime_label(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.build_macro_positions", lambda: [])
+    monkeypatch.setattr("dashboard_app.get_macro_cash", lambda: 10_000.0)
+    monkeypatch.setattr("dashboard_app.get_macro_transactions", lambda: get_transactions())
+    monkeypatch.setattr(
+        "dashboard_app.get_current_regime",
+        lambda: {"label": "risk_on", "composite": 2, "votes": {"T10Y2Y": 1, "WALCL": 1}, "detail": {}},
+    )
+
+    resp = client.get("/macro")
+    html = resp.data.decode()
+
+    assert resp.status_code == 200
+    assert "RISK_ON" in html
+    assert "composite 2" in html
+
+
+def test_macro_page_degrades_gracefully_when_regime_fetch_fails(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.build_macro_positions", lambda: [])
+    monkeypatch.setattr("dashboard_app.get_macro_cash", lambda: 10_000.0)
+    monkeypatch.setattr("dashboard_app.get_macro_transactions", lambda: get_transactions())
+
+    def _raise():
+        raise RuntimeError("FRED unreachable")
+    monkeypatch.setattr("dashboard_app.get_current_regime", _raise)
+
+    resp = client.get("/macro")
+
+    assert resp.status_code == 200
+    assert b"UNKNOWN" in resp.data
+
+
 def test_demand_page_renders_when_no_signals(client, monkeypatch):
     monkeypatch.setattr("dashboard_app.build_demand_signals_by_ticker", lambda: {})
     resp = client.get("/demand")

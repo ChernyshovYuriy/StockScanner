@@ -109,6 +109,65 @@ MOMENTUM_ALERTS_PATH = OUT_PATH / "momentum_alerts"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Macro conviction sleeve (6th, fully isolated paper account — see
+# macro_regime.py / macro_buy.py / macro_monitor.py and CLAUDE.md)
+# ─────────────────────────────────────────────────────────────────────────────
+# A concentrated, top-down sleeve loosely inspired by Stanley Druckenmiller's
+# approach: read the macro/liquidity backdrop first (macro_regime.py, FRED-
+# based), then take 1-2 concentrated positions ONLY when the backdrop is
+# supportive, sized much larger per-position than the core/momentum sleeves
+# so a real conviction bet actually moves the book. Long-only (no shorting
+# infrastructure exists in this repo) — a risk-off regime reading means "go
+# to cash" (force-liquidate, see macro_monitor.py), never "go short". Own DB,
+# own capital, own report/alert paths — same isolation precedent as the
+# momentum sleeve. No own screener/pipeline: reads the core sleeve's own
+# already-confirmed intents (read-only cross-DB, see macro_buy.py) instead of
+# duplicating swing_tickers.py/canadian_stock_screener.py/auto_pipeline.py.
+MACRO_DB_PATH = DATA_PATH / "macro.db"
+MACRO_CACHE_PATH = CACHE_PATH / "macro_regime"
+
+# Fair-access identification for FRED's API (St. Louis Fed) — same spirit as
+# DEMAND_USER_AGENT / EDGAR_USER_AGENT.
+MACRO_USER_AGENT = "StockScanner-MacroRegime/0.1 (chernyshov.yuriy@gmail.com)"
+
+MACRO_INITIAL_CAPITAL = 10_000.0
+
+# Hard concentration cap — the defining feature of this sleeve. 1-2 names
+# max, never a diversified book. Not backtested (no history exists yet for
+# this sleeve) — this is a starting point driven by the stated design goal
+# (concentrated conviction), not a walk-forward result.
+MACRO_MAX_POSITIONS = 2
+
+# Sized deliberately much higher than the core sleeve's RISK_PER_TRADE_PCT=1.0
+# or the momentum sleeve's 2.0 -- with MAX_POSITIONS=2 and a starting book of
+# $10,000, remaining_slots-based sizing (see macro_buy.py) already puts up to
+# ~$5,000 (half the book) into a single name at max_position_value alone; a
+# risk-based cap of 5% still allows a full-size fill on any setup with >=10%
+# stop distance (dollar_risk / per_share_risk), while still preventing an
+# unusually tight-stop candidate from being oversized relative to its own
+# risk. Starting point, not yet backtested -- no live/backtest history exists
+# for this sleeve yet; revisit once live/backtest data accumulates.
+MACRO_RISK_PER_TRADE_PCT = 5.0
+
+# Per-series consecutive-trend lookback windows for macro_regime.py's vote
+# logic (native frequency: T10Y2Y and BAMLH0A0HYM2 are daily, WALCL is
+# weekly). 5 daily sessions (~1 trading week) and 3 weekly readings (~3
+# weeks) are starting points -- not backtested; chosen to require a real,
+# sustained move rather than single-day/week noise, mirroring the spirit of
+# DEMAND_DARKPOOL_RISING_WEEKS=3 / DEMAND_SHORTVOL_TREND_DAYS=3 without
+# copying their validated values (different data, different sleeve).
+MACRO_CURVE_TREND_DAYS = 5
+MACRO_CREDIT_TREND_DAYS = 5
+MACRO_LIQUIDITY_TREND_WEEKS = 3
+
+# Output paths -- kept fully separate from the core and momentum sleeves'
+# out/ files.
+MACRO_REPORT_PATH = OUT_PATH / "macro_report.html"
+MACRO_REPORT_POSITION_PATH = OUT_PATH / "macro_position_monitor_report.html"
+MACRO_ALERTS_PATH = OUT_PATH / "macro_alerts"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Web dashboard (Jetson, LAN-only, no auth — deliberate choice)
 # ─────────────────────────────────────────────────────────────────────────────
 DASHBOARD_HOST = "0.0.0.0"
