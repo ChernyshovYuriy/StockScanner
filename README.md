@@ -82,6 +82,18 @@ GMAIL_RECIPIENT=you@gmail.com
 
 If `.env` is absent the system runs normally — it just skips emails.
 
+Optional, only needed for `demand_signals/darkpool.py`'s FINRA ATS dark-pool
+source (free, but requires a free registered app — see
+<https://developer.finra.org>): add to the same `.env` file —
+
+```
+FINRA_CLIENT_ID=xxxx
+FINRA_CLIENT_SECRET=xxxx
+```
+
+If unset, `darkpool.py` skips its fetch silently; `demand_signals`' other
+two sources (EDGAR insider buys, options flow) are unaffected.
+
 ### 3. Run `main.py` before the first trading day
 
 Run this on the weekend before you want to start:

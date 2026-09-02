@@ -1,3 +1,4 @@
+import os
 from enum import Enum
 from pathlib import Path
 
@@ -150,3 +151,34 @@ EDGAR_FORMS = (
 # Each run re-scans this many business days (accession-deduped) to self-heal
 # after downtime/holidays.
 EDGAR_BACKFILL_DAYS = 5
+
+# ─────────────────────────────────────────────────────────────────────────────
+# demand_signals/ — a 5th, structurally independent service: normalizes EDGAR
+# insider buys, FINRA ATS dark-pool volume, and an options-flow proxy into one
+# "real buyer demand" schema, screenable per ticker. US-market sources; see
+# demand_signals/ticker_map.py for the CAN interlisting gap. Own DB, own cache,
+# same conventions as EDGAR_* above -- kept separate rather than folded into
+# edgar_service.py, matching this repo's "services stay independent" precedent.
+
+DEMAND_DB_PATH = DATA_PATH / "demand_signals.db"
+DEMAND_CACHE_PATH = CACHE_PATH / "demand_signals"
+
+# Fair-access identification for FINRA/Yahoo requests (same spirit as
+# EDGAR_USER_AGENT; neither FINRA nor Yahoo mandate this the way SEC does,
+# but identifying the client politely costs nothing).
+DEMAND_USER_AGENT = "StockScanner-DemandSignals/0.1 (chernyshov.yuriy@gmail.com)"
+
+# FINRA's Query API is free but requires a (free) registered app -- OAuth2
+# client-credentials, not an anonymous GET like SEC EDGAR's endpoints.
+# FINRA_CLIENT_ID / FINRA_CLIENT_SECRET are read from .env by
+# demand_signals/darkpool.py itself (config.py isn't the one that loads
+# .env -- send_report.py's GMAIL_* does its own load_dotenv() the same
+# way, since config.py is imported before that in most entrypoints);
+# darkpool.py skips its fetch silently, logging why, when unset.
+
+# Consecutive rising weekly dark-pool-ratio readings needed to flag a ticker.
+DEMAND_DARKPOOL_RISING_WEEKS = 3
+
+# volume/open-interest ratio above which an options chain leg is flagged
+# "unusual" for the options_flow proxy.
+DEMAND_OPTIONS_UNUSUAL_VOL_OI_RATIO = 2.0
