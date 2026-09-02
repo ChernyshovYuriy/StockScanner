@@ -1,9 +1,12 @@
 """
 EDGAR digest builder — assembles the plain-text email of FLAGGED HITS ONLY.
 
-Interim flagging (Step 2 deferred): watchlist open-market insider buys + all
-SC 13D/13G activist/passive stakes market-wide.  A quiet day returns None, so
-the service sends nothing.
+Interim flagging (Step 2 deferred): watchlist insider purchases (Form 4 code
+'P' — SEC's own table defines this as open-market OR privately-negotiated;
+the data alone can't tell the two apart, so a single large 'P' buy could be
+a private block trade rather than one made on the tape) + all SC 13D/13G
+activist/passive stakes market-wide. A quiet day returns None, so the
+service sends nothing.
 
 Honest ceiling: every filing is a LAGGED disclosure (4-10+ days). This surfaces
 *footprints* of conviction capital earlier and more systematically than the
@@ -26,20 +29,27 @@ _ACTIVIST_FORMS = {
 }
 
 
-def build_digest(digest_date, insider_buys, activist_hits):
+def build_digest(digest_date, insider_buys, activist_hits, new_insiders=None):
     """
     Build (subject, body) for the day's flagged hits, or None on a quiet day.
 
     insider_buys : dicts with ticker, owner, shares, price, date (txn date)
     activist_hits: scan-hit dicts with ticker, cik, form, date, url
+    new_insiders : scan-hit dicts (Form 3 -- new Section 16 filer) with
+                   ticker, cik, date, url. Optional; omit or [] if unused.
     """
-    if not insider_buys and not activist_hits:
+    new_insiders = new_insiders or []
+    if not insider_buys and not activist_hits and not new_insiders:
         return None
 
     lines = [f"EDGAR digest — {digest_date}", ""]
 
     if insider_buys:
-        lines.append("INSIDER BUYS (watchlist, open-market)")
+        lines.append("INSIDER BUYS (watchlist, code P: open-market or private purchase)")
+        # (ticker, owner) -> [lot count, total shares, total value], so
+        # multiple same-day lots by one insider get one rollup line after
+        # their individual entries instead of only being readable one by one.
+        lot_totals = {}
         for b in insider_buys:
             ticker = b.get("ticker") or f"CIK{b.get('cik', '?')}"
             owner = (b.get("owner") or "?")[:24]
@@ -53,6 +63,25 @@ def build_digest(digest_date, insider_buys, activist_hits):
                 f"  {ticker:<8} {owner:<24} {shares:>10,.0f} sh @ {price_s}   "
                 f"{b.get('date', '')}{cluster_s}"
             )
+            tot = lot_totals.setdefault((ticker, owner), [0, 0.0, 0.0])
+            tot[0] += 1
+            tot[1] += shares
+            tot[2] += shares * (price or 0)
+        for (ticker, owner), (n, tot_shares, tot_value) in lot_totals.items():
+            if n > 1:
+                lines.append(
+                    f"    -> {owner} ({ticker}): {n} lots, {tot_shares:,.0f} sh total, "
+                    f"${tot_value:,.0f}"
+                )
+        lines.append("")
+
+    if new_insiders:
+        lines.append("NEW INSIDERS (Form 3 -- just became subject to Section 16)")
+        for h in new_insiders:
+            ticker = h.get("ticker") or f"CIK{h.get('cik', '?')}"
+            lines.append(f"  {ticker:<8} {h.get('date', '')}")
+            if h.get("url"):
+                lines.append(f"           {h['url']}")
         lines.append("")
 
     if activist_hits:
@@ -73,8 +102,10 @@ def build_digest(digest_date, insider_buys, activist_hits):
     lines.append(FOOTER)
     body = "\n".join(lines)
 
-    n_ins, n_act = len(insider_buys), len(activist_hits)
+    n_ins, n_act, n_new = len(insider_buys), len(activist_hits), len(new_insiders)
     subject = (
         f"EDGAR: {n_ins} insider buy{'' if n_ins == 1 else 's'}, {n_act} activist"
     )
+    if n_new:
+        subject += f", {n_new} new insider{'' if n_new == 1 else 's'}"
     return subject, body

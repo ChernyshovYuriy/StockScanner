@@ -61,6 +61,57 @@ def test_run_collector_flags_today_activist_and_dedups(tmp_path, monkeypatch):
     assert store.already_sent(tmp_conn, today) is True
 
 
+def test_run_collector_across_two_days_both_get_emailed(tmp_path, monkeypatch):
+    """Integration regression: this whole review started from a bug where the
+    live collector went quiet forever after its first day of real operation.
+    Two full run_collector() invocations, one real DB/cache carried across
+    them (as in live daily runs), each day's own fresh 13D must still get
+    emailed -- day 2 must not be silently blocked or merged into day 1."""
+    tmp_conn = store.connect(tmp_path / "edgar.db")
+    monkeypatch.setattr(edgar_service.store, "connect", lambda *a, **k: tmp_conn)
+    monkeypatch.setattr(edgar_service, "load_cik_to_ticker", lambda *a, **k: {})
+    monkeypatch.setattr(
+        edgar_service, "fetch_activist_filing",
+        lambda url, accession=None: {
+            "filer": f"FILER FOR {url}", "pct": 5.0, "subject": "SUBJ",
+            "accession": url, "raw_text": "<text>",
+        },
+    )
+    captured = []
+    monkeypatch.setattr(
+        edgar_service, "send_text_email",
+        lambda subject, body: captured.append({"subject": subject, "body": body}) or True,
+    )
+
+    day1, day2 = "2026-06-05", "2026-06-08"   # Fri -> Mon, mirrors a live gap
+
+    monkeypatch.setattr(edgar_service, "scan_range", lambda *a, **k: [
+        {"cik": 1, "ticker": "XYZ", "form": "SC 13D", "category": "activist_stake",
+         "date": day1, "url": "u-day1"},
+    ])
+    set_backtest_clock(datetime(2026, 6, 5, 21, 30, tzinfo=TSX_TZ))
+    try:
+        edgar_service.run_collector("rid1", dry_run=False)
+    finally:
+        set_backtest_clock(None)
+
+    monkeypatch.setattr(edgar_service, "scan_range", lambda *a, **k: [
+        {"cik": 2, "ticker": "ABC", "form": "SC 13D", "category": "activist_stake",
+         "date": day2, "url": "u-day2"},
+    ])
+    set_backtest_clock(datetime(2026, 6, 8, 21, 30, tzinfo=TSX_TZ))
+    try:
+        edgar_service.run_collector("rid2", dry_run=False)
+    finally:
+        set_backtest_clock(None)
+
+    assert len(captured) == 2, "expected a separate email each day, not 0 or 1"
+    assert "XYZ" in captured[0]["body"] and "ABC" not in captured[0]["body"]
+    assert "ABC" in captured[1]["body"] and "XYZ" not in captured[1]["body"]
+    assert store.already_sent(tmp_conn, day1) is True
+    assert store.already_sent(tmp_conn, day2) is True
+
+
 def test_run_collector_falls_back_when_todays_index_is_missing(tmp_path, monkeypatch):
     """Regression: today's master.idx often isn't published yet when this runs.
 
@@ -220,3 +271,36 @@ def test_run_collector_single_insider_buy_has_no_cluster_marker(tmp_path, monkey
 
     assert captured, "expected a digest to be sent"
     assert ">> CLUSTER" not in captured["body"]
+
+
+def test_run_collector_flags_new_insider_form3(tmp_path, monkeypatch):
+    """Regression: Form 3 (new Section 16 filer) was excluded from
+    EDGAR_FORMS entirely, so a new insider joining a watchlisted company
+    never surfaced -- even with no buy attached to size it."""
+    tmp_conn = store.connect(tmp_path / "edgar.db")
+    monkeypatch.setattr(edgar_service.store, "connect", lambda *a, **k: tmp_conn)
+    store.set_watchlist(tmp_conn, [("MU", 723125)])
+
+    today = "2026-06-05"
+    canned = [
+        {"cik": 723125, "ticker": "MU", "form": "3", "category": "insider_init",
+         "date": today, "url": "u1"},
+    ]
+    monkeypatch.setattr(edgar_service, "scan_range", lambda *a, **k: canned)
+    monkeypatch.setattr(edgar_service, "load_cik_to_ticker", lambda *a, **k: {723125: "MU"})
+
+    captured = {}
+    monkeypatch.setattr(
+        edgar_service, "send_text_email",
+        lambda subject, body: captured.update(subject=subject, body=body) or True,
+    )
+
+    set_backtest_clock(datetime(2026, 6, 5, 21, 30, tzinfo=TSX_TZ))
+    try:
+        edgar_service.run_collector("rid", dry_run=False)
+    finally:
+        set_backtest_clock(None)
+
+    assert captured, "expected a digest to be sent for a lone Form 3"
+    assert "1 new insider" in captured["subject"]
+    assert "NEW INSIDERS" in captured["body"] and "MU" in captured["body"]

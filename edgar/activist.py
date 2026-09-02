@@ -43,9 +43,11 @@ def dedup_by_accession(hits):
 
 
 def _header_company(text, label):
-    """COMPANY CONFORMED NAME within the SEC-HEADER block following `label`.
+    """COMPANY CONFORMED NAME within the first SEC-HEADER block following `label`.
 
-    Falls back to None when the block or name isn't found.
+    Falls back to None when the block or name isn't found. Use this for a
+    label that occurs once (e.g. SUBJECT COMPANY); for one that can repeat
+    (e.g. FILED BY on a jointly-filed 13D), use _header_companies instead.
     """
     start = re.search(re.escape(label) + r"\s*:", text, re.I)
     if not start:
@@ -55,24 +57,50 @@ def _header_company(text, label):
     return name.group(1).strip() if name else None
 
 
+def _header_companies(text, label):
+    """All distinct COMPANY CONFORMED NAMEs across every SEC-HEADER block
+    following `label`. A group 13D/G lists one `label` block per co-filer;
+    _header_company's first-match-only would silently drop every co-filer
+    but the first. Returns [] when none are found, in document order.
+    """
+    names = []
+    for start in re.finditer(re.escape(label) + r"\s*:", text, re.I):
+        block = text[start.end(): start.end() + 1500]
+        name = re.search(r"COMPANY CONFORMED NAME\s*:\s*(.+)", block, re.I)
+        if name:
+            n = name.group(1).strip()
+            if n and n not in names:
+                names.append(n)
+    return names
+
+
 def _percent_of_class(text):
-    """Best-effort percent-of-class from the cover page. None if not found."""
-    m = re.search(
+    """Best-effort percent-of-class from the cover page(s). A group filing
+    has one cover page per reporting person, each with its own percent; the
+    largest is kept as the group's headline stake rather than whichever
+    cover page happens to appear first in the document. None if not found.
+    """
+    pcts = []
+    for m in re.finditer(
         r"Percent\s+of\s+Class.{0,200}?(\d{1,3}(?:\.\d+)?)\s*%",
         text, re.I | re.S,
-    )
-    if not m:
-        return None
-    try:
-        return float(m.group(1))
-    except ValueError:
-        return None
+    ):
+        try:
+            pcts.append(float(m.group(1)))
+        except ValueError:
+            continue
+    return max(pcts) if pcts else None
 
 
 def parse_activist(text):
-    """Extract {filer, subject, pct} from a full-submission 13D/G text (best-effort)."""
+    """Extract {filer, subject, pct} from a full-submission 13D/G text (best-effort).
+
+    `filer` joins every co-filer found (";"-separated) rather than just the
+    first, since a group 13D commonly lists more than one.
+    """
+    filers = _header_companies(text, "FILED BY")
     return {
-        "filer": _header_company(text, "FILED BY"),
+        "filer": "; ".join(filers) if filers else None,
         "subject": _header_company(text, "SUBJECT COMPANY"),
         "pct": _percent_of_class(text),
     }

@@ -71,14 +71,23 @@ def get(url, cache_key=None, force=False, is_json=True):
     return json.loads(text) if is_json else text
 
 
+def _cache_date():
+    """Today's date as a cache-key suffix. A seam so tests can pin it."""
+    return date.today().strftime("%Y%m%d")
+
+
 # ---------------- Layer 0: identity ----------------
 
 _TICKER_URL = "https://www.sec.gov/files/company_tickers.json"
 
 
 def load_ticker_map(force=False):
-    """{TICKER: cik_int}. Cached once."""
-    data = get(_TICKER_URL, cache_key="company_tickers.json", force=force)
+    """{TICKER: cik_int}. Date-scoped cache (like fetch_submissions below): a
+    plain forever-cache would miss new listings/ticker changes indefinitely
+    once fetched once. Ticker/CIK assignments change far less often than
+    daily, but the collector only runs once a day, so a daily cache costs
+    nothing extra while bounding staleness to at most one day."""
+    data = get(_TICKER_URL, cache_key=f"company_tickers_{_cache_date()}.json", force=force)
     return {row["ticker"].upper(): int(row["cik_str"]) for row in data.values()}
 
 
@@ -105,11 +114,6 @@ def fetch_company_facts(cik_int, force=False):
     c = cik10(cik_int)
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{c}.json"
     return get(url, cache_key=f"facts_{c}.json", force=force)
-
-
-def _cache_date():
-    """Today's date as a cache-key suffix. A seam so tests can pin it."""
-    return date.today().strftime("%Y%m%d")
 
 
 def fetch_submissions(cik_int, force=False):

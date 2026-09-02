@@ -1,8 +1,11 @@
 """
 Layer 2b: insider transactions (Form 4).
 
-The signal worth computing is clustered open-market PURCHASES (code 'P') by
-multiple insiders -- not sells, which are mostly noise.
+The signal worth computing is clustered PURCHASES (code 'P') by multiple
+insiders -- not sells, which are mostly noise. Note code 'P' itself is SEC's
+"open market or private purchase" bucket: the two aren't distinguished in the
+structured data, so a 'P' buy may be a privately-negotiated block trade
+rather than one made on the open market.
 """
 
 import re
@@ -76,6 +79,8 @@ def get_recent_insider_activity(cik_int, limit=15):
 
 
 def open_market_buys(activity):
+    """Transaction-code 'P' purchases across `activity` (see module docstring:
+    code 'P' covers open-market AND privately-negotiated purchases alike)."""
     buys = []
     for f in activity:
         for t in f.get("transactions", []):

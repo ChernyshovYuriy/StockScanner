@@ -13,8 +13,9 @@ surfaces *footprints* of big money (insider open-market buys, activist stakes)
 earlier and more systematically than the crowd. Every filing is a lagged
 disclosure — a research trigger, never a price predictor or financial advice.
 
-Interim flagging (Step 2 deferred): watchlist insider open-market buys + all
-SC 13D/13G market-wide. Set a watchlist with:
+Interim flagging (Step 2 deferred): watchlist insider purchases (Form 4 code
+'P' — open-market or private, not distinguished in the data) + all SC
+13D/13G market-wide. Set a watchlist with:
     python -m edgar.run watchlist MU,KEY,AMD
 
 Usage
@@ -37,26 +38,11 @@ from send_report import send_text_email
 from time_utils import TSX_TZ, market_now
 
 from edgar import store
-from edgar.activist import accession_from_url, fetch_activist_filing
+from edgar.activist import accession_from_url, dedup_by_accession, fetch_activist_filing
 from edgar.core import load_cik_to_ticker
 from edgar.digest import build_digest
 from edgar.insiders import cluster_flag, get_recent_insider_activity, open_market_buys
 from edgar.scanner import scan_range
-
-
-def _dedup_by_accession(hits):
-    """Collapse the per-CIK duplicate index rows for one filing (same accession).
-
-    A 13D is listed under both the filer and the subject-company CIK; keep one,
-    preferring the row that resolved a ticker (the subject company).
-    """
-    by_acc = {}
-    for h in hits:
-        acc = accession_from_url(h.get("url", ""))
-        cur = by_acc.get(acc)
-        if cur is None or (not cur.get("ticker") and h.get("ticker")):
-            by_acc[acc] = h
-    return list(by_acc.values())
 
 
 def run_collector(run_id, dry_run=False, backfill_days=None):
@@ -110,7 +96,7 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
     #    is indexed under both the filer and subject CIK, so dedup by accession.
     #    Fetch + parse each flagged body for filer / percent and keep the raw
     #    text as evidence; one bad filing must not sink the run, so guard it. ──
-    fresh_13d = _dedup_by_accession([
+    fresh_13d = dedup_by_accession([
         h for h in real
         if h.get("category") == "activist_stake" and h.get("date") == flag_date
     ])
@@ -161,9 +147,21 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
                 b["cluster"] = is_cluster
                 insider_buys.append(b)
 
+        # ── New insiders: watchlist CIKs with a Form 3 on the flag date --
+        #    someone just became subject to Section 16 (new director/officer/
+        #    10% owner). No "buy" to size, just a heads-up worth a line. ──
+        new_insiders = [
+            {"cik": h["cik"], "ticker": cik2tic.get(h["cik"]),
+             "date": h.get("date"), "url": h.get("url")}
+            for h in real
+            if h.get("form") == "3" and h.get("date") == flag_date and h["cik"] in watchlist
+        ]
+    else:
+        new_insiders = []
+
     # ── Build + send digest (quiet day = silence) ─────────────────────────────
-    digest = build_digest(flag_date, insider_buys, activist_hits)
-    hit_count = len(insider_buys) + len(activist_hits)
+    digest = build_digest(flag_date, insider_buys, activist_hits, new_insiders)
+    hit_count = len(insider_buys) + len(activist_hits) + len(new_insiders)
 
     if digest is None:
         log("edgar", run_id, "quiet_day", date=flag_date)
@@ -175,13 +173,14 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
     if dry_run:
         print(subject)
         print(body)
-        log("edgar", run_id, "dry_run", insiders=len(insider_buys), activist=len(activist_hits))
+        log("edgar", run_id, "dry_run", insiders=len(insider_buys),
+            activist=len(activist_hits), new_insiders=len(new_insiders))
         return
 
     sent = send_text_email(subject, body)
     store.record_email(conn, flag_date, hit_count, sent=sent)
     log("edgar", run_id, "sent" if sent else "send_skipped",
-        insiders=len(insider_buys), activist=len(activist_hits))
+        insiders=len(insider_buys), activist=len(activist_hits), new_insiders=len(new_insiders))
 
 
 def _build_parser() -> argparse.ArgumentParser:
