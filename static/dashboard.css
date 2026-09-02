@@ -105,6 +105,13 @@ a:hover { text-decoration: underline; }
   padding: 8px 12px;
   border-radius: 6px;
 }
+.banner-info {
+  background: var(--card-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: 6px;
+}
 
 .table-wrap { overflow-x: auto; }
 
@@ -159,6 +166,9 @@ thead th:first-child { text-align: left; }
 .badge-hold { background: var(--hold-bg); color: var(--hold); }
 .badge-sell { background: var(--sell-bg); color: var(--sell); }
 .badge-no_data { background: var(--border); color: var(--text-muted); }
+.badge-bullish { background: var(--hold-bg); color: var(--hold); }
+.badge-bearish { background: var(--sell-bg); color: var(--sell); }
+.badge-neutral { background: var(--border); color: var(--text-muted); }
 
 .side-buy { color: var(--hold); }
 .side-sell { color: var(--sell); }

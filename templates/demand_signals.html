@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Demand — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    /* Third visual identity, alongside Monitor's default and Momentum's
+       amber accent — unmistakably a different kind of page (signals, not
+       positions/P&L). */
+    .demand-accent { color: #6d28d9; }
+    .demand-badge {
+      display: inline-block; margin-left: 10px; padding: 2px 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 600;
+      background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe;
+      vertical-align: middle;
+    }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="header-row">
+    <h1 class="demand-accent">Demand Signals <span class="demand-badge">read-only</span></h1>
+    <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <p class="banner banner-info">
+    Research triggers, not recommendations — see each source's own honest-ceiling
+    note in <code>demand_signals/__init__.py</code>. <strong>Lag (days)</strong> is
+    shown per row: a weekly-lagged FINRA reading is not a live signal.
+  </p>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  {% if not rows %}
+    <p>No signals stored yet — demand_signals_service.py hasn't run in save mode,
+       or nothing has cleared a threshold yet.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table class="sortable">
+    <thead>
+      <tr>
+        <th>Ticker</th><th>Source</th><th>Signal</th><th>Direction</th>
+        <th>Strength</th><th>Lag (days)</th><th>Date</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ticker, signals in rows.items() %}
+        {% for s in signals %}
+        <tr>
+          <td>
+            <a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
+          </td>
+          <td>{{ s.source }}</td>
+          <td>{{ s.signal_type }}</td>
+          <td><span class="badge badge-{{ s.direction }}">{{ s.direction }}</span></td>
+          <td>{{ "%.2f"|format(s.strength) if s.strength is not none else "—" }}</td>
+          <td>{{ s.lag_days if s.lag_days is not none else "—" }}</td>
+          <td>{{ s.date }}</td>
+        </tr>
+        {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}

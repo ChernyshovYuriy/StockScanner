@@ -14,6 +14,13 @@ sudo systemctl enable --now stockscanner-momentum-monitor.timer
 # EDGAR collector — 4th service, US SEC filings, own DB (data/edgar.db)
 sudo systemctl enable --now stockscanner-edgar.timer
 
+# Demand-signals collector — 5th service, own DB (data/demand_signals.db),
+# runs 22:00 (after edgar's 21:30) so its EDGAR-adapted signals see that
+# day's insider_buys. FINRA_CLIENT_ID/SECRET in .env are optional — see
+# README.md; the other two sources (EDGAR insider buys, options flow) work
+# without them.
+sudo systemctl enable --now stockscanner-demand-signals.timer
+
 systemctl list-timers --all | grep stockscanner
 
 sudo systemctl start stockscanner-main.service
@@ -23,6 +30,7 @@ sudo systemctl start stockscanner-momentum-pipeline.service
 sudo systemctl start stockscanner-momentum-buy.service
 sudo systemctl start stockscanner-momentum-monitor.service
 sudo systemctl start stockscanner-edgar.service
+sudo systemctl start stockscanner-demand-signals.service
 
 journalctl -u stockscanner-main.service -n 100 --no-pager
 journalctl -u stockscanner-buy.service -n 100 --no-pager
@@ -32,6 +40,7 @@ journalctl -u stockscanner-momentum-pipeline.service -n 100 --no-pager
 journalctl -u stockscanner-momentum-buy.service -n 100 --no-pager
 journalctl -u stockscanner-momentum-monitor.service -n 100 --no-pager
 journalctl -u stockscanner-edgar.service -n 100 --no-pager
+journalctl -u stockscanner-demand-signals.service -n 100 --no-pager
 
 # After changing stockscanner-edgar.timer's OnCalendar (e.g. the 2026-09
 # 18:30 -> 21:30 fix), daemon-reload alone won't recompute an already-armed

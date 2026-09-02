@@ -1,0 +1,16 @@
+[Unit]
+Description=StockScanner demand-signals collector (EDGAR + FINRA dark pool + options flow)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/bin/python3 /home/pi/dev/stock-scanner/demand_signals_service.py
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

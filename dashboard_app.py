@@ -19,6 +19,7 @@ build step on ARM).
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from typing import Any, Callable
 
@@ -28,6 +29,7 @@ from flask import Flask, jsonify, render_template, request
 from config import DASHBOARD_HOST, DASHBOARD_PORT
 from dashboard_positions import build_live_positions
 from db import get_all_trades, get_cash, get_transactions
+from demand_dashboard_data import build_demand_signals_by_ticker
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 
@@ -179,6 +181,22 @@ def create_app() -> Flask:
             total_return_pct=total_return_pct,
             error=error,
         )
+
+    @app.get("/demand")
+    def demand():
+        """Read-only view of demand_signals.db (EDGAR insider buys + FINRA
+        dark-pool ratio + options-flow proxy, normalized — see
+        demand_signals/__init__.py). No action here, same as /momentum: this
+        is a display layer over what demand_signals_service.py has already
+        populated, never a trigger for a fetch or a trade."""
+        try:
+            rows = _read_with_retry(build_demand_signals_by_ticker)
+            error = None
+        except (sqlite3.Error, OSError):
+            rows = {}
+            error = "Database temporarily unavailable — retrying on next refresh."
+
+        return render_template("demand_signals.html", rows=rows, error=error)
 
     @app.get("/history")
     def history():

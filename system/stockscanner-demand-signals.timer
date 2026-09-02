@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner demand-signals collector at 22:00 local time Mon-Fri (after edgar_service.py's 21:30 run)
+
+[Timer]
+OnCalendar=Mon..Fri 22:00
+Persistent=false
+Unit=stockscanner-demand-signals.service
+
+[Install]
+WantedBy=timers.target

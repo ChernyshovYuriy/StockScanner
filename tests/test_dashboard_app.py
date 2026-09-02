@@ -163,3 +163,32 @@ def test_sell_endpoint_rejects_invalid_manual_price(client, monkeypatch, bad_pri
 
     assert resp.status_code == 400
     assert resp.get_json()["ok"] is False
+
+
+def test_demand_page_renders_when_no_signals(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.build_demand_signals_by_ticker", lambda: {})
+    resp = client.get("/demand")
+    assert resp.status_code == 200
+    assert b"No signals stored yet" in resp.data
+
+
+def test_demand_page_renders_signals_grouped_by_ticker(client, monkeypatch):
+    rows = {
+        "MU": [
+            {"source": "edgar_insider", "signal_type": "insider_buy", "direction": "bullish",
+             "strength": 0.8, "lag_days": 5, "date": "2026-06-05"},
+            {"source": "options_flow", "signal_type": "call_put_skew", "direction": "bearish",
+             "strength": 0.3, "lag_days": 0, "date": "2026-06-05"},
+        ],
+    }
+    monkeypatch.setattr("dashboard_app.build_demand_signals_by_ticker", lambda: rows)
+
+    resp = client.get("/demand")
+    html = resp.data.decode()
+
+    assert resp.status_code == 200
+    assert "MU" in html
+    assert "insider_buy" in html
+    assert "call_put_skew" in html
+    assert "badge-bullish" in html
+    assert "badge-bearish" in html
