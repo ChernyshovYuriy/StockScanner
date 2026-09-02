@@ -63,9 +63,15 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
     """Event loop: scan the daily index, store hits, build + send the digest.
 
     The scan is market-wide (the whole point is catching names you don't watch),
-    but the EMAIL flags only today's hits: insider open-market buys for
-    watchlisted CIKs + all SC 13D/13G. The 5-day backfill feeds STORAGE so the
-    DB self-heals after downtime; only today's flagged hits are emailed.
+    but the EMAIL flags only the flag date's hits: insider open-market buys for
+    watchlisted CIKs + all SC 13D/13G. The flag date is normally today, but
+    today's master.idx is often not yet published when this runs, so it falls
+    back to the most recent day in the scan window that fetched successfully
+    and hasn't already been sent (see flag_date below) — otherwise that day's
+    hits would land in storage on tomorrow's backfill but never get emailed,
+    since tomorrow's "today" no longer matches their filing date. The 5-day
+    backfill feeds STORAGE so the DB self-heals after downtime; only the flag
+    date's flagged hits are emailed.
     """
     backfill = backfill_days or EDGAR_BACKFILL_DAYS
     # ET ~ US Eastern; the existing services already run on this clock.
@@ -85,9 +91,17 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
     store.save_scan_hits(conn, real)
     log("edgar", run_id, "scanned", window_days=(today - start).days, stored_hits=len(real))
 
-    # Idempotent same-day re-run guard.
-    if not dry_run and store.already_sent(conn, today_str):
-        log("edgar", run_id, "already_sent_today", date=today_str)
+    # Pick the flag date: the most recent day with successfully-scanned data
+    # that hasn't already been sent. Usually today, but falls back when today's
+    # index isn't published yet (see docstring above).
+    candidate_dates = sorted({h["date"] for h in real if h.get("date")}, reverse=True)
+    flag_date = next(
+        (d for d in candidate_dates if not store.already_sent(conn, d)), today_str
+    )
+
+    # Idempotent same-flag-date re-run guard.
+    if not dry_run and store.already_sent(conn, flag_date):
+        log("edgar", run_id, "already_sent_today", date=flag_date)
         return
 
     # ── Activist: the EMAIL flags FRESH 13D only (activist intent, highest
@@ -98,7 +112,7 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
     #    text as evidence; one bad filing must not sink the run, so guard it. ──
     fresh_13d = _dedup_by_accession([
         h for h in real
-        if h.get("category") == "activist_stake" and h.get("date") == today_str
+        if h.get("category") == "activist_stake" and h.get("date") == flag_date
     ])
     activist_hits = []
     for h in fresh_13d:
@@ -115,18 +129,18 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
             store.save_activist_filing(conn, {**h, "raw_text": parsed.get("raw_text")})
         activist_hits.append(h)
 
-    # ── Insider buys: watchlist CIKs with a Form 4 today (bounded fetch) ───────
+    # ── Insider buys: watchlist CIKs with a Form 4 on the flag date (bounded fetch) ──
     insider_buys = []
     watchlist = store.watchlist_ciks(conn)
     if watchlist:
         cik2tic = load_cik_to_ticker()
         todays_form4_ciks = {
             h["cik"] for h in real
-            if h.get("form") == "4" and h.get("date") == today_str and h["cik"] in watchlist
+            if h.get("form") == "4" and h.get("date") == flag_date and h["cik"] in watchlist
         }
         for cik in sorted(todays_form4_ciks):
             buys = open_market_buys(get_recent_insider_activity(cik))
-            todays = [b for b in buys if b.get("filing_date") == today_str]
+            todays = [b for b in buys if b.get("filing_date") == flag_date]
             if todays:
                 store.save_insider_buys(conn, cik, todays)
             for b in todays:
@@ -135,13 +149,13 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
                 insider_buys.append(b)
 
     # ── Build + send digest (quiet day = silence) ─────────────────────────────
-    digest = build_digest(today_str, insider_buys, activist_hits)
+    digest = build_digest(flag_date, insider_buys, activist_hits)
     hit_count = len(insider_buys) + len(activist_hits)
 
     if digest is None:
-        log("edgar", run_id, "quiet_day", date=today_str)
+        log("edgar", run_id, "quiet_day", date=flag_date)
         if not dry_run:
-            store.record_email(conn, today_str, 0, sent=0)
+            store.record_email(conn, flag_date, 0, sent=0)
         return
 
     subject, body = digest
@@ -152,7 +166,7 @@ def run_collector(run_id, dry_run=False, backfill_days=None):
         return
 
     sent = send_text_email(subject, body)
-    store.record_email(conn, today_str, hit_count, sent=sent)
+    store.record_email(conn, flag_date, hit_count, sent=sent)
     log("edgar", run_id, "sent" if sent else "send_skipped",
         insiders=len(insider_buys), activist=len(activist_hits))
 

@@ -1,8 +1,8 @@
 [Unit]
-Description=Run StockScanner EDGAR collector at 18:30 local time Mon-Fri (after US close)
+Description=Run StockScanner EDGAR collector at 21:30 local time Mon-Fri (after SEC daily index publishes)
 
 [Timer]
-OnCalendar=Mon..Fri 18:30
+OnCalendar=Mon..Fri 21:30
 Persistent=false
 Unit=stockscanner-edgar.service
 

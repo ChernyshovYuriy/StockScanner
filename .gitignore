@@ -11,3 +11,4 @@ data/own.csv
 data/trading.db
 data/momentum.db
 data/market_cache.db
+data/edgar.db

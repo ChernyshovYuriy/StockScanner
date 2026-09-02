@@ -59,3 +59,51 @@ def test_run_collector_flags_today_activist_and_dedups(tmp_path, monkeypatch):
     assert stored == 3
     assert tmp_conn.execute("SELECT COUNT(*) FROM activist_filings").fetchone()[0] == 1
     assert store.already_sent(tmp_conn, today) is True
+
+
+def test_run_collector_falls_back_when_todays_index_is_missing(tmp_path, monkeypatch):
+    """Regression: today's master.idx often isn't published yet when this runs.
+
+    scan_range returns only yesterday's hits (today's fetch failed -> "error"
+    entry, no rows dated today). The collector must still flag yesterday's
+    13D instead of silently treating the run as a quiet day forever.
+    """
+    tmp_conn = store.connect(tmp_path / "edgar.db")
+    monkeypatch.setattr(edgar_service.store, "connect", lambda *a, **k: tmp_conn)
+
+    today = "2026-06-05"
+    yesterday = "2026-06-04"
+    canned = [
+        {"cik": 1, "ticker": "XYZ", "form": "SC 13D", "category": "activist_stake",
+         "date": yesterday, "url": "u1"},                   # yesterday's 13D, backfilled
+        {"date": today, "error": "404"},                    # today's index not published yet
+    ]
+    monkeypatch.setattr(edgar_service, "scan_range", lambda *a, **k: canned)
+    monkeypatch.setattr(edgar_service, "load_cik_to_ticker", lambda *a, **k: {})
+    monkeypatch.setattr(
+        edgar_service, "fetch_activist_filing",
+        lambda url, accession=None: {
+            "filer": "ACME PARTNERS LP", "pct": 6.1, "subject": "XYZ INC",
+            "accession": "acc-xyz", "raw_text": "<full 13D text>",
+        },
+    )
+
+    captured = {}
+    monkeypatch.setattr(
+        edgar_service, "send_text_email",
+        lambda subject, body: captured.update(subject=subject, body=body) or True,
+    )
+
+    set_backtest_clock(datetime(2026, 6, 5, 18, 30, tzinfo=TSX_TZ))
+    try:
+        edgar_service.run_collector("rid", dry_run=False)
+    finally:
+        set_backtest_clock(None)
+
+    assert captured, "expected yesterday's 13D to still be emailed"
+    assert "1 activist" in captured["subject"]
+    assert "XYZ" in captured["body"]
+
+    # The flag lands under yesterday's date (the actual filing date), not today's.
+    assert store.already_sent(tmp_conn, yesterday) is True
+    assert store.already_sent(tmp_conn, today) is False
