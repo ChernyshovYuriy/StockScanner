@@ -94,7 +94,8 @@ def _get_access_token(force: bool = False) -> str | None:
     data = resp.json()
     _token_cache["token"] = data["access_token"]
     # Refresh a minute early rather than racing the real expiry.
-    _token_cache["expires_at"] = time.time() + data.get("expires_in", 3600) - 60
+    # FINRA returns expires_in as a string (observed: "43162"), not a number.
+    _token_cache["expires_at"] = time.time() + int(data.get("expires_in", 3600)) - 60
     return _token_cache["token"]
 
 
@@ -118,7 +119,10 @@ def fetch_weekly_ats_volume(ticker: str, weeks: int = 8) -> list[dict]:
             _QUERY_URL,
             method="POST",
             cache_key=cache_key,
-            headers={"Authorization": f"Bearer {token}"},
+            # FINRA's Query API defaults to CSV (text/plain) regardless of
+            # the request body; Accept: application/json is required to get
+            # back the JSON shape _parse_ats_records() expects.
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
             json_body={
                 "compareFilters": [
                     {"fieldName": "issueSymbolIdentifier", "fieldValue": ticker, "compareType": "EQUAL"},
