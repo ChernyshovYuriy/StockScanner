@@ -76,7 +76,7 @@ def save_scan_hits(conn, hits):
 
 
 def save_insider_buys(conn, cik, buys):
-    rows = [(cik, b.get("filing_date"), b.get("owner"), b.get("shares"),
+    rows = [(cik, b.get("accession"), b.get("owner"), b.get("shares"),
              b.get("price"), b.get("date"),
              int(bool(b.get("is_officer"))), int(bool(b.get("is_director"))))
             for b in buys]

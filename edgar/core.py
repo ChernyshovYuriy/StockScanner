@@ -10,6 +10,7 @@ import json
 import threading
 import time
 from collections import deque
+from datetime import date
 from pathlib import Path
 
 import requests
@@ -106,7 +107,16 @@ def fetch_company_facts(cik_int, force=False):
     return get(url, cache_key=f"facts_{c}.json", force=force)
 
 
+def _cache_date():
+    """Today's date as a cache-key suffix. A seam so tests can pin it."""
+    return date.today().strftime("%Y%m%d")
+
+
 def fetch_submissions(cik_int, force=False):
+    """The CIK's recent filings, incl. Form 4s -- changes daily, so the cache
+    key is date-scoped: a plain per-CIK key would serve the same snapshot
+    back forever, and any Form 4 filed after the first-ever fetch for that
+    CIK would never be seen again."""
     c = cik10(cik_int)
     url = f"https://data.sec.gov/submissions/CIK{c}.json"
-    return get(url, cache_key=f"subs_{c}.json", force=force)
+    return get(url, cache_key=f"subs_{c}_{_cache_date()}.json", force=force)

@@ -83,7 +83,8 @@ def open_market_buys(activity):
                 buys.append({"owner": f.get("owner"),
                              "is_officer": f.get("is_officer"),
                              "is_director": f.get("is_director"),
-                             "filing_date": f.get("filing_date"), **t})
+                             "filing_date": f.get("filing_date"),
+                             "accession": f.get("accession"), **t})
     return buys
 
 

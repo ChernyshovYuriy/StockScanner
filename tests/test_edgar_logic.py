@@ -1,5 +1,6 @@
 """Offline tests for parsing/selection logic (no network)."""
 
+from edgar import store
 from edgar.fundamentals import _select
 from edgar.insiders import parse_form4, open_market_buys, cluster_flag
 
@@ -43,3 +44,36 @@ def test_cluster_flag_needs_two_distinct():
     two = [{"owner": "A"}, {"owner": "B"}]
     assert cluster_flag(one) is False
     assert cluster_flag(two) is True
+
+
+def test_open_market_buys_carries_the_form4_accession():
+    """Regression: the buy dict must carry the real Form 4 accession id, not
+    just filing_date -- store.save_insider_buys keys the DB on it."""
+    activity = [{
+        "owner": "DOE JANE", "is_officer": False, "is_director": True,
+        "filing_date": "2026-06-05", "accession": "0001234567-26-000001",
+        "transactions": [{"code": "P", "shares": 3000.0, "price": 9.5,
+                           "date": "2026-06-01", "direction": "A"}],
+    }]
+    buys = open_market_buys(activity)
+    assert buys[0]["accession"] == "0001234567-26-000001"
+
+
+def test_save_insider_buys_roundtrip_stores_real_accession(tmp_path):
+    """Regression: save_insider_buys previously put filing_date into the
+    accession column (a column/value mismatch), corrupting the field the
+    table's PRIMARY KEY relies on for uniqueness."""
+    conn = store.connect(tmp_path / "edgar.db")
+    activity = [{
+        "owner": "DOE JANE", "is_officer": False, "is_director": True,
+        "filing_date": "2026-06-05", "accession": "0001234567-26-000001",
+        "transactions": [{"code": "P", "shares": 3000.0, "price": 9.5,
+                           "date": "2026-06-01", "direction": "A"}],
+    }]
+    buys = open_market_buys(activity)
+    store.save_insider_buys(conn, 723125, buys)
+
+    row = conn.execute(
+        "SELECT cik, accession, owner, shares, price, txn_date FROM insider_buys"
+    ).fetchone()
+    assert row == (723125, "0001234567-26-000001", "DOE JANE", 3000.0, 9.5, "2026-06-01")
