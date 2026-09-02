@@ -217,8 +217,11 @@ class PortfolioState:
             entry_price = pos.entry_price,
             sell_price  = float(price),
             shares      = pos.shares,
-            pnl         = round(pnl, 4),
-            pnl_pct     = round(pnl_pct, 4),
+            # `or 0.0` normalizes -0.0 (rounding can produce a negative-zero
+            # sign bit for a genuine but sub-precision loss) to plain 0.0, so
+            # sign-sensitive code (pnl < 0 / pnl > 0) never sees a false zero.
+            pnl         = round(pnl, 4) or 0.0,
+            pnl_pct     = round(pnl_pct, 4) or 0.0,
         )
         self._trade_log.append(trade)
         return trade

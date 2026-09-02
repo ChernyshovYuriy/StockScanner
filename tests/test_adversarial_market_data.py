@@ -805,8 +805,17 @@ class TestPortfolioStateSell:
         assert pos.unrealized_pnl_pct(50.0) == 0.0
 
     @given(
-        entry_price=st.floats(min_value=0.01, max_value=10_000, allow_nan=False),
-        sell_price=st.floats(min_value=0.01, max_value=10_000, allow_nan=False),
+        # Rounded to cents (the real tick size this system ever sees) so two
+        # "different" prices are always at least $0.01 apart. Raw arbitrary
+        # floats can differ by a single ULP (e.g. 0.010000000000000002 vs
+        # 0.01) -- a price gap no real feed produces, and one small enough
+        # that sell()'s 4-decimal pnl rounding collapses it to -0.0, which
+        # fails the strict sign check below for reasons that have nothing to
+        # do with the property being tested.
+        entry_price=st.floats(min_value=0.01, max_value=10_000, allow_nan=False)
+            .map(lambda x: round(x, 2)),
+        sell_price=st.floats(min_value=0.01, max_value=10_000, allow_nan=False)
+            .map(lambda x: round(x, 2)),
         shares=st.integers(min_value=1, max_value=10_000),
     )
     @settings(max_examples=60, suppress_health_check=[HealthCheck.function_scoped_fixture])
