@@ -8,8 +8,8 @@ ownership of what "the" EDGAR DB connection is.
 
 Scoped to insider buys only (source='edgar_insider'), matching this
 package's reviewed schema. Activist stakes (13D/13G) aren't adapted here --
-if wanted later, they'd be a natural 4th `source` value, same extension
-pattern as ticker_map.py's SEDI note.
+if wanted later, they'd be a natural additional `source` value, same
+extension pattern as ticker_map.py's SEDI note.
 """
 
 from __future__ import annotations

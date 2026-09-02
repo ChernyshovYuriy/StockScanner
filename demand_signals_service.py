@@ -6,9 +6,9 @@ edgar_service.py and the TSX trio; see demand_signals/__init__.py).
 
 Runs daily: for each watchlisted ticker (reuses edgar.store's watchlist --
 the same CIKs already tracked for insider buys), normalizes EDGAR insider
-buys + FINRA dark-pool ratio + an options-flow proxy into
-demand_signals.db, so demand_signals.store.signals_for_ticker() has
-something to screen.
+buys + FINRA dark-pool ratio + FINRA daily short-sale volume + an
+options-flow proxy into demand_signals.db, so
+demand_signals.store.signals_for_ticker() has something to screen.
 
 No email digest yet -- same "interim" staging edgar_service.py itself
 started with. This just keeps the DB current.
@@ -29,7 +29,7 @@ from concurrent_utils import acquire_lock
 from log_utils import log
 from time_utils import market_now
 
-from demand_signals import darkpool, edgar_adapter, options_flow, store
+from demand_signals import darkpool, edgar_adapter, options_flow, short_volume, store
 from demand_signals.options_flow import YahooOptionsProvider
 from demand_signals.summary import summarize_ticker
 from demand_signals.ticker_map import get_us_ticker
@@ -66,6 +66,10 @@ def run_collector(run_id, dry_run=False):
         ats_weekly = darkpool.fetch_weekly_ats_volume(us_ticker)
         if ats_weekly:
             all_signals.extend(darkpool.build_signals(ticker, us_ticker, ats_weekly, fetched_at))
+
+        shortvol_daily = short_volume.fetch_daily_short_volume(us_ticker)
+        if shortvol_daily:
+            all_signals.extend(short_volume.build_signals(ticker, us_ticker, shortvol_daily, fetched_at))
 
         try:
             snap = provider.snapshot(us_ticker)

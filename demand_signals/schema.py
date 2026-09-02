@@ -1,5 +1,5 @@
 """
-The normalized "demand signal" record all three sources produce, and its
+The normalized "demand signal" record all four sources produce, and its
 flat SQLite row shape (see store.py). See demand_signals/__init__.py for
 what strength/direction mean per source and the honest data-limitations note.
 """
@@ -10,10 +10,10 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-Source = Literal["edgar_insider", "finra_darkpool", "options_flow"]
+Source = Literal["edgar_insider", "finra_darkpool", "finra_short_volume", "options_flow"]
 Direction = Literal["bullish", "bearish", "neutral"]
 
-_VALID_SOURCES = {"edgar_insider", "finra_darkpool", "options_flow"}
+_VALID_SOURCES = {"edgar_insider", "finra_darkpool", "finra_short_volume", "options_flow"}
 _VALID_DIRECTIONS = {"bullish", "bearish", "neutral"}
 
 
@@ -25,10 +25,13 @@ class DemandSignal:
     us_ticker   : symbol actually queried -- == ticker for US names, resolved
                   via ticker_map.get_us_ticker() for interlisted CAN names
     date        : ISO date the signal is FOR (not fetch date) -- FINRA
-                  week-ending date, Form 4 txn date, or options snapshot date
-    source      : 'edgar_insider' | 'finra_darkpool' | 'options_flow'
+                  week-ending date, Form 4 txn date, short-volume file date,
+                  or options snapshot date
+    source      : 'edgar_insider' | 'finra_darkpool' | 'finra_short_volume'
+                  | 'options_flow'
     signal_type : e.g. 'insider_buy', 'darkpool_ratio_rising',
-                  'unusual_call_volume', 'unusual_put_volume'
+                  'short_volume_covering', 'unusual_call_volume',
+                  'unusual_put_volume'
     direction   : 'bullish' | 'bearish' | 'neutral'
     strength    : 0.0-1.0, source-specific magnitude (see each source's
                   module docstring for exactly how it's computed)

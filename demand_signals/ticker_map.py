@@ -1,9 +1,9 @@
 """
 Canadian symbol -> US symbol mapping, for interlisted names only.
 
-finra_darkpool.py and options_flow.py are US-market sources; a TSX-listed
-ticker only gets a signal from them if it also trades on a US exchange
-under a (usually different) symbol. Free/automated cross-listing lookups
+finra_darkpool.py, short_volume.py, and options_flow.py are US-market
+sources; a TSX-listed ticker only gets a signal from them if it also trades
+on a US exchange under a (usually different) symbol. Free/automated cross-listing lookups
 are unreliable, so this is a small hand-curated table -- same convention
 this repo already uses for other short, rarely-changing lists (config.py's
 EDGAR_FORMS, the EDGAR watchlist) rather than fragile inference.
@@ -14,7 +14,7 @@ to pre-populate the whole TSX.
 EXTENSION POINT -- Canadian-only names (no US line, e.g. most TSX-V/CSE
 juniors) get no signal here at all. get_us_ticker() returning None IS that
 gap, not a bug: a future SEDI (Canadian insider filings) source is the
-domestic-only counterpart to edgar_insider and would plug in as a 4th
+domestic-only counterpart to edgar_insider and would plug in as another
 `source` value in schema.py, keyed on the CAN ticker directly (no mapping
 needed, since SEDI already speaks in CAN symbols/issuers).
 """

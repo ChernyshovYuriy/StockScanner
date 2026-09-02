@@ -16,7 +16,8 @@ def test_plain_bullish_skew_alone_is_mild_bullish():
     rows = [_row("options_flow", "call_put_skew", "bullish", date="2026-09-02")]
     summary = summarize_ticker(rows)
     assert summary["label"] == "mild bullish"
-    assert "no unusual volume, no dark-pool trend, no insider buys" in summary["reasons"]
+    assert ("no unusual volume, no dark-pool trend, no short-volume trend, no insider buys"
+            in summary["reasons"])
 
 
 def test_plain_bearish_skew_alone_is_mild_bearish():
@@ -39,6 +40,29 @@ def test_darkpool_rising_plus_bullish_skew_is_bullish_with_month_in_reason():
     summary = summarize_ticker(rows)
     assert summary["label"] == "bullish"
     assert any("July" in r for r in summary["reasons"])
+
+
+def test_short_volume_covering_alone_is_bullish_and_elevated():
+    rows = [_row("finra_short_volume", "short_volume_covering", "bullish", date="2026-08-30")]
+    summary = summarize_ticker(rows)
+    assert summary["label"] == "bullish"
+    assert any("short sellers stepping back" in r for r in summary["reasons"])
+
+
+def test_short_volume_pressure_alone_is_bearish_and_elevated():
+    rows = [_row("finra_short_volume", "short_volume_pressure", "bearish", date="2026-08-30")]
+    summary = summarize_ticker(rows)
+    assert summary["label"] == "bearish"
+    assert any("short sellers piling in" in r for r in summary["reasons"])
+
+
+def test_plain_short_volume_ratio_alone_is_ignored_like_a_flat_darkpool_row():
+    # A plain (non-trend-confirmed) daily reading contributes no reason on
+    # its own -- same treatment as an ordinary (non-rising) darkpool_ratio
+    # row: only the trend-confirmed signal_types are surfaced by this layer.
+    rows = [_row("finra_short_volume", "short_volume_ratio", "neutral", date="2026-08-30")]
+    summary = summarize_ticker(rows)
+    assert summary["label"] == "no data"
 
 
 def test_unusual_volume_both_sides_combines_into_one_reason():

@@ -154,11 +154,12 @@ EDGAR_BACKFILL_DAYS = 5
 
 # ─────────────────────────────────────────────────────────────────────────────
 # demand_signals/ — a 5th, structurally independent service: normalizes EDGAR
-# insider buys, FINRA ATS dark-pool volume, and an options-flow proxy into one
-# "real buyer demand" schema, screenable per ticker. US-market sources; see
-# demand_signals/ticker_map.py for the CAN interlisting gap. Own DB, own cache,
-# same conventions as EDGAR_* above -- kept separate rather than folded into
-# edgar_service.py, matching this repo's "services stay independent" precedent.
+# insider buys, FINRA ATS dark-pool volume, FINRA's daily short-sale-volume
+# file, and an options-flow proxy into one "real buyer demand" schema,
+# screenable per ticker. US-market sources; see demand_signals/ticker_map.py
+# for the CAN interlisting gap. Own DB, own cache, same conventions as
+# EDGAR_* above -- kept separate rather than folded into edgar_service.py,
+# matching this repo's "services stay independent" precedent.
 
 DEMAND_DB_PATH = DATA_PATH / "demand_signals.db"
 DEMAND_CACHE_PATH = CACHE_PATH / "demand_signals"
@@ -182,3 +183,12 @@ DEMAND_DARKPOOL_RISING_WEEKS = 3
 # volume/open-interest ratio above which an options chain leg is flagged
 # "unusual" for the options_flow proxy.
 DEMAND_OPTIONS_UNUSUAL_VOL_OI_RATIO = 2.0
+
+# FINRA daily short-sale-volume file (short_volume.py): the daily
+# short-volume/total-volume ratio needs no auth and no OAuth app, unlike
+# darkpool.py's ATS weekly summary -- see demand_signals/short_volume.py.
+# Consecutive rising/falling daily readings needed to flag a ticker.
+DEMAND_SHORTVOL_TREND_DAYS = 3
+# Day-over-day ratio change treated as "full strength" (1.0) for the
+# short_volume_covering/short_volume_pressure signal.
+DEMAND_SHORTVOL_STRENGTH_SCALE = 0.05

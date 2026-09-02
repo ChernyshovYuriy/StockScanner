@@ -1,7 +1,7 @@
 """Offline integration test for demand_signals_service.run_collector (no network)."""
 
 import demand_signals_service
-from demand_signals import darkpool, store
+from demand_signals import darkpool, short_volume, store
 from demand_signals.options_flow import OptionsSnapshot
 from edgar import store as edgar_store
 
@@ -14,7 +14,7 @@ class _FakeProvider:
         return self._snapshot
 
 
-def test_run_collector_combines_all_three_sources(tmp_path, monkeypatch):
+def test_run_collector_combines_all_four_sources(tmp_path, monkeypatch):
     demand_conn = store.connect(tmp_path / "demand_signals.db")
     edgar_conn = edgar_store.connect(tmp_path / "edgar.db")
     monkeypatch.setattr(demand_signals_service.store, "connect", lambda *a, **k: demand_conn)
@@ -33,6 +33,10 @@ def test_run_collector_combines_all_three_sources(tmp_path, monkeypatch):
                          lambda us_ticker, weeks=8: [{"week_start": "2026-06-01", "shares": 50_000}])
     monkeypatch.setattr(darkpool, "_total_weekly_volume", lambda us_ticker, week: 1_000_000)
 
+    monkeypatch.setattr(short_volume, "fetch_daily_short_volume",
+                         lambda us_ticker, days=10: [{"date": "2026-06-05", "short_shares": 50_000,
+                                                       "total_shares": 500_000, "ratio": 0.1}])
+
     snap = OptionsSnapshot(us_ticker="MU", as_of_date="2026-06-05",
                             call_volume=300, put_volume=50, call_oi=100, put_oi=100)
     monkeypatch.setattr(demand_signals_service, "YahooOptionsProvider",
@@ -42,7 +46,7 @@ def test_run_collector_combines_all_three_sources(tmp_path, monkeypatch):
 
     stored = store.signals_for_ticker(demand_conn, "MU")
     sources = {s.source for s in stored}
-    assert sources == {"edgar_insider", "finra_darkpool", "options_flow"}
+    assert sources == {"edgar_insider", "finra_darkpool", "finra_short_volume", "options_flow"}
 
 
 def test_run_collector_skips_tickers_with_no_us_line(tmp_path, monkeypatch):
@@ -58,10 +62,14 @@ def test_run_collector_skips_tickers_with_no_us_line(tmp_path, monkeypatch):
     darkpool_calls = {"n": 0}
     monkeypatch.setattr(darkpool, "fetch_weekly_ats_volume",
                          lambda *a, **k: darkpool_calls.__setitem__("n", darkpool_calls["n"] + 1) or [])
+    shortvol_calls = {"n": 0}
+    monkeypatch.setattr(short_volume, "fetch_daily_short_volume",
+                         lambda *a, **k: shortvol_calls.__setitem__("n", shortvol_calls["n"] + 1) or [])
 
     demand_signals_service.run_collector("rid", dry_run=False)
 
     assert darkpool_calls["n"] == 0  # never even attempted for an uncovered ticker
+    assert shortvol_calls["n"] == 0
     assert store.signals_for_ticker(demand_conn, "JUNIOR.V") == []
 
 
@@ -90,6 +98,7 @@ def test_run_collector_options_flow_failure_does_not_sink_the_run(tmp_path, monk
     monkeypatch.setattr(demand_signals_service, "load_cik_to_ticker", lambda: {723125: "MU"})
     monkeypatch.setattr(demand_signals_service, "get_us_ticker", lambda t: "MU")
     monkeypatch.setattr(darkpool, "fetch_weekly_ats_volume", lambda *a, **k: [])
+    monkeypatch.setattr(short_volume, "fetch_daily_short_volume", lambda *a, **k: [])
 
     class _RaisingProvider:
         def snapshot(self, us_ticker):
