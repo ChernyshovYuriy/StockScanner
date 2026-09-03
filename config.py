@@ -161,8 +161,9 @@ MACRO_CREDIT_TREND_DAYS = 5
 MACRO_LIQUIDITY_TREND_WEEKS = 3
 
 # Output paths -- kept fully separate from the core and momentum sleeves'
-# out/ files.
-MACRO_REPORT_PATH = OUT_PATH / "macro_report.html"
+# out/ files. No MACRO_REPORT_PATH (momentum's pipeline-report equivalent):
+# this sleeve has no own screener/pipeline, so there's no pipeline report to
+# send -- only the position-monitor report below.
 MACRO_REPORT_POSITION_PATH = OUT_PATH / "macro_position_monitor_report.html"
 MACRO_ALERTS_PATH = OUT_PATH / "macro_alerts"
 
