@@ -45,11 +45,30 @@ def test_fetch_series_returns_none_without_api_key(monkeypatch):
     assert macro_regime._fetch_series("T10Y2Y", 3) is None
 
 
+def test_get_macro_regime_force_bypasses_cache(monkeypatch):
+    """force=True must reach CachedClient.request's own force kwarg -- was
+    previously a dead parameter, never actually plumbed through."""
+    monkeypatch.setattr(macro_regime, "FRED_API_KEY", "dummy")
+    seen_force = []
+
+    def fake_request(url, *, cache_key=None, force=False, is_json=True):
+        seen_force.append(force)
+        return {"observations": [{"date": "d1", "value": "0.1"}, {"date": "d2", "value": "0.2"}]}
+
+    monkeypatch.setattr(macro_regime._client, "request", fake_request)
+    macro_regime.get_macro_regime(force=True)
+    assert seen_force and all(f is True for f in seen_force)
+
+    seen_force.clear()
+    macro_regime.get_macro_regime(force=False)
+    assert seen_force and all(f is False for f in seen_force)
+
+
 # ── _vote_series ─────────────────────────────────────────────────────────────
 
 def test_vote_series_returns_plus1_when_trend_matches_bullish_direction(monkeypatch):
     rows = [{"date": "d1", "value": 0.1}, {"date": "d2", "value": 0.2}, {"date": "d3", "value": 0.3}]
-    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n: rows)
+    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n, force=False: rows)
     vote, detail = macro_regime._vote_series("T10Y2Y", 3, rising_is_bullish=True)
     assert vote == 1
     assert detail["latest"] == 0.3
@@ -58,20 +77,20 @@ def test_vote_series_returns_plus1_when_trend_matches_bullish_direction(monkeypa
 
 def test_vote_series_returns_minus1_when_trend_matches_bearish_direction(monkeypatch):
     rows = [{"date": "d1", "value": 0.3}, {"date": "d2", "value": 0.2}, {"date": "d3", "value": 0.1}]
-    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n: rows)
+    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n, force=False: rows)
     vote, _ = macro_regime._vote_series("T10Y2Y", 3, rising_is_bullish=True)
     assert vote == -1
 
 
 def test_vote_series_returns_zero_on_mixed_trend(monkeypatch):
     rows = [{"date": "d1", "value": 0.1}, {"date": "d2", "value": 0.3}, {"date": "d3", "value": 0.2}]
-    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n: rows)
+    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n, force=False: rows)
     vote, _ = macro_regime._vote_series("T10Y2Y", 3, rising_is_bullish=True)
     assert vote == 0
 
 
 def test_vote_series_returns_zero_and_error_detail_when_unavailable(monkeypatch):
-    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n: None)
+    monkeypatch.setattr(macro_regime, "_fetch_series", lambda series_id, n, force=False: None)
     vote, detail = macro_regime._vote_series("T10Y2Y", 3, rising_is_bullish=True)
     assert vote == 0
     assert "error" in detail
@@ -88,7 +107,7 @@ def test_vote_series_returns_zero_and_error_detail_when_unavailable(monkeypatch)
     ({"T10Y2Y": -1, "BAMLH0A0HYM2": -1, "WALCL": -1}, "risk_off"),
 ])
 def test_get_macro_regime_composite_thresholds(monkeypatch, votes, expected_label):
-    def fake_vote_series(series_id, lookback_n, rising_is_bullish):
+    def fake_vote_series(series_id, lookback_n, rising_is_bullish, force=False):
         return votes[series_id], {}
     monkeypatch.setattr(macro_regime, "_vote_series", fake_vote_series)
     result = macro_regime.get_macro_regime()
@@ -106,7 +125,7 @@ def test_get_macro_regime_returns_neutral_when_fred_api_key_unset(monkeypatch):
 
 
 def test_get_macro_regime_one_series_fetch_failure_does_not_crash_whole_call(monkeypatch):
-    def fake_vote_series(series_id, lookback_n, rising_is_bullish):
+    def fake_vote_series(series_id, lookback_n, rising_is_bullish, force=False):
         if series_id == "WALCL":
             raise RuntimeError("boom")
         return 1, {}

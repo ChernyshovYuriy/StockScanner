@@ -224,7 +224,10 @@ def run_macro_buy(dry_run: bool, run_id: Optional[str] = None) -> None:
         except (ValueError, TypeError):
             per_share_risk = None
 
-        if per_share_risk is None or per_share_risk <= 0:
+        if per_share_risk is None or not (per_share_risk > 0):
+            # Stop missing/invalid (NaN, or at/above entry) -- per_share_risk
+            # <= 0 alone doesn't catch NaN (all NaN comparisons are False in
+            # Python), same bug fixed in virtual_buy.py/momentum_buy.py.
             print(f"{Fore.YELLOW}invalid/missing stop data — skipped{Style.RESET_ALL}")
             continue
 

@@ -301,7 +301,7 @@ def run_virtual_buy(
         except (ValueError, TypeError):
             per_share_risk = None
 
-        if per_share_risk is None or per_share_risk <= 0:
+        if per_share_risk is None or not (per_share_risk > 0):
             # Stop missing/invalid (NaN, or at/above entry) — the position
             # can't be risk-sized. Buying it anyway at full equal-split
             # allocation used to silently promote a broken setup to the

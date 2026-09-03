@@ -94,7 +94,7 @@ _SERIES = {
 }
 
 
-def _fetch_series(series_id: str, lookback_n: int) -> list[dict] | None:
+def _fetch_series(series_id: str, lookback_n: int, force: bool = False) -> list[dict] | None:
     """Most recent `lookback_n` observations for `series_id`, oldest first,
     or None on any failure (missing key, network error, bad response) --
     the caller treats a failed series as a 0 vote, not a crash.
@@ -110,7 +110,7 @@ def _fetch_series(series_id: str, lookback_n: int) -> list[dict] | None:
     )
     cache_key = f"{series_id}_{cache_date()}.json"
     try:
-        payload = _client.request(url, cache_key=cache_key, is_json=True)
+        payload = _client.request(url, cache_key=cache_key, force=force, is_json=True)
     except requests.RequestException:
         return None
     observations = payload.get("observations", []) if isinstance(payload, dict) else []
@@ -139,11 +139,11 @@ def _consecutive_trend(values: list[float], rising: bool) -> bool:
     return all(values[i] > values[i + 1] for i in range(len(values) - 1))
 
 
-def _vote_series(series_id: str, lookback_n: int, rising_is_bullish: bool) -> tuple[int, dict]:
+def _vote_series(series_id: str, lookback_n: int, rising_is_bullish: bool, force: bool = False) -> tuple[int, dict]:
     """+1 if the series is consecutive-trending toward its bullish direction,
     -1 if trending toward its bearish direction, 0 if flat/mixed/unavailable.
     Also returns a `detail` dict for the caller's transparency/debugging."""
-    rows = _fetch_series(series_id, lookback_n)
+    rows = _fetch_series(series_id, lookback_n, force=force)
     if not rows:
         return 0, {"error": "unavailable (missing FRED_API_KEY or fetch failed)"}
 
@@ -162,10 +162,10 @@ def get_macro_regime(force: bool = False) -> dict:
     """
     Compute today's composite macro regime reading.
 
-    force: bypass the per-day disk cache and re-fetch every series (mirrors
-    CachedClient.request's own `force` kwarg, exposed here for completeness --
-    not used by macro_buy.py/macro_monitor.py in normal operation, since one
-    fetch per day is the intended cadence for a T+1/weekly-lagged signal).
+    force: bypass the per-day disk cache and re-fetch every series (passed
+    straight through to CachedClient.request's own `force` kwarg) -- not
+    used by macro_buy.py/macro_monitor.py in normal operation, since one
+    fetch per day is the intended cadence for a T+1/weekly-lagged signal.
 
     Returns {"label": "risk_on"|"neutral"|"risk_off", "composite": int,
              "votes": {series_id: int}, "detail": {series_id: {...}},
@@ -180,7 +180,7 @@ def get_macro_regime(force: bool = False) -> dict:
 
     for series_id, (lookback_n, rising_is_bullish) in _SERIES.items():
         try:
-            vote, series_detail = _vote_series(series_id, lookback_n, rising_is_bullish)
+            vote, series_detail = _vote_series(series_id, lookback_n, rising_is_bullish, force=force)
         except Exception as exc:
             # One series' unexpected failure must not sink the whole
             # regime read -- it just contributes no vote.

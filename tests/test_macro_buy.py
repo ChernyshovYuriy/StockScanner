@@ -166,6 +166,28 @@ def test_buy_skips_stale_intents(tmp_path, monkeypatch):
     assert get_open_positions_df().empty
 
 
+def test_buy_skips_nan_stop_price_without_crashing(tmp_path, monkeypatch):
+    """A NULL/non-numeric stop_price round-trips through DuckDB as NaN, not
+    None -- float("nan") parses successfully (doesn't raise), and a bare
+    `per_share_risk <= 0` check is always False for NaN, so the candidate
+    used to slip past the guard and crash int(dollar_risk / per_share_risk).
+    A bad row must be skipped, not take down the whole run."""
+    rows = [
+        _intent_row("GOOD", rr=3.0, signal_date=_today_iso(), entry=10.0, stop=9.0),
+        _intent_row("BADSTOP", rr=2.0, signal_date=_today_iso(), entry=10.0, stop=float("nan")),
+    ]
+    core_path, macro_path = _seed(tmp_path, rows)
+    monkeypatch.setattr(macro_buy, "CORE_DB_PATH", core_path)
+    monkeypatch.setattr(macro_buy, "MACRO_MAX_POSITIONS", 5)
+    monkeypatch.setattr(macro_buy, "get_macro_regime", lambda: _regime("risk_on"))
+    monkeypatch.setattr(macro_buy, "fetch_latest_price", lambda t: 10.0)
+
+    macro_buy.run_macro_buy(dry_run=False)  # must not raise
+
+    tickers = set(get_open_positions_df()["ticker"])
+    assert tickers == {"GOOD"}  # bad row skipped, good row still bought
+
+
 def test_buy_dry_run_writes_nothing(tmp_path, monkeypatch):
     rows = [_intent_row("AAA", rr=3.0, signal_date=_today_iso())]
     core_path, macro_path = _seed(tmp_path, rows)
