@@ -97,10 +97,13 @@
         <span class="stat-value">{{ quality_total_cached }}</span>
       </div>
     </div>
-    <form class="rebuild-form" method="post" action="{{ url_for('conviction_refresh_quality') }}">
+    <form class="rebuild-form" method="post" action="{{ url_for('conviction_refresh_quality') }}" id="rebuild-quality-form">
       <button class="refresh-btn" type="submit">Rebuild Quality List</button>
     </form>
     <p class="conviction-note">Re-fetches the CAN ticker universe and refreshes fundamentals (cached — only new tickers cost a network call).</p>
+    <p class="conviction-note" id="quality-working" hidden>
+      Pulling tickers and checking fundamentals, please wait — this page will reload automatically when it's done.
+    </p>
   </div>
 
   <div class="conviction-section">
@@ -181,9 +184,12 @@
       {% endif %}
       — checks every quality-watchlist ticker's 52-week high (this scans all qualified tickers, takes a minute or two).
     </p>
-    <form method="post" action="{{ url_for('conviction_refresh_candidates_route') }}">
+    <form method="post" action="{{ url_for('conviction_refresh_candidates_route') }}" id="refresh-candidates-form">
       <button class="refresh-btn" type="submit">Refresh Screener Now</button>
     </form>
+    <p class="conviction-note" id="candidates-working" hidden>
+      Scanning tickers, please wait — this page will reload automatically when it's done.
+    </p>
     {% if not candidates %}
       <p style="margin-top:12px;">No buy candidates from the last run.</p>
     {% else %}
@@ -206,4 +212,28 @@
     </div>
     {% endif %}
   </div>
+
+  <script>
+    // Both refresh actions are plain synchronous form POSTs (no automation,
+    // no background job/polling, per the user's "no need automation"
+    // request) -- but they take real time (a network call per ticker), so
+    // without this the button just sits there with no sign anything is
+    // happening. This only disables the button and reveals a "working" note
+    // while the browser waits for the POST to complete and redirect back.
+    function markWorking(formId, noteId, label) {
+      var form = document.getElementById(formId);
+      var note = document.getElementById(noteId);
+      if (!form) return;
+      form.addEventListener('submit', function () {
+        var btn = form.querySelector('button[type="submit"]');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = label;
+        }
+        if (note) note.hidden = false;
+      });
+    }
+    markWorking('rebuild-quality-form', 'quality-working', 'Rebuilding…');
+    markWorking('refresh-candidates-form', 'candidates-working', 'Scanning…');
+  </script>
 {% endblock %}
