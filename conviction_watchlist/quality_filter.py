@@ -108,14 +108,21 @@ def rebuild(progress_cb=None) -> dict:
     main-board (.TO) name (cache-backed, so only new/never-fetched tickers
     cost a network call), and return the updated cache. `progress_cb(i,
     total)` is called periodically if given -- the dashboard uses this to
-    show a coarse progress note; the CLI's main() prints instead."""
+    show a coarse progress note; the CLI's main() prints instead.
+
+    Saves every 25 tickers, not just once at the end -- a slow host (e.g. a
+    Raspberry Pi vs. the dev machine this was first tested on) or any
+    mid-run hiccup must not lose everything fetched so far, and a second
+    click of "Rebuild Quality List" then only has to fetch what's left."""
     tickers = fetch_can_tickers()
     main_board = [t for t in tickers if t.endswith(".TO")]
     cache = load_cache()
     for i, ticker in enumerate(main_board):
         fetch_info(ticker, cache)
-        if progress_cb and i % 25 == 0:
-            progress_cb(i, len(main_board))
+        if i % 25 == 0:
+            save_cache(cache)
+            if progress_cb:
+                progress_cb(i, len(main_board))
     save_cache(cache)
     return cache
 

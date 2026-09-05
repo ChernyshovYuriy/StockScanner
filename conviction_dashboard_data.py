@@ -21,6 +21,7 @@ def build_conviction_view() -> dict:
         "settings": load_settings(),
         "quality_count": len(qualified_tickers(cache)),
         "quality_total_cached": len(cache),
+        "quality_errors": sum(1 for r in cache.values() if "error" in r),
         "candidates_generated_at": candidates_result.get("generated_at"),
         "candidates": candidates_result.get("candidates", []),
         "holdings": compute_status(),

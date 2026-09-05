@@ -96,6 +96,10 @@
         <span class="stat-label">Tickers Cached</span>
         <span class="stat-value">{{ quality_total_cached }}</span>
       </div>
+      <div class="stat-chip">
+        <span class="stat-label">Fetch Errors</span>
+        <span class="stat-value {{ 'pnl-neg' if quality_errors else '' }}">{{ quality_errors }}</span>
+      </div>
     </div>
     <form class="rebuild-form" method="post" action="{{ url_for('conviction_refresh_quality') }}" id="rebuild-quality-form">
       <button class="refresh-btn" type="submit">Rebuild Quality List</button>

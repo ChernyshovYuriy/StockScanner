@@ -278,7 +278,7 @@ def create_app() -> Flask:
             view = build_conviction_view()
             error = request.args.get("error")
         except Exception as e:
-            view = {"settings": {}, "quality_count": 0, "quality_total_cached": 0,
+            view = {"settings": {}, "quality_count": 0, "quality_total_cached": 0, "quality_errors": 0,
                     "candidates_generated_at": None, "candidates": [], "holdings": []}
             error = f"Failed to load conviction watchlist state: {e}"
         return render_template("conviction.html", error=error, **view)
