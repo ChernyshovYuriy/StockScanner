@@ -16,6 +16,29 @@
     .conviction-section h2 { font-size: 15px; margin: 0 0 10px; }
     .conviction-note { color: var(--text-muted); font-size: 12px; margin: 4px 0 10px; }
 
+    /* The one action most visits are for: update data, see candidates. Made
+       deliberately the loudest thing on the page instead of two small
+       buttons buried in unrelated sections. */
+    .update-panel {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 18px 20px; margin: 18px 0 28px;
+    }
+    .primary-btn {
+      background: var(--accent, #2f55d4); color: #fff; border: none;
+      border-radius: 6px; padding: 13px 24px; cursor: pointer;
+      font-size: 15px; font-weight: 700;
+    }
+    .primary-btn:hover { filter: brightness(1.08); }
+    .primary-btn:disabled { opacity: 0.6; cursor: default; }
+    .update-status { margin-top: 12px; font-size: 13px; color: var(--text-muted); }
+    .update-status strong { color: var(--text); }
+    .update-advanced { margin-top: 14px; }
+    .update-advanced summary {
+      cursor: pointer; font-size: 12px; color: var(--text-muted); user-select: none;
+    }
+    .update-advanced summary:hover { color: var(--text); }
+    .advanced-buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+
     .inline-form {
       display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
       background: var(--card-bg); border: 1px solid var(--border);
@@ -41,7 +64,12 @@
       background: none; border: 1px solid var(--sell); color: var(--sell);
       border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 12px;
     }
-    .rebuild-form { display: inline; }
+
+    .controls-details summary {
+      cursor: pointer; font-size: 15px; font-weight: 600; user-select: none;
+      margin: 0 0 10px;
+    }
+    .controls-details summary:hover { color: var(--conviction-accent, #92400e); }
   </style>
 {% endblock %}
 {% block content %}
@@ -51,63 +79,70 @@
   </div>
   <p class="conviction-note">
     Standalone tool for the real RBC account (Margin + TFSA) — buy-and-hold sized for conviction.
-    Nothing here places a trade automatically; every add/remove/refresh below is a manual action you take.
+    Nothing here places a trade automatically; every add/remove/update below is a manual action you take.
+    "Refresh page" above just reloads what's already been computed — use the button below to actually pull fresh data.
   </p>
 
   {% if error %}
     <p class="banner banner-error">{{ error }}</p>
   {% endif %}
 
-  <div class="conviction-section">
-    <h2>Controls</h2>
-    <form class="inline-form" method="post" action="{{ url_for('conviction_settings') }}">
-      <div class="field">
-        <label for="dip_pct_off_high">Buy: % off 52w high</label>
-        <input class="narrow" type="number" step="0.1" min="0" max="95" id="dip_pct_off_high"
-               name="dip_pct_off_high" value="{{ '%.1f'|format(settings.get('dip_pct_off_high', 0.20) * 100) }}">
-      </div>
-      <div class="field">
-        <label for="trailing_stop_pct">Sell: % off peak (trailing stop)</label>
-        <input class="narrow" type="number" step="0.1" min="0" max="95" id="trailing_stop_pct"
-               name="trailing_stop_pct" value="{{ '%.1f'|format(settings.get('trailing_stop_pct', 0.25) * 100) }}">
-      </div>
-      <div class="field">
-        <label for="min_market_cap_cad">Min market cap (CAD)</label>
-        <input class="wide" type="number" step="1000000" min="0" id="min_market_cap_cad"
-               name="min_market_cap_cad" value="{{ settings.get('min_market_cap_cad', 2000000000)|int }}">
-      </div>
-      <div class="field">
-        <label for="min_price">Min price ($)</label>
-        <input class="narrow" type="number" step="0.5" min="0" id="min_price"
-               name="min_price" value="{{ settings.get('min_price', 5.0) }}">
-      </div>
-      <button class="save-btn" type="submit">Save Controls</button>
+  <div class="update-panel">
+    <form method="post" action="{{ url_for('conviction_update_all') }}" id="update-all-form">
+      <button class="primary-btn" type="submit">🔄 Update Watchlist &amp; Find Buy Candidates</button>
     </form>
+    <p class="conviction-note" id="update-all-working" hidden>
+      Working — pulling tickers, checking fundamentals, then scanning for buy candidates.
+      This can take a couple of minutes; the page reloads automatically when it's done.
+    </p>
+    <p class="update-status">
+      Qualified: <strong>{{ quality_count }}</strong> of {{ quality_total_cached }} cached tickers
+      {% if quality_errors %}<span class="pnl-neg">({{ quality_errors }} fetch errors)</span>{% endif %}
+      &nbsp;·&nbsp; Candidates last computed:
+      <strong>{{ candidates_generated_at if candidates_generated_at else "never" }}</strong>
+    </p>
+    <details class="update-advanced">
+      <summary>Advanced: run one step at a time</summary>
+      <div class="advanced-buttons">
+        <form method="post" action="{{ url_for('conviction_refresh_quality') }}" id="rebuild-quality-form">
+          <button class="refresh-btn" type="submit">Rebuild Quality List Only</button>
+        </form>
+        <form method="post" action="{{ url_for('conviction_refresh_candidates_route') }}" id="refresh-candidates-form">
+          <button class="refresh-btn" type="submit">Refresh Screener Only</button>
+        </form>
+      </div>
+      <p class="conviction-note">
+        Quality list: re-fetches the CAN ticker universe and refreshes fundamentals (cached — only new tickers cost a network call).
+        Screener: re-checks every already-qualified ticker's 52-week high — useful after changing the dip % above without waiting for a full quality-list rebuild.
+      </p>
+      <p class="conviction-note" id="quality-working" hidden>Pulling tickers and checking fundamentals…</p>
+      <p class="conviction-note" id="candidates-working" hidden>Scanning tickers…</p>
+    </details>
   </div>
 
   <div class="conviction-section">
-    <h2>Quality Watchlist</h2>
-    <div class="stats-row">
-      <div class="stat-chip">
-        <span class="stat-label">Qualified Tickers</span>
-        <span class="stat-value">{{ quality_count }}</span>
-      </div>
-      <div class="stat-chip">
-        <span class="stat-label">Tickers Cached</span>
-        <span class="stat-value">{{ quality_total_cached }}</span>
-      </div>
-      <div class="stat-chip">
-        <span class="stat-label">Fetch Errors</span>
-        <span class="stat-value {{ 'pnl-neg' if quality_errors else '' }}">{{ quality_errors }}</span>
-      </div>
+    <h2>Buy Candidates</h2>
+    {% if not candidates %}
+      <p>No buy candidates from the last run.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="sortable">
+        <thead>
+          <tr><th>Ticker</th><th>Now</th><th>52w High</th><th>Off High</th></tr>
+        </thead>
+        <tbody>
+          {% for c in candidates %}
+          <tr>
+            <td><a href="https://ca.finance.yahoo.com/quote/{{ c.ticker }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
+            <td>{{ "%.2f"|format(c.current) }}</td>
+            <td>{{ "%.2f"|format(c.high_52w) }}</td>
+            <td class="pnl-neg">{{ "%.1f"|format(c.pct_off_high * 100) }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
-    <form class="rebuild-form" method="post" action="{{ url_for('conviction_refresh_quality') }}" id="rebuild-quality-form">
-      <button class="refresh-btn" type="submit">Rebuild Quality List</button>
-    </form>
-    <p class="conviction-note">Re-fetches the CAN ticker universe and refreshes fundamentals (cached — only new tickers cost a network call).</p>
-    <p class="conviction-note" id="quality-working" hidden>
-      Pulling tickers and checking fundamentals, please wait — this page will reload automatically when it's done.
-    </p>
+    {% endif %}
   </div>
 
   <div class="conviction-section">
@@ -179,46 +214,37 @@
   </div>
 
   <div class="conviction-section">
-    <h2>Buy Candidates</h2>
-    <p class="conviction-note">
-      {% if candidates_generated_at %}
-        Last computed: {{ candidates_generated_at }}
-      {% else %}
-        Never computed yet — click Refresh below.
-      {% endif %}
-      — checks every quality-watchlist ticker's 52-week high (this scans all qualified tickers, takes a minute or two).
-    </p>
-    <form method="post" action="{{ url_for('conviction_refresh_candidates_route') }}" id="refresh-candidates-form">
-      <button class="refresh-btn" type="submit">Refresh Screener Now</button>
-    </form>
-    <p class="conviction-note" id="candidates-working" hidden>
-      Scanning tickers, please wait — this page will reload automatically when it's done.
-    </p>
-    {% if not candidates %}
-      <p style="margin-top:12px;">No buy candidates from the last run.</p>
-    {% else %}
-    <div class="table-wrap" style="margin-top:12px;">
-      <table class="sortable">
-        <thead>
-          <tr><th>Ticker</th><th>Now</th><th>52w High</th><th>Off High</th></tr>
-        </thead>
-        <tbody>
-          {% for c in candidates %}
-          <tr>
-            <td><a href="https://ca.finance.yahoo.com/quote/{{ c.ticker }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
-            <td>{{ "%.2f"|format(c.current) }}</td>
-            <td>{{ "%.2f"|format(c.high_52w) }}</td>
-            <td class="pnl-neg">{{ "%.1f"|format(c.pct_off_high * 100) }}%</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
+    <details class="controls-details">
+      <summary>Controls (thresholds &amp; quality bar)</summary>
+      <form class="inline-form" method="post" action="{{ url_for('conviction_settings') }}">
+        <div class="field">
+          <label for="dip_pct_off_high">Buy: % off 52w high</label>
+          <input class="narrow" type="number" step="0.1" min="0" max="95" id="dip_pct_off_high"
+                 name="dip_pct_off_high" value="{{ '%.1f'|format(settings.get('dip_pct_off_high', 0.20) * 100) }}">
+        </div>
+        <div class="field">
+          <label for="trailing_stop_pct">Sell: % off peak (trailing stop)</label>
+          <input class="narrow" type="number" step="0.1" min="0" max="95" id="trailing_stop_pct"
+                 name="trailing_stop_pct" value="{{ '%.1f'|format(settings.get('trailing_stop_pct', 0.25) * 100) }}">
+        </div>
+        <div class="field">
+          <label for="min_market_cap_cad">Min market cap (CAD)</label>
+          <input class="wide" type="number" step="1000000" min="0" id="min_market_cap_cad"
+                 name="min_market_cap_cad" value="{{ settings.get('min_market_cap_cad', 2000000000)|int }}">
+        </div>
+        <div class="field">
+          <label for="min_price">Min price ($)</label>
+          <input class="narrow" type="number" step="0.5" min="0" id="min_price"
+                 name="min_price" value="{{ settings.get('min_price', 5.0) }}">
+        </div>
+        <button class="save-btn" type="submit">Save Controls</button>
+      </form>
+      <p class="conviction-note">Changing these does not re-run anything by itself — click Update above (or the advanced buttons) afterward to apply them.</p>
+    </details>
   </div>
 
   <script>
-    // Both refresh actions are plain synchronous form POSTs (no automation,
+    // All refresh actions are plain synchronous form POSTs (no automation,
     // no background job/polling, per the user's "no need automation"
     // request) -- but they take real time (a network call per ticker), so
     // without this the button just sits there with no sign anything is
@@ -237,6 +263,7 @@
         if (note) note.hidden = false;
       });
     }
+    markWorking('update-all-form', 'update-all-working', 'Working…');
     markWorking('rebuild-quality-form', 'quality-working', 'Rebuilding…');
     markWorking('refresh-candidates-form', 'candidates-working', 'Scanning…');
   </script>

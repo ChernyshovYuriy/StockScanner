@@ -332,6 +332,19 @@ def create_app() -> Flask:
             return redirect(url_for("conviction", error=f"Entry screener refresh failed: {e}"))
         return redirect(url_for("conviction"))
 
+    @app.post("/conviction/update-all")
+    def conviction_update_all():
+        """The single primary action on the Conviction tab: rebuild the
+        quality list, then re-screen for buy candidates -- the two steps a
+        user actually wants done together, previously two separate buttons
+        in unrelated sections of the page."""
+        try:
+            conviction_quality_filter.rebuild()
+            conviction_refresh_candidates()
+        except Exception as e:
+            return redirect(url_for("conviction", error=f"Update failed: {e}"))
+        return redirect(url_for("conviction"))
+
     @app.get("/history")
     def history():
         try:
