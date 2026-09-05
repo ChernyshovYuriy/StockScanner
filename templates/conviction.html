@@ -65,6 +65,14 @@
       border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 12px;
     }
 
+    .sector-group { margin: 0 0 20px; }
+    .sector-group:last-child { margin-bottom: 0; }
+    .sector-heading {
+      font-size: 12px; font-weight: 700; margin: 0 0 6px;
+      color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .sector-heading .sector-count { font-weight: 400; text-transform: none; letter-spacing: 0; }
+
     .controls-details summary {
       cursor: pointer; font-size: 15px; font-weight: 600; user-select: none;
       margin: 0 0 10px;
@@ -125,23 +133,28 @@
     {% if not candidates %}
       <p>No buy candidates from the last run.</p>
     {% else %}
-    <div class="table-wrap">
-      <table class="sortable">
-        <thead>
-          <tr><th>Ticker</th><th>Now</th><th>52w High</th><th>Off High</th></tr>
-        </thead>
-        <tbody>
-          {% for c in candidates %}
-          <tr>
-            <td><a href="https://ca.finance.yahoo.com/quote/{{ c.ticker }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
-            <td>{{ "%.2f"|format(c.current) }}</td>
-            <td>{{ "%.2f"|format(c.high_52w) }}</td>
-            <td class="pnl-neg">{{ "%.1f"|format(c.pct_off_high * 100) }}%</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+      {% for sector, group in candidates_by_sector %}
+      <div class="sector-group">
+        <h3 class="sector-heading">{{ sector }} <span class="sector-count">({{ group|length }})</span></h3>
+        <div class="table-wrap">
+          <table class="sortable">
+            <thead>
+              <tr><th>Ticker</th><th>Now</th><th>52w High</th><th>Off High</th></tr>
+            </thead>
+            <tbody>
+              {% for c in group %}
+              <tr>
+                <td><a href="https://ca.finance.yahoo.com/quote/{{ c.ticker }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
+                <td>{{ "%.2f"|format(c.current) }}</td>
+                <td>{{ "%.2f"|format(c.high_52w) }}</td>
+                <td class="pnl-neg">{{ "%.1f"|format(c.pct_off_high * 100) }}%</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endfor %}
     {% endif %}
   </div>
 

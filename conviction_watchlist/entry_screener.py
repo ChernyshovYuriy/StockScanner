@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import yfinance as yf
 
 from conviction_watchlist.config import CANDIDATES_FILE
-from conviction_watchlist.quality_filter import qualified_tickers
+from conviction_watchlist.quality_filter import load_cache, qualified_tickers
 from conviction_watchlist.settings import load_settings
 
 
@@ -31,6 +31,7 @@ def compute_candidates(progress_cb=None) -> list:
     `progress_cb(i, total)` is called periodically if given."""
     dip_pct_off_high = load_settings()["dip_pct_off_high"]
     tickers = qualified_tickers()
+    cache = load_cache()  # for sector, already fetched by the quality filter
 
     candidates = []
     for i, ticker in enumerate(tickers):
@@ -44,8 +45,10 @@ def compute_candidates(progress_cb=None) -> list:
         current = float(hist["Close"].iloc[-1])
         pct_off_high = (high_52w - current) / high_52w
         if pct_off_high >= dip_pct_off_high:
+            sector = cache.get(ticker, {}).get("sector") or "Unknown"
             candidates.append({"ticker": ticker, "current": current,
-                                "high_52w": high_52w, "pct_off_high": pct_off_high})
+                                "high_52w": high_52w, "pct_off_high": pct_off_high,
+                                "sector": sector})
         if progress_cb and i % 25 == 0:
             progress_cb(i, len(tickers))
 
@@ -90,7 +93,8 @@ def main():
     print(f"\n{len(candidates)} buy candidates (>= {dip_pct_off_high:.0%} off 52-week high):\n")
     for c in candidates:
         print(f"  {c['ticker']:10} now=${c['current']:>8.2f}  "
-              f"52w high=${c['high_52w']:>8.2f}  off high={c['pct_off_high']:>6.1%}")
+              f"52w high=${c['high_52w']:>8.2f}  off high={c['pct_off_high']:>6.1%}  "
+              f"{c.get('sector', '')}")
 
 
 if __name__ == "__main__":
