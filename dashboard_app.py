@@ -24,9 +24,15 @@ import time
 from typing import Any, Callable
 
 import duckdb
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from config import DASHBOARD_HOST, DASHBOARD_PORT
+from conviction_dashboard_data import build_conviction_view
+from conviction_watchlist import quality_filter as conviction_quality_filter
+from conviction_watchlist.entry_screener import refresh_and_save as conviction_refresh_candidates
+from conviction_watchlist.holdings_store import add_holding as conviction_add_holding
+from conviction_watchlist.holdings_store import remove_holding as conviction_remove_holding
+from conviction_watchlist.settings import save_settings as conviction_save_settings
 from dashboard_positions import build_live_positions
 from db import get_all_trades, get_cash, get_transactions
 from demand_dashboard_data import build_demand_signals_by_ticker
@@ -260,6 +266,71 @@ def create_app() -> Flask:
 
         summaries = summarize_all(rows)
         return render_template("demand_signals.html", rows=rows, summaries=summaries, error=error)
+
+    @app.get("/conviction")
+    def conviction():
+        """Read/write view of the conviction_watchlist package -- a
+        standalone personal tool for the user's real RBC account (Margin +
+        TFSA), NOT one of the paper-trading sleeves above. No DB, no
+        db.py/config.py (root) involvement at all -- see
+        conviction_watchlist/__init__.py."""
+        try:
+            view = build_conviction_view()
+            error = request.args.get("error")
+        except Exception as e:
+            view = {"settings": {}, "quality_count": 0, "quality_total_cached": 0,
+                    "candidates_generated_at": None, "candidates": [], "holdings": []}
+            error = f"Failed to load conviction watchlist state: {e}"
+        return render_template("conviction.html", error=error, **view)
+
+    @app.post("/conviction/settings")
+    def conviction_settings():
+        try:
+            updates = {
+                "dip_pct_off_high": float(request.form["dip_pct_off_high"]) / 100.0,
+                "trailing_stop_pct": float(request.form["trailing_stop_pct"]) / 100.0,
+                "min_market_cap_cad": float(request.form["min_market_cap_cad"]),
+                "min_price": float(request.form["min_price"]),
+            }
+            conviction_save_settings(updates)
+        except (KeyError, ValueError) as e:
+            return redirect(url_for("conviction", error=f"Bad settings input: {e}"))
+        return redirect(url_for("conviction"))
+
+    @app.post("/conviction/holdings/add")
+    def conviction_holdings_add():
+        try:
+            conviction_add_holding(
+                ticker=request.form["ticker"],
+                entry_date=request.form["entry_date"],
+                entry_price=float(request.form["entry_price"]),
+                qty=float(request.form["qty"]),
+                account=request.form.get("account", ""),
+            )
+        except (KeyError, ValueError) as e:
+            return redirect(url_for("conviction", error=f"Bad holding input: {e}"))
+        return redirect(url_for("conviction"))
+
+    @app.post("/conviction/holdings/<int:index>/remove")
+    def conviction_holdings_remove(index: int):
+        conviction_remove_holding(index)
+        return redirect(url_for("conviction"))
+
+    @app.post("/conviction/refresh-quality")
+    def conviction_refresh_quality():
+        try:
+            conviction_quality_filter.rebuild()
+        except Exception as e:
+            return redirect(url_for("conviction", error=f"Quality list refresh failed: {e}"))
+        return redirect(url_for("conviction"))
+
+    @app.post("/conviction/refresh-candidates")
+    def conviction_refresh_candidates_route():
+        try:
+            conviction_refresh_candidates()
+        except Exception as e:
+            return redirect(url_for("conviction", error=f"Entry screener refresh failed: {e}"))
+        return redirect(url_for("conviction"))
 
     @app.get("/history")
     def history():

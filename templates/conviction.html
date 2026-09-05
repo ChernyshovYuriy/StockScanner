@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Conviction — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    /* Distinct accent for this sleeve, same treatment as Macro's page —
+       and a visual reminder this is the user's real account, not a paper
+       sleeve like every other tab. */
+    .conviction-accent { color: #92400e; }
+    .conviction-badge {
+      display: inline-block; margin-left: 10px; padding: 2px 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 600;
+      background: #fffbeb; color: #92400e; border: 1px solid #fde68a;
+      vertical-align: middle;
+    }
+    .conviction-section { margin: 24px 0; }
+    .conviction-section h2 { font-size: 15px; margin: 0 0 10px; }
+    .conviction-note { color: var(--text-muted); font-size: 12px; margin: 4px 0 10px; }
+
+    .inline-form {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 12px 14px;
+    }
+    .field { display: flex; flex-direction: column; gap: 3px; }
+    .field label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.03em; color: var(--text-muted);
+    }
+    .field input, .field select {
+      border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
+      font-size: 13px; background: var(--page-bg); color: var(--text);
+      width: 130px;
+    }
+    .field input.narrow { width: 90px; }
+    .field input.wide { width: 160px; }
+    .save-btn {
+      background: var(--accent, #2f55d4); color: #fff; border: none;
+      border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;
+    }
+    .remove-btn {
+      background: none; border: 1px solid var(--sell); color: var(--sell);
+      border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 12px;
+    }
+    .rebuild-form { display: inline; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="header-row">
+    <h1 class="conviction-accent">Conviction Watchlist <span class="conviction-badge">real account · manual</span></h1>
+    <button onclick="location.reload()" class="refresh-btn">↻ Refresh page</button>
+  </div>
+  <p class="conviction-note">
+    Standalone tool for the real RBC account (Margin + TFSA) — buy-and-hold sized for conviction.
+    Nothing here places a trade automatically; every add/remove/refresh below is a manual action you take.
+  </p>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  <div class="conviction-section">
+    <h2>Controls</h2>
+    <form class="inline-form" method="post" action="{{ url_for('conviction_settings') }}">
+      <div class="field">
+        <label for="dip_pct_off_high">Buy: % off 52w high</label>
+        <input class="narrow" type="number" step="0.1" min="0" max="95" id="dip_pct_off_high"
+               name="dip_pct_off_high" value="{{ '%.1f'|format(settings.get('dip_pct_off_high', 0.20) * 100) }}">
+      </div>
+      <div class="field">
+        <label for="trailing_stop_pct">Sell: % off peak (trailing stop)</label>
+        <input class="narrow" type="number" step="0.1" min="0" max="95" id="trailing_stop_pct"
+               name="trailing_stop_pct" value="{{ '%.1f'|format(settings.get('trailing_stop_pct', 0.25) * 100) }}">
+      </div>
+      <div class="field">
+        <label for="min_market_cap_cad">Min market cap (CAD)</label>
+        <input class="wide" type="number" step="1000000" min="0" id="min_market_cap_cad"
+               name="min_market_cap_cad" value="{{ settings.get('min_market_cap_cad', 2000000000)|int }}">
+      </div>
+      <div class="field">
+        <label for="min_price">Min price ($)</label>
+        <input class="narrow" type="number" step="0.5" min="0" id="min_price"
+               name="min_price" value="{{ settings.get('min_price', 5.0) }}">
+      </div>
+      <button class="save-btn" type="submit">Save Controls</button>
+    </form>
+  </div>
+
+  <div class="conviction-section">
+    <h2>Quality Watchlist</h2>
+    <div class="stats-row">
+      <div class="stat-chip">
+        <span class="stat-label">Qualified Tickers</span>
+        <span class="stat-value">{{ quality_count }}</span>
+      </div>
+      <div class="stat-chip">
+        <span class="stat-label">Tickers Cached</span>
+        <span class="stat-value">{{ quality_total_cached }}</span>
+      </div>
+    </div>
+    <form class="rebuild-form" method="post" action="{{ url_for('conviction_refresh_quality') }}">
+      <button class="refresh-btn" type="submit">Rebuild Quality List</button>
+    </form>
+    <p class="conviction-note">Re-fetches the CAN ticker universe and refreshes fundamentals (cached — only new tickers cost a network call).</p>
+  </div>
+
+  <div class="conviction-section">
+    <h2>Holdings &amp; Trailing Stop</h2>
+    {% if not holdings %}
+      <p>No holdings tracked yet — add one below.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="sortable">
+        <thead>
+          <tr>
+            <th>Ticker</th><th>Account</th><th>Entry Date</th><th>Entry</th><th>Qty</th>
+            <th>Peak</th><th>Now</th><th>Off Peak</th><th>vs Entry</th><th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in holdings %}
+          <tr>
+            <td><a href="https://ca.finance.yahoo.com/quote/{{ h.ticker }}" target="_blank" rel="noopener">{{ h.ticker }}</a></td>
+            <td>{{ h.get('account', '—') }}</td>
+            <td>{{ h.get('entry_date', '—') }}</td>
+            <td>{{ "%.2f"|format(h.entry_price) if h.get('entry_price') is not none else "—" }}</td>
+            <td>{{ h.get('qty', '—') }}</td>
+            {% if h.get('error') %}
+              <td colspan="5">{{ h.error }}</td>
+            {% else %}
+              <td>{{ "%.2f"|format(h.peak) }}</td>
+              <td>{{ "%.2f"|format(h.current) }}</td>
+              <td class="{{ 'pnl-neg' if h.flagged else '' }}">{{ "%.1f"|format(h.drop_from_peak * 100) }}%</td>
+              <td class="{{ 'pnl-pos' if h.gain_vs_entry >= 0 else 'pnl-neg' }}">{{ "%+.1f"|format(h.gain_vs_entry * 100) }}%</td>
+              <td><span class="badge {{ 'badge-sell' if h.flagged else 'badge-hold' }}">{{ "SELL" if h.flagged else "HOLD" }}</span></td>
+            {% endif %}
+            <td>
+              <form method="post" action="{{ url_for('conviction_holdings_remove', index=loop.index0) }}" style="display:inline">
+                <button class="remove-btn" type="submit" onclick="return confirm('Remove {{ h.ticker }} from tracked holdings?')">Remove</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <h2 style="margin-top:18px;">Add Holding</h2>
+    <form class="inline-form" method="post" action="{{ url_for('conviction_holdings_add') }}">
+      <div class="field">
+        <label for="ticker">Ticker</label>
+        <input class="narrow" type="text" id="ticker" name="ticker" placeholder="AAPL.TO" required>
+      </div>
+      <div class="field">
+        <label for="entry_date">Entry Date</label>
+        <input type="date" id="entry_date" name="entry_date" required>
+      </div>
+      <div class="field">
+        <label for="entry_price">Entry Price</label>
+        <input class="narrow" type="number" step="0.01" min="0" id="entry_price" name="entry_price" required>
+      </div>
+      <div class="field">
+        <label for="qty">Qty</label>
+        <input class="narrow" type="number" step="1" min="0" id="qty" name="qty" required>
+      </div>
+      <div class="field">
+        <label for="account">Account</label>
+        <input class="narrow" type="text" id="account" name="account" placeholder="Margin / TFSA">
+      </div>
+      <button class="save-btn" type="submit">Add</button>
+    </form>
+  </div>
+
+  <div class="conviction-section">
+    <h2>Buy Candidates</h2>
+    <p class="conviction-note">
+      {% if candidates_generated_at %}
+        Last computed: {{ candidates_generated_at }}
+      {% else %}
+        Never computed yet — click Refresh below.
+      {% endif %}
+      — checks every quality-watchlist ticker's 52-week high (this scans all qualified tickers, takes a minute or two).
+    </p>
+    <form method="post" action="{{ url_for('conviction_refresh_candidates_route') }}">
+      <button class="refresh-btn" type="submit">Refresh Screener Now</button>
+    </form>
+    {% if not candidates %}
+      <p style="margin-top:12px;">No buy candidates from the last run.</p>
+    {% else %}
+    <div class="table-wrap" style="margin-top:12px;">
+      <table class="sortable">
+        <thead>
+          <tr><th>Ticker</th><th>Now</th><th>52w High</th><th>Off High</th></tr>
+        </thead>
+        <tbody>
+          {% for c in candidates %}
+          <tr>
+            <td><a href="https://ca.finance.yahoo.com/quote/{{ c.ticker }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
+            <td>{{ "%.2f"|format(c.current) }}</td>
+            <td>{{ "%.2f"|format(c.high_52w) }}</td>
+            <td class="pnl-neg">{{ "%.1f"|format(c.pct_off_high * 100) }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+{% endblock %}
