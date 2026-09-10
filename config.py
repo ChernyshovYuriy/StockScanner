@@ -252,3 +252,11 @@ DEMAND_SHORTVOL_TREND_DAYS = 3
 # Day-over-day ratio change treated as "full strength" (1.0) for the
 # short_volume_covering/short_volume_pressure signal.
 DEMAND_SHORTVOL_STRENGTH_SCALE = 0.05
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triple Screen tracker — 7th service, a daily paper-tracking experiment built
+# on research/triple_screen (see triple_screen_tracker/__init__.py). No
+# capital/share sizing (unlike the momentum/macro sleeves) -- just records
+# each BUY signal's price and a daily price history until it closes below
+# entry. Own SQLite DB, same isolation precedent as EDGAR/demand_signals.
+TRIPLE_SCREEN_TRACKER_DB_PATH = DATA_PATH / "triple_screen_tracker.db"

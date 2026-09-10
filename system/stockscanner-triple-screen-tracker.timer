@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner Triple Screen tracker at 17:00 local time Mon-Fri (after main.py's 16:30 pipeline)
+
+[Timer]
+OnCalendar=Mon..Fri 17:00
+Persistent=false
+Unit=stockscanner-triple-screen-tracker.service
+
+[Install]
+WantedBy=timers.target

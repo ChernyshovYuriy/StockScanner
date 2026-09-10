@@ -59,3 +59,11 @@ journalctl -u stockscanner-macro-monitor.service -n 100 --no-pager
 # 18:30 -> 21:30 fix), daemon-reload alone won't recompute an already-armed
 # timer's next fire — restart it explicitly:
 sudo systemctl restart stockscanner-edgar.timer
+# Triple Screen tracker — 7th service, daily paper price-tracking experiment
+# built on research/triple_screen (see triple_screen_tracker/__init__.py and
+# config.py TRIPLE_SCREEN_TRACKER_*). Own SQLite DB, no capital/share sizing.
+# Runs at 17:00, after main.py's 16:30 pipeline and position_monitor.py's
+# 15:50 run — no file/DB collision, own DB.
+sudo systemctl enable --now stockscanner-triple-screen-tracker.timer
+sudo systemctl start stockscanner-triple-screen-tracker.service
+journalctl -u stockscanner-triple-screen-tracker.service -n 100 --no-pager

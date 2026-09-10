@@ -40,6 +40,7 @@ from demand_signals.summary import summarize_all
 from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
+from triple_screen_tracker_dashboard_data import build_triple_screen_tracker_state
 
 _ERROR_STATUS = {
     "locked": 409,
@@ -266,6 +267,24 @@ def create_app() -> Flask:
 
         summaries = summarize_all(rows)
         return render_template("demand_signals.html", rows=rows, summaries=summaries, error=error)
+
+    @app.get("/triple-screen")
+    def triple_screen():
+        """Read-only view of triple_screen_tracker.db (see
+        triple_screen_tracker/__init__.py). No action here, same as /demand:
+        this is a display layer over what triple_screen_tracker_service.py
+        has already populated, never a trigger for a fetch or a trade."""
+        try:
+            state = _read_with_retry(build_triple_screen_tracker_state)
+            error = None
+        except (sqlite3.Error, OSError):
+            state = {"open": [], "closed": []}
+            error = "Database temporarily unavailable — retrying on next refresh."
+
+        return render_template(
+            "triple_screen_tracker.html",
+            open_rows=state["open"], closed_rows=state["closed"], error=error,
+        )
 
     @app.get("/conviction")
     def conviction():

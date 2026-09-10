@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Triple Screen — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    /* Next distinct visual identity after Monitor's default, Momentum's
+       amber, and Demand's purple -- a teal accent, unmistakably a different
+       kind of page (a price-tracking research log, not positions/P&L). */
+    .ts-accent { color: #0f766e; }
+    .ts-badge {
+      display: inline-block; margin-left: 10px; padding: 2px 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 600;
+      background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4;
+      vertical-align: middle;
+    }
+    details.history summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+    details.history table { margin-top: 6px; width: auto; }
+    details.history td, details.history th { padding: 4px 8px; white-space: nowrap; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="header-row">
+    <h1 class="ts-accent">Triple Screen Tracker <span class="ts-badge">read-only</span></h1>
+    <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <p class="banner banner-info">
+    A daily paper-tracking experiment, not a live account — no capital or share
+    sizing. Every Triple Screen BUY signal is "bought" at that day's close and
+    tracked until its close first drops below the buy price (zero-tolerance,
+    no buffer), for later review of where a real exit point should be. See
+    <code>triple_screen_tracker/__init__.py</code>.
+  </p>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  <h2>Open ({{ open_rows|length }})</h2>
+  {% if not open_rows %}
+    <p>Nothing currently tracked — triple_screen_tracker_service.py hasn't run yet,
+       or no BUY signal has fired.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table class="sortable">
+    <thead>
+      <tr>
+        <th>Ticker</th><th>Buy Date</th><th>Buy Price</th><th>Latest Price</th>
+        <th>Change</th><th>Days Held</th><th>History</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in open_rows %}
+      <tr>
+        <td>
+          <a href="https://ca.finance.yahoo.com/quote/{{ r.ticker }}" target="_blank" rel="noopener">{{ r.ticker }}</a>
+        </td>
+        <td>{{ r.buy_date }}</td>
+        <td>${{ "%.2f"|format(r.buy_price) }}</td>
+        <td>${{ "%.2f"|format(r.latest_price) }}</td>
+        <td class="{{ 'pnl-pos' if r.pct_change and r.pct_change >= 0 else 'pnl-neg' }}">
+          {{ "%+.1f%%"|format(r.pct_change) if r.pct_change is not none else "—" }}
+        </td>
+        <td>{{ r.days_held if r.days_held is not none else "—" }}</td>
+        <td>
+          <details class="history">
+            <summary>{{ r.price_history|length }} day(s)</summary>
+            <table>
+              <thead><tr><th>Date</th><th>Close</th></tr></thead>
+              <tbody>
+                {% for h in r.price_history %}
+                <tr><td>{{ h.date }}</td><td>${{ "%.2f"|format(h.close_price) }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  <h2>Closed History ({{ closed_rows|length }})</h2>
+  {% if not closed_rows %}
+    <p>Nothing sold yet.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table class="sortable">
+    <thead>
+      <tr>
+        <th>Ticker</th><th>Buy Date</th><th>Buy Price</th><th>Sell Date</th><th>Sell Price</th>
+        <th>Change</th><th>Days Held</th><th>History</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in closed_rows %}
+      <tr>
+        <td>
+          <a href="https://ca.finance.yahoo.com/quote/{{ r.ticker }}" target="_blank" rel="noopener">{{ r.ticker }}</a>
+        </td>
+        <td>{{ r.buy_date }}</td>
+        <td>${{ "%.2f"|format(r.buy_price) }}</td>
+        <td>{{ r.sell_date }}</td>
+        <td>${{ "%.2f"|format(r.sell_price) }}</td>
+        <td class="{{ 'pnl-pos' if r.pct_change and r.pct_change >= 0 else 'pnl-neg' }}">
+          {{ "%+.1f%%"|format(r.pct_change) if r.pct_change is not none else "—" }}
+        </td>
+        <td>{{ r.days_held if r.days_held is not none else "—" }}</td>
+        <td>
+          <details class="history">
+            <summary>{{ r.price_history|length }} day(s)</summary>
+            <table>
+              <thead><tr><th>Date</th><th>Close</th></tr></thead>
+              <tbody>
+                {% for h in r.price_history %}
+                <tr><td>{{ h.date }}</td><td>${{ "%.2f"|format(h.close_price) }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}
