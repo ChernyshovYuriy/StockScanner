@@ -10,7 +10,16 @@ aren't enough clean (non-NaN) bars for a meaningful read -- the contract
 this whole package promises for insufficient/missing data (see engine.py's
 truth table: an undecided screen just flows through as FLAT/absent/not-
 fired, no special-case exception handling needed upstream).
+
+Every function also defensively sorts its input by index ascending before
+reading off "latest"/"prior" via positional .iloc -- PriceData.bars is
+documented as sorted ascending (see types.py), but nothing upstream
+enforces that; without this, a reverse-chronological feed would silently
+read as if the oldest bar were the newest (found via adversarial stress
+testing, see research/triple_screen/TRIPLE_SCREEN_STRESS_FINDINGS.md).
 """
+import math
+
 import pandas as pd
 
 from .types import Direction
@@ -23,7 +32,7 @@ def ema_slope_direction(closes: pd.Series, ema_period: int = 13, lag: int = 3) -
     tools are otherwise unrelated). Exact-equality ties resolve to FLAT, no
     fuzzy epsilon needed, same as elder_ray.py.
     """
-    clean = closes.dropna()
+    clean = closes.sort_index().dropna()
     if len(clean) < ema_period + lag:
         indicator_values = {"ema": float(clean.iloc[-1])} if len(clean) else {}
         return Direction.FLAT, indicator_values
@@ -50,7 +59,7 @@ def force_index_pullback(bars: pd.DataFrame, trend: Direction, span: int = 2) ->
     if trend == Direction.FLAT:
         return False, {}
 
-    clean = bars.dropna(subset=["Close", "Volume"])
+    clean = bars.sort_index().dropna(subset=["Close", "Volume"])
     if len(clean) < 2:
         return False, {}
 
@@ -71,11 +80,17 @@ def prior_bar_breakout(bars: pd.DataFrame, trend: Direction) -> tuple[bool, dict
         return False, {}
 
     column = "High" if trend == Direction.UP else "Low"
-    clean = bars.dropna(subset=[column])
+    clean = bars.sort_index().dropna(subset=[column])
     if len(clean) < 2:
         return False, {}
 
     today, prior = float(clean[column].iloc[-1]), float(clean[column].iloc[-2])
+    if not (math.isfinite(today) and math.isfinite(prior)):
+        # dropna() only catches NaN, not +/-inf; a non-finite OHLC value is
+        # exactly as unusable as a missing one -- same safe-default
+        # treatment, not a comparison against a garbage value (see module
+        # docstring; found via adversarial stress testing).
+        return False, {}
     fired = today > prior if trend == Direction.UP else today < prior
     label = column.lower()
     return fired, {f"today_{label}": today, f"prior_{label}": prior}

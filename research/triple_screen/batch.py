@@ -59,12 +59,23 @@ def run_batch(tickers: Sequence[str], provider: DataProvider, engine: SignalEngi
     """Evaluate `engine` for every ticker in `tickers`, fetching each one's
     bars from `provider`. `positions` maps ticker -> currently-open (True)
     or flat (False); a ticker missing from `positions` defaults to flat.
+
+    A ticker whose provider fetch or engine evaluation raises is skipped
+    (printed as a WARNING) rather than aborting the whole batch -- this is
+    the layer that owns that isolation guarantee, not any one concrete
+    DataProvider (found via adversarial stress testing: YFinanceDataProvider
+    happens to swallow its own errors, but a different/future provider that
+    raises used to take down every other ticker's result with it; see
+    research/triple_screen/TRIPLE_SCREEN_STRESS_FINDINGS.md).
     """
     positions = positions or {}
     results: dict[str, SignalResult] = {}
     for ticker in tickers:
-        bars = provider.get_bars(ticker, timeframes)
-        results[ticker] = engine.evaluate(bars, position_open=positions.get(ticker, False))
+        try:
+            bars = provider.get_bars(ticker, timeframes)
+            results[ticker] = engine.evaluate(bars, position_open=positions.get(ticker, False))
+        except Exception as e:
+            print(f"WARNING: skipping {ticker} ({type(e).__name__}: {e})")
     return results
 
 
