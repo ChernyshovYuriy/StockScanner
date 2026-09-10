@@ -58,7 +58,11 @@ class TriggerScreen(ABC):
     default) plus Screen 1's direction, and returns whether the entry
     trigger has fired -- e.g. price crossing above the prior daily bar's
     high in an uptrend; mirrored (crossing below the prior low) for a
-    downtrend.
+    downtrend. The reference implementation additionally requires the
+    crossing to be confirmed by volume and by an indicator reaching a new
+    extreme (Elder's true-vs-false-breakout distinction) before it counts
+    as fired -- a bare price cross alone is not sufficient there; see
+    indicators.prior_bar_breakout.
     """
 
     @abstractmethod

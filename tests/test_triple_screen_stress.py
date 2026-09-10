@@ -37,8 +37,8 @@ from research.triple_screen.types import (
 )
 
 from triple_screen_fixtures import (
-    FakeEntryScreen, FakeTrendScreen, FakeTriggerScreen, aligned, downtrend_bars, flat_bars,
-    make_bars, uptrend_bars,
+    FakeEntryScreen, FakeTrendScreen, FakeTriggerScreen, aligned, confirmed_breakout_bars, downtrend_bars,
+    flat_bars, make_bars, uptrend_bars,
 )
 
 
@@ -208,15 +208,44 @@ def test_part2_minimum_viable_trend_data_boundary_is_exactly_ema_period_plus_lag
     assert d15 == Direction.FLAT
 
 
-def test_part2_minimum_viable_entry_trigger_data_boundary_is_two_bars():
+def test_part2_minimum_viable_entry_data_boundary_is_two_bars():
+    """force_index_pullback (Screen 2) is unaffected by the 2026-09 Screen 3
+    change -- still a real read at exactly 2 bars, still a safe default at 1."""
     two = _two_bar(100, 101, 99, 100, 101, 102, 100, 101)
     one = two.iloc[:1]
     p2, _ = force_index_pullback(two, Direction.UP)
     p1, _ = force_index_pullback(one, Direction.UP)
-    t2, _ = prior_bar_breakout(two, Direction.UP)
-    t1, _ = prior_bar_breakout(one, Direction.UP)
-    assert isinstance(p2, bool) and isinstance(t2, bool)  # 2 bars: real read, no crash
-    assert p1 is False and t1 is False  # 1 bar: safe default, no crash
+    assert isinstance(p2, bool)  # 2 bars: real read, no crash
+    assert p1 is False  # 1 bar: safe default, no crash
+
+
+def test_part2_trigger_price_cross_alone_at_two_bars_no_longer_fires():
+    """SUPERSEDED (2026-09): prior_bar_breakout's minimum viable data used
+    to be 2 bars (a bare price cross). Since Screen 3 now also requires
+    volume + price-momentum confirmation, 2 bars is far short of that
+    floor -- the trigger safe-defaults to not-fired even on an unambiguous
+    price cross. See test_part2_minimum_viable_trigger_confirmation_data_boundary_is_30_bars
+    below for the NEW floor."""
+    two = _two_bar(100, 101, 99, 100, 101, 102, 100, 101)
+    t2, vals = prior_bar_breakout(two, Direction.UP)
+    assert t2 is False
+    assert vals["price_crossed"] is True
+
+
+def test_part2_minimum_viable_trigger_confirmation_data_boundary_is_30_bars():
+    """Screen 3's volume/price-momentum confirmation needs
+    max(volume_lookback + 1, momentum_period + momentum_lookback) = 30 bars
+    -- one bar short (29) safe-defaults to not-fired despite an identical,
+    otherwise-fully-confirmed price/volume/momentum shape; 30 bars gives a
+    real (fired) read. Verified via confirmed_breakout_bars, not hand-
+    guessed (see triple_screen_fixtures.py)."""
+    sufficient = confirmed_breakout_bars(trend="UP", n_base=29)  # 30 bars total
+    insufficient = confirmed_breakout_bars(trend="UP", n_base=28)  # 29 bars total
+    fired_30, vals_30 = prior_bar_breakout(sufficient.bars, Direction.UP)
+    fired_29, vals_29 = prior_bar_breakout(insufficient.bars, Direction.UP)
+    assert fired_30 is True
+    assert fired_29 is False
+    assert vals_29["price_crossed"] is True  # same price cross, just not enough history to confirm it
 
 
 def test_part2_trend_transition_up_to_down_to_flat_no_stale_leakage():

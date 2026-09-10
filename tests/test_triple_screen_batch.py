@@ -12,33 +12,25 @@ Planned Phase 3 batch API (research.triple_screen.batch):
               timeframes: TimeframeConfig = TimeframeConfig()) -> dict[str, SignalResult]
 `positions` defaults to "flat" (False) for any ticker not listed in it.
 """
-import pandas as pd
-
 from research.triple_screen.batch import format_results_table, load_tickers, run_batch
 from research.triple_screen.reference_impl import (
     EMASlopeTrendScreen, ForceIndexEntryScreen, PriorBarTriggerScreen, TripleScreenEngine,
 )
-from research.triple_screen.types import PriceData, Signal
+from research.triple_screen.types import Signal
 
-from triple_screen_fixtures import FakeDataProvider, aligned, downtrend_bars, flat_bars, uptrend_bars
+from triple_screen_fixtures import (
+    FakeDataProvider, aligned, buy_ready_entry_bars, downtrend_bars, flat_bars, uptrend_bars,
+)
 
 
-def _buy_ready_entry_bars() -> PriceData:
-    """A single hand-built bar sequence where the LATEST bar is
-    simultaneously a Force Index pullback (Close down sharply vs. the prior
-    steady rise) AND a prior-high breakout (High above the prior bar's
-    High) -- the one daily bar shape that satisfies both Screen 2 and
-    Screen 3 at once, per Elder's "dip that reverses into a breakout" entry
-    pattern.
+def _buy_ready_entry_bars():
+    """The one daily bar shape that satisfies Screen 2's pullback AND
+    Screen 3's true-breakout confirmation (2026-09: price cross alone is no
+    longer enough) simultaneously -- see
+    triple_screen_fixtures.buy_ready_entry_bars, numerically verified since
+    the two screens are structurally in tension on the shared latest bar.
     """
-    closes = [100, 101, 102, 103, 104, 105, 106, 107, 108, 104]  # last bar: sharp down close
-    opens = [100, 100, 101, 102, 103, 104, 105, 106, 107, 108]
-    highs = [100.5, 101.5, 102.5, 103.5, 104.5, 105.5, 106.5, 107.5, 108.5, 110.0]  # last bar: new high
-    lows = [99.5, 99.5, 100.5, 101.5, 102.5, 103.5, 104.5, 105.5, 106.5, 103.0]
-    idx = pd.date_range("2024-01-01", periods=10, freq="D")
-    df = pd.DataFrame({"Open": opens, "High": highs, "Low": lows, "Close": closes,
-                        "Volume": 1_000_000.0}, index=idx)
-    return PriceData(ticker="BUY_READY", timeframe="daily", bars=df)
+    return buy_ready_entry_bars(trend="UP", ticker="BUY_READY")
 
 
 def _engine() -> TripleScreenEngine:

@@ -53,7 +53,8 @@ Every claim below is backed by a specific test in that file — no conclusion he
 | Force Index exactly 0 → pullback absent (strict `<`, not `<=`) | `test_part2_force_index_exactly_zero_is_pullback_absent` | PASS |
 | Trigger uses strict `>`; exact equality to prior high does not fire | `test_part2_trigger_exact_equality_to_prior_high_does_not_fire` | PASS |
 | Minimum viable trend data is exactly `ema_period + lag` (16 bars); 15 degrades to FLAT | `test_part2_minimum_viable_trend_data_boundary_is_exactly_ema_period_plus_lag` | PASS |
-| Minimum viable entry/trigger data is 2 bars; 1 degrades to `False` | `test_part2_minimum_viable_entry_trigger_data_boundary_is_two_bars` | PASS |
+| Minimum viable entry data (Screen 2) is 2 bars; 1 degrades to `False` | `test_part2_minimum_viable_entry_data_boundary_is_two_bars` | PASS |
+| ~~Minimum viable trigger data (Screen 3) is 2 bars~~ **SUPERSEDED 2026-09** — see addendum below: Screen 3 now needs 30 bars | `test_part2_minimum_viable_trigger_confirmation_data_boundary_is_30_bars` | PASS |
 | Trend read at a transition point depends only on the prefix up to that point (no leakage from bars appended later in the same array) | `test_part2_trend_transition_up_to_down_to_flat_no_stale_leakage` | PASS |
 | One-bar spike then flat: no crash | `test_part2_single_spike_then_flat_does_not_crash` | PASS |
 | EntryScreen verdict is unaffected by the trend series (screen independence) | `test_part2_entry_screen_unaffected_by_trend_series_length_or_content`, `test_part4_screen_independence_trend_result_unaffected_by_entry_series` | PASS |
@@ -99,3 +100,43 @@ and now runs as a plain passing assertion against the new code — the "fails on
 new" pair requested, both halves demonstrated. No other implementation file was touched; the
 robustness gaps documented above (no OHLC-invariant validation, no domain check on negative
 prices) were left as-is since they were never classified as defects against any stated contract.
+
+---
+
+## Addendum 2026-09 — Screen 3 now requires true-breakout confirmation
+
+Elder's book (_Come Into My Trading Room_) is explicit that a breakout must be confirmed by
+heavy volume and by indicators reaching new extremes in the trend direction (divergence marks a
+false breakout) — the pre-addendum `prior_bar_breakout` only checked the bare price cross. Fixed
+by adding two confirmation checks (`indicators.volume_confirms_breakout`,
+`indicators.price_momentum_new_extreme`), both required alongside the price cross for
+`triggered=True`:
+
+- **Volume confirmation**: today's volume > 1.5x the average of the 20 bars strictly before
+  today (today's own volume never inflates its own baseline).
+- **Indicator-extreme confirmation**: a 10-bar price Rate-of-Change makes a fresh 20-bar extreme
+  in the trend direction. If price makes a new extreme but momentum doesn't, that mismatch IS
+  the price/indicator divergence the false-breakout warning describes.
+
+**A real design conflict was found and resolved before landing this, via the same "prove it"
+discipline as the defects above.** The first design used a longer-period (13-bar) Force Index
+for the extreme check — Elder's own dual-Force-Index convention, alongside the 2-bar Force Index
+Screen 2 already uses for its pullback. That turned out to be mathematically incompatible with
+Screen 2 on the shared latest bar: the raw value needed today to push a 13-bar EMA to a fresh
+extreme is always ~2.6x bigger than the ceiling that keeps a 2-bar EMA of the *same underlying
+series* negative — a fixed ratio set by the two EMA spans, not fixable by tuning the breakout's
+size. Verified three ways before abandoning it: hand-derived the ratio, 20,000 randomized
+synthetic bar sequences (0 satisfied both simultaneously), and a live check against 18 real,
+volatile tickers' current data (0 satisfied both). Switched to a plain price-momentum indicator
+(no shared formula with Screen 2) instead, which resolved it — verified via
+`triple_screen_fixtures.buy_ready_entry_bars`, a constructed-and-checked fixture where Screen 2's
+pullback and Screen 3's confirmed trigger both fire on the identical bar.
+
+New minimum viable data for Screen 3: 30 bars (`max(volume_lookback + 1, momentum_period +
+momentum_lookback)` = `max(21, 30)`), up from 2. Tests: `tests/test_triple_screen_screens.py`
+(confirmed/light-volume/divergent breakout cases, both directions),
+`tests/test_triple_screen_stress.py` (`test_part2_minimum_viable_trigger_confirmation_data_boundary_is_30_bars`,
+`test_part2_trigger_price_cross_alone_at_two_bars_no_longer_fires`), `tests/test_triple_screen_batch.py`
+and `tests/test_triple_screen_tracker_service.py` (both now use `buy_ready_entry_bars` for a real
+end-to-end BUY). Full suite: 836 + new Screen-3 tests, 0 failures (see git history for the exact
+count at the commit that lands this).

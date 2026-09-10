@@ -151,6 +151,139 @@ def no_breakdown_below_prior_low_bars(**kw) -> PriceData:
     return _two_bar_frame(100, 101, 95, 96, 96, 98, 96, 97, **kw)
 
 
+# ── True-breakout confirmation fixtures (Screen 3: volume + price-momentum
+#    extreme, see indicators.volume_confirms_breakout/price_momentum_new_extreme)
+#    ──────────────────────────────────────────────────────────────────────
+# A price cross alone (the two-bar fixtures above) is only a CANDIDATE
+# breakout as of 2026-09 -- Screen 3 also requires the breakout bar's volume
+# to clearly exceed its own 20-bar baseline, and a 10-bar price Rate-of-
+# Change to make a fresh 20-bar extreme concurrently (Elder's "heavy
+# volume" / "indicators reach new extremes, divergence marks false
+# breakouts" rules; momentum, not a second Force Index period, is used for
+# the extreme check -- see indicators.py's module docstring for why a
+# second Force Index period conflicts with Screen 2's own Force Index(2)
+# pullback on the shared latest bar). That needs real multi-bar history
+# the two-bar fixtures can't provide, hence this separate builder. Every
+# one of these was verified against the real indicators.prior_bar_breakout()
+# (not hand-guessed) before being fixed here -- same "prove it" discipline
+# as TRIPLE_SCREEN_STRESS_FINDINGS.md.
+
+def _breakout_series(n_base=30, base_price=100.0, daily_return=0.003, base_volume=1_000_000.0,
+                      breakout_jump=3.0, breakout_volume=None, extra_spike_at=None,
+                      extra_spike_close_jump=0.0, trend="UP", ticker="TEST", timeframe="daily") -> PriceData:
+    """`n_base` bars of a steady, modest trend (flat baseline volume)
+    followed by one breakout bar. `n_base=30` (31 bars total) comfortably
+    clears the 30-bar floor price_momentum_new_extreme needs (its default
+    momentum_period=10 + momentum_lookback=20). `breakout_volume=None`
+    means the breakout bar's volume matches the baseline (does not
+    confirm); `extra_spike_at`/`extra_spike_close_jump` inject one earlier
+    one-day price jump (baked into every close from that point on) whose
+    10-bar momentum reading exceeds the breakout day's own -- an
+    engineered price/indicator divergence.
+    """
+    n = n_base + 1
+    if trend == "UP":
+        closes = list(base_price * (1 + daily_return) ** np.arange(n_base))
+        closes.append(closes[-1] * (1 + breakout_jump * daily_return))
+    else:
+        closes = list(base_price * (1 - daily_return) ** np.arange(n_base))
+        closes.append(closes[-1] * (1 - breakout_jump * daily_return))
+    closes = np.array(closes)
+    if extra_spike_at is not None:
+        closes[extra_spike_at:] += extra_spike_close_jump if trend == "UP" else -extra_spike_close_jump
+    opens = np.concatenate([[closes[0]], closes[:-1]])
+    pad = 0.3
+    highs = np.maximum(opens, closes) + pad
+    lows = np.minimum(opens, closes) - pad
+    volumes = np.full(n, base_volume)
+    if breakout_volume is not None:
+        volumes[-1] = breakout_volume
+    idx = pd.date_range("2024-01-01", periods=n, freq="D")
+    df = pd.DataFrame({"Open": opens, "High": highs, "Low": lows, "Close": closes, "Volume": volumes}, index=idx)
+    return PriceData(ticker=ticker, timeframe=timeframe, bars=df)
+
+
+def confirmed_breakout_bars(trend="UP", **kw) -> PriceData:
+    """A TRUE breakout per Elder's rules: price crosses the prior extreme
+    on a volume spike (3x baseline -- comfortably above the 1.5x-of-20-day-
+    average threshold), with the 10-bar price Rate-of-Change simultaneously
+    making a fresh 20-bar extreme. Pass `n_base=28` for a 29-bar (one short
+    of the 30-bar floor) variant that safe-defaults to not-triggered
+    despite the identical price/volume/momentum shape -- the boundary-
+    cutoff case."""
+    return _breakout_series(breakout_volume=3_000_000.0, trend=trend, **kw)
+
+
+def light_volume_breakout_bars(trend="UP", **kw) -> PriceData:
+    """Same price cross as confirmed_breakout_bars, but the breakout bar's
+    volume never exceeds its own baseline -- a FALSE breakout by Elder's
+    "true breakouts are confirmed by heavy volume" rule: price crosses,
+    but volume does not confirm, so the trigger does not fire."""
+    return _breakout_series(breakout_volume=None, trend=trend, **kw)
+
+
+def divergent_breakout_bars(trend="UP", **kw) -> PriceData:
+    """Same price cross AND volume spike as confirmed_breakout_bars, but an
+    earlier bar (index 15) carries a one-day $20 price jump (baked into
+    every close from there on) -- large enough that its own 10-bar
+    momentum reading dwarfs the breakout day's, so the breakout day's own
+    momentum is NOT the trailing window's extreme. This is exactly the
+    price/indicator divergence Elder's "false breakouts are marked by
+    divergences" rule describes: price makes a new extreme, the indicator
+    does not -- so the trigger does not fire despite both the price cross
+    and volume confirming."""
+    return _breakout_series(breakout_volume=3_000_000.0, extra_spike_at=15,
+                             extra_spike_close_jump=20.0, trend=trend, **kw)
+
+
+def buy_ready_entry_bars(trend="UP", **kw) -> PriceData:
+    """A full BUY-ready setup: Screen 2's pullback AND Screen 3's true-
+    breakout confirmation both fire on the identical latest bar --
+    verified numerically, not hand-guessed, since the two are structurally
+    in tension (see indicators.py's module docstring on why the extreme
+    check uses price momentum, not a second Force Index period). Shape:
+    30 flat bars, then one sharp one-day dip on huge volume (drives Screen
+    2's short Force Index deeply negative -- the pullback), then one
+    recovery/breakout bar whose High clears the recent extreme, whose
+    volume clears its own 20-day average by >1.5x, and whose 10-bar price
+    momentum is a fresh 20-bar extreme, while its own volume x price-move
+    stays small enough to NOT flip the still-decaying short Force Index
+    positive again. This is the one daily bar shape research/triple_screen's
+    BUY conjunction (research.triple_screen.engine) actually needs."""
+    n_flat, base_price, base_volume = 30, 100.0, 1_000_000.0
+    dip_dollar, dip_volume = -3.0, 10_000_000.0
+    recover_dollar, recover_volume = 4.0, 2_300_000.0
+    sign = 1 if trend == "UP" else -1
+    closes = [base_price] * n_flat
+    dip_close = base_price + sign * dip_dollar
+    final_close = dip_close + sign * recover_dollar
+    closes = closes + [dip_close, final_close]
+    closes = np.array(closes)
+    opens = np.concatenate([[closes[0]], closes[:-1]])
+    pad = 0.3
+    highs = np.maximum(opens, closes) + pad
+    lows = np.minimum(opens, closes) - pad
+    if trend == "UP":
+        highs[-1] = highs[:-1].max() + 0.5
+    else:
+        lows[-1] = lows[:-1].min() - 0.5
+    volumes = np.full(len(closes), base_volume)
+    volumes[-2] = dip_volume
+    volumes[-1] = recover_volume
+    end_date = kw.pop("end_date", None)
+    if end_date is not None:
+        # Business-day-aligned, end-anchored -- lets a caller (e.g. a
+        # backtest-clock-driven service test) control exactly which
+        # weekday the fixture's latest bar falls on.
+        idx = pd.date_range(end=end_date, periods=len(closes), freq="B")
+    else:
+        idx = pd.date_range("2024-01-01", periods=len(closes), freq="D")
+    df = pd.DataFrame({"Open": opens, "High": highs, "Low": lows, "Close": closes, "Volume": volumes}, index=idx)
+    ticker = kw.pop("ticker", "BUY_READY")
+    timeframe = kw.pop("timeframe", "daily")
+    return PriceData(ticker=ticker, timeframe=timeframe, bars=df)
+
+
 # ── AlignedBars convenience ───────────────────────────────────────────────────
 
 def aligned(trend: PriceData, entry: PriceData) -> AlignedBars:

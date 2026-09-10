@@ -17,6 +17,25 @@ documented as sorted ascending (see types.py), but nothing upstream
 enforces that; without this, a reverse-chronological feed would silently
 read as if the oldest bar were the newest (found via adversarial stress
 testing, see research/triple_screen/TRIPLE_SCREEN_STRESS_FINDINGS.md).
+
+Screen 3's prior_bar_breakout() requires more than a price cross to fire --
+Elder's book (_Come Into My Trading Room_) is explicit that a TRUE breakout
+is confirmed by heavy volume and by indicators reaching new extremes in the
+trend direction (a false breakout shows light volume and/or price/indicator
+divergence); see volume_confirms_breakout() and price_momentum_new_extreme()
+below. Added 2026-09 -- the earlier version only checked the price cross.
+The extreme/divergence confirmation deliberately uses price momentum, NOT a
+second Force Index period, even though Screen 2 already computes Force
+Index and Elder himself uses a longer-period Force Index for this exact
+purpose: a longer-period EMA of the SAME series Screen 2's short-period EMA
+already reads creates a mathematical conflict on the shared latest bar --
+the raw value needed today to push a slow EMA to a fresh extreme is always
+several times bigger than what keeps a fast EMA of the same series
+negative (a fixed ratio set by the two EMA spans), making Screen 2's
+pullback and this confirmation all but mutually exclusive on the same bar.
+Confirmed via adversarial testing (20,000 synthetic bar sequences, 0 found
+both true simultaneously) before switching to a decoupled indicator -- see
+TRIPLE_SCREEN_STRESS_FINDINGS.md.
 """
 import math
 
@@ -71,10 +90,76 @@ def force_index_pullback(bars: pd.DataFrame, trend: Direction, span: int = 2) ->
     return present, {"force_index": latest}
 
 
-def prior_bar_breakout(bars: pd.DataFrame, trend: Direction) -> tuple[bool, dict]:
+def volume_confirms_breakout(bars: pd.DataFrame, lookback: int = 20, multiplier: float = 1.5) -> tuple[bool, dict]:
+    """Elder's "true breakouts are confirmed by heavy volume" rule (_Come
+    Into My Trading Room_): today's volume must clearly exceed its own
+    recent baseline -- confirmed when it's more than `multiplier` x the
+    average of the `lookback` bars strictly BEFORE today. Today's own
+    volume never enters its own baseline (a self-inflating average would
+    weaken the check). Insufficient history (< lookback + 1 bars) is
+    treated the same as everywhere else in this module: not confirmed,
+    never an exception.
+    """
+    clean = bars.sort_index().dropna(subset=["Volume"])
+    if len(clean) < lookback + 1:
+        return False, {}
+
+    today_volume = float(clean["Volume"].iloc[-1])
+    avg_volume = float(clean["Volume"].iloc[-(lookback + 1):-1].mean())
+    if not (math.isfinite(today_volume) and math.isfinite(avg_volume)) or avg_volume <= 0:
+        return False, {}
+
+    confirmed = today_volume > avg_volume * multiplier
+    return confirmed, {"today_volume": today_volume, f"volume_avg_{lookback}": avg_volume}
+
+
+def price_momentum_new_extreme(bars: pd.DataFrame, trend: Direction, period: int = 10,
+                                lookback: int = 20) -> tuple[bool, dict]:
+    """Elder's "true breakouts are confirmed when indicators reach new
+    extremes; false breakouts show divergence" rule, via a `period`-bar
+    price Rate-of-Change (today's Close minus the Close `period` bars ago)
+    -- deliberately a plain price-momentum reading, not a second Force
+    Index period (see module docstring for why the two Force Index periods
+    conflict on Screen 2's shared latest bar). Confirmed when today's
+    Rate-of-Change is itself the highest (UP) or lowest (DOWN) value in the
+    trailing `lookback` bars -- a fresh momentum extreme. If price makes a
+    new high/low but its own momentum does NOT, that mismatch IS the
+    price/indicator divergence the false-breakout warning describes; this
+    single check captures both "reaches a new extreme" and "no divergence"
+    at once. FLAT trend has no defined direction to be extreme in: always
+    False.
+    """
+    if trend == Direction.FLAT:
+        return False, {}
+
+    clean = bars.sort_index().dropna(subset=["Close"])
+    if len(clean) < period + lookback:
+        return False, {}
+
+    momentum = clean["Close"].diff(period)
+    window = momentum.iloc[-lookback:]
+    latest = float(window.iloc[-1])
+    if not math.isfinite(latest):
+        return False, {}
+
+    extreme = float(window.max()) if trend == Direction.UP else float(window.min())
+    confirmed = latest == extreme
+    return confirmed, {f"price_momentum_{period}": latest, f"price_momentum_{period}_extreme": extreme}
+
+
+def prior_bar_breakout(bars: pd.DataFrame, trend: Direction,
+                        volume_lookback: int = 20, volume_multiplier: float = 1.5,
+                        momentum_period: int = 10, momentum_lookback: int = 20) -> tuple[bool, dict]:
     """Screen 3's reference indicator: today's High crossing above
     yesterday's High (UP trend) or today's Low crossing below yesterday's
-    Low (DOWN trend). FLAT trend has no defined trigger: always False.
+    Low (DOWN trend) -- but a bare price cross is only a CANDIDATE
+    breakout. Elder's book (_Come Into My Trading Room_) is explicit that a
+    breakout must additionally be confirmed by heavy volume and by
+    indicators reaching new extremes (divergence marks a false breakout);
+    a price cross without both confirmations is treated as a false
+    breakout, not triggered -- see volume_confirms_breakout() and
+    price_momentum_new_extreme() above. FLAT trend has no defined trigger:
+    always False.
     """
     if trend == Direction.FLAT:
         return False, {}
@@ -91,6 +176,17 @@ def prior_bar_breakout(bars: pd.DataFrame, trend: Direction) -> tuple[bool, dict
         # treatment, not a comparison against a garbage value (see module
         # docstring; found via adversarial stress testing).
         return False, {}
-    fired = today > prior if trend == Direction.UP else today < prior
+    price_crossed = today > prior if trend == Direction.UP else today < prior
     label = column.lower()
-    return fired, {f"today_{label}": today, f"prior_{label}": prior}
+    values = {f"today_{label}": today, f"prior_{label}": prior, "price_crossed": price_crossed}
+
+    volume_confirmed, volume_values = volume_confirms_breakout(bars, volume_lookback, volume_multiplier)
+    indicator_confirmed, indicator_values = price_momentum_new_extreme(
+        bars, trend, period=momentum_period, lookback=momentum_lookback)
+    values.update(volume_values)
+    values.update(indicator_values)
+    values["volume_confirmed"] = volume_confirmed
+    values["indicator_confirmed"] = indicator_confirmed
+
+    fired = price_crossed and volume_confirmed and indicator_confirmed
+    return fired, values

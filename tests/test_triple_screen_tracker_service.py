@@ -15,7 +15,7 @@ from research.triple_screen.types import PriceData
 from time_utils import TSX_TZ, set_backtest_clock
 from triple_screen_tracker import store
 
-from triple_screen_fixtures import FakeDataProvider, aligned, uptrend_bars
+from triple_screen_fixtures import FakeDataProvider, aligned, buy_ready_entry_bars, uptrend_bars
 
 
 @pytest.fixture(autouse=True)
@@ -48,19 +48,12 @@ def _entry_bars(closes, end_date, ticker="T") -> PriceData:
 
 
 def _buy_ready_entry_bars(end_date, ticker="T") -> PriceData:
-    """The one daily bar shape that satisfies both Screen 2 (Force Index
-    pullback) and Screen 3 (prior-high breakout) at once -- same fixture
-    shape as tests/test_triple_screen_batch.py's own _buy_ready_entry_bars,
-    just with a caller-controlled end date. Last close (buy price): 104.
-    """
-    closes = [100, 101, 102, 103, 104, 105, 106, 107, 108, 104]
-    opens = [100, 100, 101, 102, 103, 104, 105, 106, 107, 108]
-    highs = [100.5, 101.5, 102.5, 103.5, 104.5, 105.5, 106.5, 107.5, 108.5, 110.0]
-    lows = [99.5, 99.5, 100.5, 101.5, 102.5, 103.5, 104.5, 105.5, 106.5, 103.0]
-    idx = pd.date_range(end=end_date, periods=10, freq="B")
-    df = pd.DataFrame({"Open": opens, "High": highs, "Low": lows, "Close": closes,
-                        "Volume": 1_000_000.0}, index=idx)
-    return PriceData(ticker=ticker, timeframe="daily", bars=df)
+    """The one daily bar shape that satisfies both Screen 2's pullback and
+    Screen 3's true-breakout confirmation on the identical latest bar -- see
+    triple_screen_fixtures.buy_ready_entry_bars (numerically verified, not
+    hand-guessed; the two are structurally in tension). Buy price (last
+    close) is 101.0."""
+    return buy_ready_entry_bars(trend="UP", end_date=end_date, ticker=ticker)
 
 
 def _next_business_day(ts: pd.Timestamp) -> pd.Timestamp:
@@ -87,10 +80,10 @@ def test_fresh_buy_signal_creates_tracked_record_at_close_price(tmp_path):
 
     assert store.open_tracked_tickers(conn) == {"BUY1"}
     record = store.open_records(conn)[0]
-    assert record["buy_price"] == 104.0
+    assert record["buy_price"] == 101.0
     assert record["buy_date"] == today.strftime("%Y-%m-%d")
     history = store.price_history_for(conn, record["id"])
-    assert history == [{"date": today.strftime("%Y-%m-%d"), "close_price": 104.0}]
+    assert history == [{"date": today.strftime("%Y-%m-%d"), "close_price": 101.0}]
 
 
 def test_no_buy_signal_creates_nothing(tmp_path):

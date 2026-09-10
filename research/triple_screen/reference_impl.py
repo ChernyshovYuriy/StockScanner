@@ -42,10 +42,20 @@ class ForceIndexEntryScreen(EntryScreen):
 
 
 class PriorBarTriggerScreen(TriggerScreen):
-    """Screen 3 default: prior-bar high/low breakout (see indicators.prior_bar_breakout)."""
+    """Screen 3 default: prior-bar high/low breakout, confirmed by volume
+    and indicator-extreme confirmation (see indicators.prior_bar_breakout)."""
+
+    def __init__(self, volume_lookback: int = 20, volume_multiplier: float = 1.5,
+                 momentum_period: int = 10, momentum_lookback: int = 20):
+        self.volume_lookback = volume_lookback
+        self.volume_multiplier = volume_multiplier
+        self.momentum_period = momentum_period
+        self.momentum_lookback = momentum_lookback
 
     def evaluate(self, entry_bars: PriceData, trend: Direction) -> TriggerVerdict:
-        fired, indicator_values = prior_bar_breakout(entry_bars.bars, trend)
+        fired, indicator_values = prior_bar_breakout(
+            entry_bars.bars, trend, self.volume_lookback, self.volume_multiplier,
+            self.momentum_period, self.momentum_lookback)
         return TriggerVerdict(triggered=fired, indicator_values=indicator_values)
 
 
