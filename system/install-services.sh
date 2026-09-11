@@ -18,6 +18,13 @@
 # Does restart the two momentum-sleeve services that were failing at the
 # systemd USER step (see MEMORY / commit 322d2cc), so the fix takes effect
 # immediately rather than waiting for their next scheduled run.
+#
+# The `cp -v .../stockscanner-*.service|.timer` globs below already pick up
+# any new unit file added to this directory (e.g. the 2026-09 Kangaroo Tail
+# sleeve's 6 files) with no change needed here — but per the "does NOT
+# enable/start anything not already enabled" rule above, a BRAND NEW
+# sleeve's timers still need a one-time manual enable on first deploy (see
+# system/info); this script alone won't start them running.
 
 set -euo pipefail
 
@@ -43,3 +50,7 @@ echo "Done. Verify with:"
 echo "  journalctl -u stockscanner-momentum-monitor.service -n 20 --no-pager"
 echo "  journalctl -u stockscanner-momentum-pipeline.service -n 20 --no-pager"
 echo "  systemctl list-timers --all | grep stockscanner"
+echo
+echo "First time deploying a brand-new sleeve's units (e.g. Kangaroo Tail)?"
+echo "This script does not enable/start them — run the enable --now commands"
+echo "in system/info for that sleeve once."
