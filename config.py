@@ -304,3 +304,13 @@ DEMAND_SHORTVOL_STRENGTH_SCALE = 0.05
 # each BUY signal's price and a daily price history until it closes below
 # entry. Own SQLite DB, same isolation precedent as EDGAR/demand_signals.
 TRIPLE_SCREEN_TRACKER_DB_PATH = DATA_PATH / "triple_screen_tracker.db"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ticker Indicator Board — 9th service, a read-only research board built on
+# Elder's "The New Trading for a Living" (see scanner_board/PLAN.md). No
+# capital/positions at all (unlike every paper sleeve above) -- one snapshot
+# row per ticker per run, every column a raw indicator reading or a named,
+# book-cited label. Own SQLite DB, same isolation precedent as the Triple
+# Screen tracker above. Scans the same CAN_TICKERS_URL universe every other
+# service uses (no separate SCANNER_*_TICKERS_URL needed).
+SCANNER_BOARD_DB_PATH = DATA_PATH / "scanner_board.db"

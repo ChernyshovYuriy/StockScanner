@@ -240,3 +240,97 @@ def test_demand_page_renders_signals_grouped_by_ticker(client, monkeypatch):
     assert "call_put_skew" in html
     assert "badge-bullish" in html
     assert "badge-bearish" in html
+
+
+def test_scanner_page_renders_when_no_rows(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.build_scanner_state", lambda: {"rows": [], "run_date": None})
+    resp = client.get("/scanner")
+    assert resp.status_code == 200
+    assert b"Nothing scanned yet" in resp.data
+
+
+def test_scanner_page_renders_a_row(client, monkeypatch):
+    row = {
+        "ticker": "AAA.TO", "price": 12.34, "pct_chg": 1.5,
+        "ma22": 12.0, "ma50": 11.5, "ma200": 10.0,
+        "ma_slope": "Rising", "price_vs_ma": "Above", "value_zone": "In Zone",
+        "macd_hist": 0.05, "macd_cross": "Bull", "macd_hist_slope": "Rising",
+        "trend_health": "Safe", "macd_hist_extreme": "No", "macd_hist_divergence": "None",
+        "adx": 28.0, "di_bias": "Bull", "adx_trend": "Rising", "adx_regime": "Trending", "atr_pct": 2.1,
+        "rsi": 55.0, "rsi_zone": "Neutral", "rsi_divergence": "None",
+        "stoch_k": 60.0, "stoch_zone": "Neutral", "stoch_divergence": "None",
+        "volume_vs_avg": "Normal", "obv_trend": "Rising", "obv_divergence": "None",
+        "ad_trend": "Rising", "ad_divergence": "None",
+        "force_short_zone": "Negative", "force_long_bias": "Bull", "force_long_divergence": "None",
+        "impulse_daily": "Green", "impulse_weekly": "Blue",
+        "weekly_trend": "Up", "daily_trend": "Down", "triple_screen": "Go long setup",
+        "badges": {
+            "ma_slope": "badge-bullish", "price_vs_ma": "badge-bullish",
+            "macd_cross": "badge-bullish", "macd_hist_slope": "badge-bullish",
+            "trend_health": "badge-bullish", "macd_hist_extreme": "badge-neutral",
+            "macd_hist_divergence": "badge-neutral", "di_bias": "badge-bullish",
+            "adx_trend": "badge-bullish", "adx_regime": "badge-neutral",
+            "rsi_zone": "badge-neutral", "rsi_divergence": "badge-neutral",
+            "stoch_zone": "badge-neutral", "stoch_divergence": "badge-neutral",
+            "volume_vs_avg": "badge-neutral", "obv_trend": "badge-bullish",
+            "obv_divergence": "badge-neutral", "ad_trend": "badge-bullish",
+            "ad_divergence": "badge-neutral", "force_short_zone": "badge-bearish",
+            "force_long_bias": "badge-bullish", "force_long_divergence": "badge-neutral",
+            "impulse_daily": "badge-bullish", "impulse_weekly": "badge-impulse-blue",
+            "weekly_trend": "badge-bullish", "daily_trend": "badge-bearish",
+            "triple_screen": "badge-bullish",
+        },
+        "glyphs": {
+            "ma_slope": "▲", "macd_hist_slope": "▲", "adx_trend": "▲",
+            "obv_trend": "▲", "ad_trend": "▲", "weekly_trend": "▲", "daily_trend": "▼",
+        },
+    }
+    monkeypatch.setattr("dashboard_app.build_scanner_state",
+                         lambda: {"rows": [row], "run_date": "2026-09-15"})
+
+    resp = client.get("/scanner")
+    html = resp.data.decode()
+
+    assert resp.status_code == 200
+    assert "AAA.TO" in html
+    assert "2026-09-15" in html
+    assert "Go long setup" in html
+    assert "badge-impulse-blue" in html
+
+
+def test_scanner_page_end_to_end_with_a_real_computed_row(client, monkeypatch, tmp_path):
+    """Exercises the full compute_row() -> store.upsert_rows() ->
+    scanner_dashboard_data -> template path with real data, rather than a
+    hand-typed row dict -- catches a field-name mismatch between row.py
+    and scanner.html that a hand-typed fixture (see the test above) could
+    otherwise hide."""
+    import numpy as np
+    import pandas as pd
+
+    from scanner_board import row as row_mod
+    from scanner_board import store as scanner_store
+    from scanner_board.weekly import resample_ohlcv_weekly
+
+    idx = pd.bdate_range("2023-01-02", periods=260)
+    rng = np.random.default_rng(4)
+    close = 100 + np.cumsum(0.05 + rng.normal(0, 0.3, 260))
+    high = close + np.abs(rng.normal(0.2, 0.1, 260))
+    low = close - np.abs(rng.normal(0.2, 0.1, 260))
+    open_ = close - rng.normal(0, 0.1, 260)
+    volume = np.abs(rng.normal(100_000, 10_000, 260))
+    daily = pd.DataFrame(
+        {"Open": open_, "High": high, "Low": low, "Close": close, "Volume": volume}, index=idx)
+    weekly = resample_ohlcv_weekly(daily)
+    computed = row_mod.compute_row("REAL.TO", daily, weekly)
+
+    db_path = tmp_path / "scanner_board_e2e.db"
+    conn = scanner_store.connect(db_path)
+    scanner_store.upsert_rows(conn, "2026-09-15", [computed], updated_at="2026-09-15T17:15:00")
+    conn.close()
+
+    monkeypatch.setattr("scanner_dashboard_data.SCANNER_BOARD_DB_PATH", db_path)
+    monkeypatch.setattr("scanner_dashboard_data._cache", {"ts": 0.0, "state": None})
+
+    resp = client.get("/scanner")
+    assert resp.status_code == 200
+    assert "REAL.TO" in resp.data.decode()

@@ -46,6 +46,7 @@ from kangaroo_dashboard_data import (
 from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
+from scanner_dashboard_data import build_scanner_state
 from triple_screen_tracker_dashboard_data import build_triple_screen_tracker_state
 
 _ERROR_STATUS = {
@@ -343,6 +344,23 @@ def create_app() -> Flask:
         return render_template(
             "triple_screen_tracker.html",
             open_rows=state["open"], closed_rows=state["closed"], error=error,
+        )
+
+    @app.get("/scanner")
+    def scanner():
+        """Read-only view of the Ticker Indicator Board (see
+        scanner_board/PLAN.md). No action here, same as /triple-screen:
+        a display layer over whatever scanner_pipeline.py has already
+        computed, never a trigger for a fetch or a trade."""
+        try:
+            state = _read_with_retry(build_scanner_state)
+            error = None
+        except (sqlite3.Error, OSError):
+            state = {"rows": [], "run_date": None}
+            error = "Database temporarily unavailable — retrying on next refresh."
+
+        return render_template(
+            "scanner.html", rows=state["rows"], run_date=state["run_date"], error=error,
         )
 
     @app.get("/conviction")

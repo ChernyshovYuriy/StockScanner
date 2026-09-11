@@ -21,10 +21,11 @@
 #
 # The `cp -v .../stockscanner-*.service|.timer` globs below already pick up
 # any new unit file added to this directory (e.g. the 2026-09 Kangaroo Tail
-# sleeve's 6 files) with no change needed here — but per the "does NOT
-# enable/start anything not already enabled" rule above, a BRAND NEW
-# sleeve's timers still need a one-time manual enable on first deploy (see
-# system/info); this script alone won't start them running.
+# sleeve's 6 files, or the Scanner Board's 2) with no change needed here —
+# but per the "does NOT enable/start anything not already enabled" rule
+# above, a BRAND NEW service's timer still needs a one-time manual enable
+# on first deploy (see system/info); this script alone won't start it
+# running.
 
 set -euo pipefail
 
@@ -51,6 +52,6 @@ echo "  journalctl -u stockscanner-momentum-monitor.service -n 20 --no-pager"
 echo "  journalctl -u stockscanner-momentum-pipeline.service -n 20 --no-pager"
 echo "  systemctl list-timers --all | grep stockscanner"
 echo
-echo "First time deploying a brand-new sleeve's units (e.g. Kangaroo Tail)?"
-echo "This script does not enable/start them — run the enable --now commands"
-echo "in system/info for that sleeve once."
+echo "First time deploying a brand-new service's units (e.g. Kangaroo Tail, or"
+echo "the Scanner Board)? This script does not enable/start them — run the"
+echo "enable --now commands in system/info for that service once."

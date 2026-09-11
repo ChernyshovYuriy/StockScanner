@@ -11,8 +11,9 @@ Scope
 Data ingestion (yfinance) is out of scope. Every fixture constructs a
 pandas.Series directly — no network call anywhere in this file.
 
-Eight static methods on TechnicalIndicators:
-  sma, ema, rsi, macd, adx, obv, linear_regression_slope, weekly_resample
+Eleven static methods on TechnicalIndicators:
+  sma, ema, rsi, macd, true_range, atr, directional_system, adx, obv,
+  linear_regression_slope, weekly_resample
 
 Not covered here: ScoreCalculator's score_* methods (composite scoring built
 on top of these), which were covered narratively in the preceding audit
@@ -276,8 +277,123 @@ class TestMacd:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. TechnicalIndicators.adx
+# 5. TechnicalIndicators.true_range / atr
 # ─────────────────────────────────────────────────────────────────────────────
+
+class TestTrueRange:
+    """true_range() was extracted out of adx()'s previously-inlined tr1/
+    tr2/tr3 computation (unchanged math) so atr() and adx() share exactly
+    one implementation. Hypothesis under test: the extraction silently
+    changed something (e.g. lost the .abs() on the two gap terms, or an
+    off-by-one in the .shift()."""
+
+    def test_ground_truth_hand_traced(self):
+        """3 bars. Bar 1 (idx0) has no previous close, so the two gap terms
+        are NaN and pandas' .max(axis=1) skips them (skipna is the
+        default) -- TR falls back to that bar's own high-low=1.0, not NaN.
+        Bar 2 (idx1): high-low=2, |high-prev_close|=|11-9|=2,
+        |low-prev_close|=|9-9|=0 -> TR=2. Bar 3 (idx2): high-low=1,
+        |high-prev_close|=|12-10|=2, |low-prev_close|=|11-10|=1 -> TR=2
+        (the gap term wins over the bar's own range)."""
+        high = pd.Series([10.0, 11.0, 12.0])
+        low = pd.Series([9.0, 9.0, 11.0])
+        close = pd.Series([9.0, 10.0, 12.0])
+        out = TI.true_range(high, low, close)
+        assert out.tolist() == [1.0, 2.0, 2.0]
+
+    def test_boundary_flat_price_is_zero_not_nan(self):
+        """High==Low==Close every bar: every one of the three candidate
+        terms is exactly 0, so TR is 0 (a real, defined value), unlike
+        RSI's flat-window NaN convention (A3) -- there is no division here
+        for a flat bar to make undefined."""
+        flat = pd.Series([50.0] * 5)
+        out = TI.true_range(flat, flat, flat)
+        assert out.iloc[1:].tolist() == [0.0, 0.0, 0.0, 0.0]
+
+    def test_property_never_negative(self):
+        rng = np.random.default_rng(3)
+        n = 30
+        close = np.cumsum(rng.standard_normal(n)) + 100
+        high = close + np.abs(rng.standard_normal(n)) * 0.5
+        low = close - np.abs(rng.standard_normal(n)) * 0.5
+        out = TI.true_range(pd.Series(high), pd.Series(low), pd.Series(close))
+        assert (out.dropna() >= 0).all()
+
+
+class TestAtr:
+    """Hypothesis under test: atr() drifts from the Wilder-smoothed `atr`
+    local variable adx() used to compute inline -- i.e. the extraction
+    changed adx()'s own numbers, not just true_range()'s. Covered directly
+    by re-asserting TestAdx's existing ground-truth traces still hold
+    (below), so this class only needs to lock atr() as a standalone value."""
+
+    def test_ground_truth_matches_adx_internal_atr(self):
+        """Wilder-smoothed TR with adjust=False: TR=[1,2,2], period=2 ->
+        alpha=0.5, seeded at TR[0]=1 (no NaN to skip this time, see
+        TestTrueRange) -> ATR=[1, 0.5*2+0.5*1=1.5, 0.5*2+0.5*1.5=1.75]."""
+        high = pd.Series([10.0, 11.0, 12.0])
+        low = pd.Series([9.0, 9.0, 11.0])
+        close = pd.Series([9.0, 10.0, 12.0])
+        out = TI.atr(high, low, close, period=2)
+        assert out.tolist() == [1.0, 1.5, 1.75]
+
+    def test_boundary_flat_price_is_zero_not_nan(self):
+        flat = pd.Series([50.0] * 5)
+        out = TI.atr(flat, flat, flat, period=14)
+        assert (out.iloc[1:] == 0.0).all()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. TechnicalIndicators.directional_system / adx
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDirectionalSystem:
+    """directional_system() was extracted so adx() (unchanged below) and
+    the new +DI13/-DI13 outputs share exactly one implementation. Reuses
+    the SAME 4-bar hand trace TestAdx.test_ground_truth_hand_traced_pure_uptrend_4_bars
+    already documents (TR=[1,2.5,2.5,2.5], smoothed +DM=[0,1.0,1.5,1.75],
+    PDI=[0,57.14,70.59,75.68], NDI=[0,0,0,0]) rather than a second
+    from-scratch trace, since it's the same underlying computation."""
+
+    def test_ground_truth_matches_adx_docstrings_own_hand_trace(self):
+        idx = pd.date_range("2024-01-01", periods=4)
+        high = pd.Series([10.0, 12, 14, 16], index=idx)
+        low = pd.Series([9.0, 10, 12, 14], index=idx)
+        close = pd.Series([9.5, 11.5, 13.5, 15.5], index=idx)
+        pdi, ndi, adx_ = TI.directional_system(high, low, close, period=2)
+
+        # idx0 has no previous bar, so both DMs are defined-but-zero (not
+        # NaN) -- same "the shift()-produced NaN gap term is skipped, not
+        # the whole bar" reasoning as true_range()'s own idx0 (TestTrueRange
+        # above).
+        assert pdi.round(2).tolist() == [0.0, 57.14, 70.59, 75.68]
+        assert ndi.tolist() == [0.0, 0.0, 0.0, 0.0]
+        # adx() must still return exactly the third element -- no drift
+        # between the two methods after the extraction.
+        assert adx_.equals(TI.adx(high, low, close, period=2))
+
+    def test_boundary_flat_price_all_nan_not_inf_or_crash(self):
+        flat = pd.Series([50.0] * 20)
+        pdi, ndi, adx_ = TI.directional_system(flat, flat, flat, period=14)
+        assert pdi.isna().all() and ndi.isna().all() and adx_.isna().all()
+        assert not np.isinf(pdi.fillna(0)).any()
+        assert not np.isinf(ndi.fillna(0)).any()
+
+    @given(seed=st.integers(min_value=0, max_value=10_000))
+    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    def test_property_di_lines_bounded_zero_to_hundred(self, seed):
+        rng = np.random.default_rng(seed)
+        n = 40
+        close = np.cumsum(rng.standard_normal(n)) + 100
+        high = close + np.abs(rng.standard_normal(n)) * 0.5 + 0.01
+        low = close - np.abs(rng.standard_normal(n)) * 0.5 - 0.01
+        idx = pd.date_range("2024-01-01", periods=n)
+        pdi, ndi, _ = TI.directional_system(
+            pd.Series(high, index=idx), pd.Series(low, index=idx), pd.Series(close, index=idx))
+        pdi, ndi = pdi.dropna(), ndi.dropna()
+        assert (pdi >= -1e-9).all() and (pdi <= 100 + 1e-9).all()
+        assert (ndi >= -1e-9).all() and (ndi <= 100 + 1e-9).all()
+
 
 def _reference_adx(high, low, close, period=14):
     """Independent re-derivation of Wilder's ADX (loop-based, not vectorized
@@ -388,7 +504,7 @@ class TestAdx:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. TechnicalIndicators.obv
+# 7. TechnicalIndicators.obv
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestObv:
@@ -448,7 +564,7 @@ class TestObv:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. TechnicalIndicators.linear_regression_slope
+# 8. TechnicalIndicators.linear_regression_slope
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLinearRegressionSlope:
@@ -503,7 +619,7 @@ class TestLinearRegressionSlope:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8. TechnicalIndicators.weekly_resample
+# 9. TechnicalIndicators.weekly_resample
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestWeeklyResample:

@@ -169,8 +169,9 @@ sudo systemctl enable --now stockscanner-dashboard.service
 
 `system/` also has unit pairs for the EDGAR collector, the momentum sleeve,
 the demand-signals collector, the macro conviction sleeve, the Triple Screen
-tracker, and the Kangaroo Tail sleeve — `system/info` has the complete
-enable/start/journalctl commands for every unit.
+tracker, the Kangaroo Tail sleeve, and the Ticker Indicator Board —
+`system/info` has the complete enable/start/journalctl commands for every
+unit.
 
 The dashboard listens on `DASHBOARD_HOST:DASHBOARD_PORT` from `config.py`
 (default `0.0.0.0:8080`, LAN-only, no authentication — deliberate for a

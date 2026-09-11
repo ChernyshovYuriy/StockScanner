@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Scanner Board — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    /* Next distinct accent after Momentum's amber, Kangaroo's violet,
+       Macro's blue, Demand's purple, Triple Screen's teal, Conviction's
+       brown -- a neutral slate, deliberately calmer than every trading
+       page: this is a reference board to look AT, not a page that asks
+       you to do anything. */
+    .scanner-accent { color: #334155; }
+    .scanner-badge {
+      display: inline-block; margin-left: 10px; padding: 2px 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 600;
+      background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1;
+      vertical-align: middle;
+    }
+    /* Elder's own Impulse System color -- distinct from dashboard.css's
+       shared bullish(green)/bearish(red)/neutral(grey) badges, which have
+       no blue. Page-scoped rather than added to the shared stylesheet,
+       since only this page needs it. */
+    .badge-impulse-blue { background: #eff6ff; color: #1d4ed8; }
+    /* ADX Regime's "worth watching" states (Waking Up / Overheated) --
+       neither bullish nor bearish, ADX has no directional sign of its
+       own, but the book calls both out as a moment to pay attention. */
+    .badge-highlight { background: #fffbeb; color: #b45309; }
+
+    .scanner-table th, .scanner-table td { text-align: right; }
+    .scanner-table th:first-child, .scanner-table td:first-child { text-align: left; }
+    .scanner-table thead tr.group-row th {
+      text-align: center;
+      background: var(--page-bg);
+      border-bottom: 2px solid var(--border);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+    }
+    .scanner-table thead tr.group-row th.group-trend { border-left: 2px solid var(--border); }
+    .scanner-table thead tr.group-row th.group-macd { border-left: 2px solid var(--border); }
+    .scanner-table thead tr.group-row th.group-adx { border-left: 2px solid var(--border); }
+    .scanner-table thead tr.group-row th.group-osc { border-left: 2px solid var(--border); }
+    .scanner-table thead tr.group-row th.group-vol { border-left: 2px solid var(--border); }
+    .scanner-table thead tr.group-row th.group-mtf { border-left: 2px solid var(--border); }
+    .scanner-table td.col-first-in-group, .scanner-table th.col-first-in-group { border-left: 2px solid var(--border); }
+    .value-zone-plain { color: var(--text-muted); }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="header-row">
+    <h1 class="scanner-accent">Scanner Board <span class="scanner-badge">read-only</span></h1>
+    <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <p class="banner banner-info">
+    Every major indicator from Dr. Alexander Elder's <em>The New Trading for a Living</em>,
+    applied to the full CAN_TICKERS_URL universe — one row per ticker, one column
+    per book-cited reading. No composite score, no buy/sell signal: read each
+    column on its own terms and form your own judgment, the way the book itself
+    insists ("markets are too complex to be analyzed with a single indicator").
+    The <strong>Triple Screen</strong> column is the one exception, and it's
+    Elder's own published decision table (Ch.39), not a synthesized one.
+    See <code>scanner_board/PLAN.md</code>.
+  </p>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  {% if run_date %}
+    <p class="stat">Snapshot as of {{ run_date }}</p>
+  {% endif %}
+
+  {% if not rows %}
+    <p>Nothing scanned yet — scanner_pipeline.py hasn't run, or hasn't found any tickers.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table class="sortable scanner-table">
+    <thead>
+      <tr class="group-row">
+        <th colspan="3"></th>
+        <th colspan="6" class="group-trend">Trend (Ch.22)</th>
+        <th colspan="6" class="group-macd">MACD (Ch.23)</th>
+        <th colspan="5" class="group-adx">Directional System / ADX (Ch.24)</th>
+        <th colspan="6" class="group-osc">Oscillators (Ch.25-27)</th>
+        <th colspan="8" class="group-vol">Volume (Ch.28-30)</th>
+        <th colspan="5" class="group-mtf">Multi-timeframe (Ch.39-40)</th>
+      </tr>
+      <tr>
+        <th>Ticker</th><th>Price</th><th>%Chg</th>
+        <th class="col-first-in-group">MA22</th><th>MA50</th><th>MA200</th><th>MA Slope</th><th>Price vs MA</th><th>Value Zone</th>
+        <th class="col-first-in-group">MACD-H</th><th>Cross</th><th>Hist Slope</th><th>Trend Health</th><th>3mo Extreme</th><th>Divergence</th>
+        <th class="col-first-in-group">ADX</th><th>DI Bias</th><th>ADX Trend</th><th>Regime</th><th>ATR%</th>
+        <th class="col-first-in-group">RSI</th><th>RSI Zone</th><th>RSI Div</th><th>Stoch %K</th><th>Stoch Zone</th><th>Stoch Div</th>
+        <th class="col-first-in-group">Vol vs Avg</th><th>OBV Trend</th><th>OBV Div</th><th>A/D Trend</th><th>A/D Div</th><th>Force(2)</th><th>Force(13)</th><th>Force(13) Div</th>
+        <th class="col-first-in-group">Impulse D</th><th>Impulse W</th><th>Weekly Trend</th><th>Daily Trend</th><th>Triple Screen</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>
+          <a href="https://ca.finance.yahoo.com/quote/{{ r.ticker }}" target="_blank" rel="noopener">{{ r.ticker }}</a>
+        </td>
+        <td>{{ "$%.2f"|format(r.price) if r.price is not none else "—" }}</td>
+        <td class="{{ 'pnl-pos' if r.pct_chg and r.pct_chg >= 0 else 'pnl-neg' if r.pct_chg is not none else '' }}">
+          {{ "%+.1f%%"|format(r.pct_chg) if r.pct_chg is not none else "—" }}
+        </td>
+
+        <td class="col-first-in-group">{{ "%.2f"|format(r.ma22) if r.ma22 is not none else "—" }}</td>
+        <td>{{ "%.2f"|format(r.ma50) if r.ma50 is not none else "—" }}</td>
+        <td>{{ "%.2f"|format(r.ma200) if r.ma200 is not none else "—" }}</td>
+        <td><span class="badge {{ r.badges.ma_slope }}">{{ r.glyphs.ma_slope }} {{ r.ma_slope }}</span></td>
+        <td><span class="badge {{ r.badges.price_vs_ma }}">{{ r.price_vs_ma }}</span></td>
+        <td class="value-zone-plain">{{ r.value_zone }}</td>
+
+        <td class="col-first-in-group">{{ "%.3f"|format(r.macd_hist) if r.macd_hist is not none else "—" }}</td>
+        <td><span class="badge {{ r.badges.macd_cross }}">{{ r.macd_cross }}</span></td>
+        <td><span class="badge {{ r.badges.macd_hist_slope }}">{{ r.glyphs.macd_hist_slope }} {{ r.macd_hist_slope }}</span></td>
+        <td><span class="badge {{ r.badges.trend_health }}">{{ r.trend_health }}</span></td>
+        <td><span class="badge {{ r.badges.macd_hist_extreme }}">{{ r.macd_hist_extreme }}</span></td>
+        <td><span class="badge {{ r.badges.macd_hist_divergence }}">{{ r.macd_hist_divergence }}</span></td>
+
+        <td class="col-first-in-group">{{ "%.1f"|format(r.adx) if r.adx is not none else "—" }}</td>
+        <td><span class="badge {{ r.badges.di_bias }}">{{ r.di_bias }}</span></td>
+        <td><span class="badge {{ r.badges.adx_trend }}">{{ r.glyphs.adx_trend }} {{ r.adx_trend }}</span></td>
+        <td><span class="badge {{ r.badges.adx_regime }}">{{ r.adx_regime }}</span></td>
+        <td>{{ "%.1f%%"|format(r.atr_pct) if r.atr_pct is not none else "—" }}</td>
+
+        <td class="col-first-in-group">{{ "%.1f"|format(r.rsi) if r.rsi is not none else "—" }}</td>
+        <td><span class="badge {{ r.badges.rsi_zone }}">{{ r.rsi_zone }}</span></td>
+        <td><span class="badge {{ r.badges.rsi_divergence }}">{{ r.rsi_divergence }}</span></td>
+        <td>{{ "%.1f"|format(r.stoch_k) if r.stoch_k is not none else "—" }}</td>
+        <td><span class="badge {{ r.badges.stoch_zone }}">{{ r.stoch_zone }}</span></td>
+        <td><span class="badge {{ r.badges.stoch_divergence }}">{{ r.stoch_divergence }}</span></td>
+
+        <td class="col-first-in-group"><span class="badge {{ r.badges.volume_vs_avg }}">{{ r.volume_vs_avg }}</span></td>
+        <td><span class="badge {{ r.badges.obv_trend }}">{{ r.glyphs.obv_trend }} {{ r.obv_trend }}</span></td>
+        <td><span class="badge {{ r.badges.obv_divergence }}">{{ r.obv_divergence }}</span></td>
+        <td><span class="badge {{ r.badges.ad_trend }}">{{ r.glyphs.ad_trend }} {{ r.ad_trend }}</span></td>
+        <td><span class="badge {{ r.badges.ad_divergence }}">{{ r.ad_divergence }}</span></td>
+        <td><span class="badge {{ r.badges.force_short_zone }}">{{ r.force_short_zone }}</span></td>
+        <td><span class="badge {{ r.badges.force_long_bias }}">{{ r.force_long_bias }}</span></td>
+        <td><span class="badge {{ r.badges.force_long_divergence }}">{{ r.force_long_divergence }}</span></td>
+
+        <td class="col-first-in-group"><span class="badge {{ r.badges.impulse_daily }}">{{ r.impulse_daily }}</span></td>
+        <td><span class="badge {{ r.badges.impulse_weekly }}">{{ r.impulse_weekly }}</span></td>
+        <td><span class="badge {{ r.badges.weekly_trend }}">{{ r.glyphs.weekly_trend }} {{ r.weekly_trend }}</span></td>
+        <td><span class="badge {{ r.badges.daily_trend }}">{{ r.glyphs.daily_trend }} {{ r.daily_trend }}</span></td>
+        <td><span class="badge {{ r.badges.triple_screen }}">{{ r.triple_screen }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}

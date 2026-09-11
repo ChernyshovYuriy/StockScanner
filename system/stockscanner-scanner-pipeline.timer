@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner Ticker Indicator Board pipeline at 17:15 local time Mon-Fri (after the Triple Screen tracker's 17:00 run)
+
+[Timer]
+OnCalendar=Mon..Fri 17:15
+Persistent=false
+Unit=stockscanner-scanner-pipeline.service
+
+[Install]
+WantedBy=timers.target

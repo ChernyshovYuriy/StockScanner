@@ -85,3 +85,13 @@ sudo systemctl start stockscanner-kangaroo-monitor.service
 journalctl -u stockscanner-kangaroo-pipeline.service -n 100 --no-pager
 journalctl -u stockscanner-kangaroo-buy.service -n 100 --no-pager
 journalctl -u stockscanner-kangaroo-monitor.service -n 100 --no-pager
+
+# Scanner Board — 9th service, a read-only research board built on Elder's
+# "The New Trading for a Living" (see scanner_board/PLAN.md). No capital or
+# positions at all, unlike every sleeve above -- one snapshot row per ticker
+# per run, own SQLite DB (data/scanner_board.db). Runs at 17:15, after the
+# Triple Screen tracker's 17:00 run — no file/DB collision, own DB. No buy/
+# monitor units (this isn't a trading sleeve): only the one pipeline.
+sudo systemctl enable --now stockscanner-scanner-pipeline.timer
+sudo systemctl start stockscanner-scanner-pipeline.service
+journalctl -u stockscanner-scanner-pipeline.service -n 100 --no-pager

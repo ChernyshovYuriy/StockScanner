@@ -223,16 +223,36 @@ class TechnicalIndicators:
         return macd_line, signal_line, histogram
 
     @staticmethod
-    def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-        """Average Directional Index with Wilder's smoothing"""
-        # True Range
+    def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+        """True Range: the largest of today's high-low range, today's high
+        vs. yesterday's close, and today's low vs. yesterday's close
+        (Ch.24). Extracted out of adx() so it has exactly one
+        implementation — scanner_board's standalone ATR/ATR-channel columns
+        (Ch.24, "Average True Range—Help from Volatility") reuse this
+        instead of re-deriving it."""
         tr1 = high - low
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-        # Wilder's smoothing of TR
-        atr = tr.ewm(alpha=1 / period, adjust=False).mean()
+    @staticmethod
+    def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+        """Average True Range: Wilder-smoothed true_range() (Ch.24). Also
+        used internally by adx() below — see true_range()'s docstring."""
+        return TechnicalIndicators.true_range(high, low, close).ewm(alpha=1 / period, adjust=False).mean()
+
+    @staticmethod
+    def directional_system(high: pd.Series, low: pd.Series, close: pd.Series,
+                            period: int = 14):
+        """The full Directional System (Ch.24): +DI13, -DI13, and ADX
+        together — not just ADX alone. adx() below is now a thin wrapper
+        returning only the third element, so both share exactly one
+        implementation; scanner_board's DI Bias / ADX Regime columns
+        (Ch.24) need +DI13/-DI13 as their own series, which previously
+        existed only as local variables inside this method.
+
+        Returns (plus_di, minus_di, adx) — three pd.Series."""
+        atr = TechnicalIndicators.atr(high, low, close, period)
 
         # Directional Movement
         up_move = high - high.shift()
@@ -255,7 +275,14 @@ class TechnicalIndicators:
         # ADX is smoothed DX
         adx = dx.ewm(alpha=1 / period, adjust=False).mean()
 
-        return adx
+        return pdi, ndi, adx
+
+    @staticmethod
+    def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+        """Average Directional Index with Wilder's smoothing — the third
+        element of directional_system(); kept as its own method since most
+        existing callers here (score_adx) only need this one component."""
+        return TechnicalIndicators.directional_system(high, low, close, period)[2]
 
     @staticmethod
     def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
