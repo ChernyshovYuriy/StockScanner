@@ -15,6 +15,7 @@ data/edgar.db
 data/demand_signals.db
 data/macro.db
 data/triple_screen_tracker.db
+data/scanner_board.db
 data/conviction_holdings.json
 data/conviction_settings.json
 data/conviction_entry_candidates.json
