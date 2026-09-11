@@ -169,6 +169,50 @@ MACRO_ALERTS_PATH = OUT_PATH / "macro_alerts"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Kangaroo Tail sleeve (breakout-entry, defined-risk paper account — see
+# research/kangaroo_tail/, kangaroo_pipeline.py / kangaroo_buy.py /
+# kangaroo_monitor.py and CLAUDE.md)
+# ─────────────────────────────────────────────────────────────────────────────
+# A fully isolated 8th sleeve/service, added 2026-09. Unlike every other
+# sleeve, an entry here is NOT "buy at next open off a confirmed intent" —
+# a Kangaroo Tail detection is a PENDING BREAKOUT setup: risk is only taken
+# once price actually trades through the tail candle's own high (a
+# buy-stop trigger), with the stop at the tail's low and the target a
+# multiple of that risk (KANGAROO_RR_TARGET). Phase 2's 16-fold walk-forward
+# + R-multiple breakout backtest found a real, if modest, edge for exactly
+# this entry mechanic (win 56.6%, avg_R +0.246, PF 1.72, p=0.033 at rr=1.5,
+# n=143) — same-day "buy at the tail's own close" showed no edge under any
+# config tested and is NOT what this sleeve trades (see
+# research/kangaroo_tail/KANGAROO_TAIL_VERIFICATION_FINDINGS.md).
+KANGAROO_DB_PATH = DATA_PATH / "kangaroo.db"
+KANGAROO_INITIAL_CAPITAL = 10_000.0
+
+# Sizing starting points, not yet backtested at the portfolio level (only
+# the per-trade R-multiple edge above is validated) — same honesty
+# precedent as MACRO_MAX_POSITIONS/MACRO_RISK_PER_TRADE_PCT. Matches the
+# momentum sleeve's own starting values for a similarly-scaled book.
+KANGAROO_MAX_POSITIONS = 5
+KANGAROO_RISK_PER_TRADE_PCT = 2.0
+
+# Reward:risk target for the fixed take-profit (target = trigger + RR *
+# (trigger - stop)). 1.5 is the value the findings doc's headline numbers
+# above were computed at; 1.0/2.0 were also swept with a similar
+# significance pattern (see the findings doc) if this is ever revisited.
+KANGAROO_RR_TARGET = 1.5
+
+# Time stop: cancel a still-pending (untriggered) breakout intent, or exit
+# a triggered position that has hit neither stop nor target, after this
+# many TRADING days — matches Phase 2's own max_hold_bars exactly, so live
+# behaviour matches what was actually backtested.
+KANGAROO_MAX_HOLD_DAYS = 10
+
+# Output paths — kept fully separate from every other sleeve's out/ files.
+KANGAROO_REPORT_PATH = OUT_PATH / "kangaroo_report.html"
+KANGAROO_REPORT_POSITION_PATH = OUT_PATH / "kangaroo_position_monitor_report.html"
+KANGAROO_ALERTS_PATH = OUT_PATH / "kangaroo_alerts"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Web dashboard (Jetson, LAN-only, no auth — deliberate choice)
 # ─────────────────────────────────────────────────────────────────────────────
 DASHBOARD_HOST = "0.0.0.0"

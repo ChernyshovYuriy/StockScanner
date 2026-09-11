@@ -67,3 +67,21 @@ sudo systemctl restart stockscanner-edgar.timer
 sudo systemctl enable --now stockscanner-triple-screen-tracker.timer
 sudo systemctl start stockscanner-triple-screen-tracker.service
 journalctl -u stockscanner-triple-screen-tracker.service -n 100 --no-pager
+
+# Kangaroo Tail sleeve — 8th, separate DB/capital, see config.py KANGAROO_*.
+# Breakout-entry, defined-risk paper account (research/kangaroo_tail/;
+# Phase 2 walk-forward findings in KANGAROO_TAIL_VERIFICATION_FINDINGS.md).
+# kangaroo-buy runs at 15:45 (an intraday breakout-trigger check, NOT
+# virtual_buy.py's 09:45 slot — see kangaroo_buy.py's docstring), just
+# before kangaroo-monitor at 15:50 so a freshly triggered position is also
+# checked for stop/target in the same cycle. No kangaroo-pipeline unit
+# clash with main.py — runs at 16:30, same slot as momentum-pipeline.
+sudo systemctl enable --now stockscanner-kangaroo-pipeline.timer
+sudo systemctl enable --now stockscanner-kangaroo-buy.timer
+sudo systemctl enable --now stockscanner-kangaroo-monitor.timer
+sudo systemctl start stockscanner-kangaroo-pipeline.service
+sudo systemctl start stockscanner-kangaroo-buy.service
+sudo systemctl start stockscanner-kangaroo-monitor.service
+journalctl -u stockscanner-kangaroo-pipeline.service -n 100 --no-pager
+journalctl -u stockscanner-kangaroo-buy.service -n 100 --no-pager
+journalctl -u stockscanner-kangaroo-monitor.service -n 100 --no-pager

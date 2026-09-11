@@ -83,12 +83,19 @@ _DDL: list[str] = [
         entry_price DOUBLE NOT NULL,
         shares      DOUBLE NOT NULL,
         stop_price  DOUBLE,
+        target_price DOUBLE,
         opened_at   TEXT   NOT NULL
     )
     """,
-    # Migration for databases created before stop_price was added — no-op on
-    # fresh DBs where the column already exists from the CREATE above.
+    # Migration for databases created before stop_price/target_price were
+    # added — no-op on fresh DBs where the column already exists from the
+    # CREATE above.
     "ALTER TABLE positions ADD COLUMN IF NOT EXISTS stop_price DOUBLE",
+    # target_price: the fixed take-profit level for the Kangaroo Tail
+    # sleeve's defined-risk trades (see kangaroo_buy.py/kangaroo_monitor.py)
+    # — unused (NULL) by every other sleeve, same additive precedent as
+    # stop_price above.
+    "ALTER TABLE positions ADD COLUMN IF NOT EXISTS target_price DOUBLE",
     """
     CREATE TABLE IF NOT EXISTS trades (
         id          INTEGER DEFAULT nextval('seq_trades') PRIMARY KEY,
@@ -294,7 +301,7 @@ def get_open_positions() -> List[Dict]:
     with _connect() as conn:
         return (
             conn.execute(
-                "SELECT ticker, entry_date, entry_price, shares, stop_price FROM positions ORDER BY entry_date"
+                "SELECT ticker, entry_date, entry_price, shares, stop_price, target_price FROM positions ORDER BY entry_date"
             )
             .df()
             .to_dict("records")
@@ -305,19 +312,22 @@ def get_open_positions_df() -> pd.DataFrame:
     """Return open positions as a DataFrame (drop-in for pd.read_csv(own.csv))."""
     with _connect() as conn:
         df = conn.execute(
-            "SELECT ticker, entry_date, entry_price, shares, stop_price FROM positions ORDER BY entry_date"
+            "SELECT ticker, entry_date, entry_price, shares, stop_price, target_price FROM positions ORDER BY entry_date"
         ).df()
         if df.empty:
-            return pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "shares", "stop_price"])
+            return pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "shares", "stop_price", "target_price"])
         return df
 
 
 def insert_position(ticker: str, entry_date: str, entry_price: float, shares: float, pattern: str | None = None,
-                    stop_price: float | None = None, cash_delta: float | None = None) -> None:
+                    stop_price: float | None = None, target_price: float | None = None,
+                    cash_delta: float | None = None) -> None:
     """Add a new open position and record a BUY transaction. Raises if ticker is already open.
 
     stop_price is the planned exit stop carried from the buy intent; position_monitor
     honours it as the initial stop so the exit matches the stop the trade was sized against.
+    target_price is an optional fixed take-profit level — unused (None) by every sleeve
+    except the Kangaroo Tail sleeve's defined-risk trades (see kangaroo_buy.py).
     cash_delta (normally -cost) is applied to the account balance in the same
     transaction, so a crash can never leave a position without its cash deduction.
     """
@@ -325,10 +335,11 @@ def insert_position(ticker: str, entry_date: str, entry_price: float, shares: fl
     now = market_now().isoformat()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO positions (ticker, entry_date, entry_price, shares, stop_price, opened_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO positions (ticker, entry_date, entry_price, shares, stop_price, target_price, opened_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [ticker.upper(), entry_date, round(entry_price, 4), round(shares, 4),
-             round(stop_price, 4) if stop_price is not None else None, now],
+             round(stop_price, 4) if stop_price is not None else None,
+             round(target_price, 4) if target_price is not None else None, now],
         )
         _record_transaction(conn, "BUY", ticker, entry_date, entry_price, shares, reason=pattern)
         if cash_delta is not None:

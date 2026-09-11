@@ -37,6 +37,12 @@ from dashboard_positions import build_live_positions
 from db import get_all_trades, get_cash, get_transactions
 from demand_dashboard_data import build_demand_signals_by_ticker
 from demand_signals.summary import summarize_all
+from kangaroo_dashboard_data import (
+    build_kangaroo_positions,
+    get_kangaroo_cash,
+    get_kangaroo_pending_intents,
+    get_kangaroo_transactions,
+)
 from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
@@ -181,6 +187,59 @@ def create_app() -> Flask:
         return render_template(
             "momentum_monitor.html",
             rows=rows,
+            cash=cash,
+            total_pnl=total_pnl,
+            market_value=market_value,
+            initial_capital=initial_capital,
+            total_equity=total_equity,
+            total_return=total_return,
+            total_return_pct=total_return_pct,
+            error=error,
+        )
+
+    @app.get("/kangaroo")
+    def kangaroo():
+        """Read-only view of the Kangaroo Tail sleeve (separate DB/capital —
+        see config.py KANGAROO_* and kangaroo_dashboard_data.py). No sell
+        action here, same isolation reasoning as /momentum."""
+        try:
+            rows = _read_with_retry(build_kangaroo_positions)
+            cash = _read_with_retry(get_kangaroo_cash)
+            transactions = _read_with_retry(get_kangaroo_transactions)
+            pending = _read_with_retry(get_kangaroo_pending_intents)
+            pending = pending.to_dict("records") if pending is not None and not pending.empty else []
+            error = None
+        except (duckdb.Error, OSError):
+            rows, cash, transactions, pending = [], None, None, []
+            error = "Database temporarily unavailable — retrying on next refresh."
+
+        total_pnl = None
+        market_value = None
+        initial_capital = None
+        total_equity = None
+        total_return = None
+        total_return_pct = None
+
+        if rows:
+            total_pnl = sum(
+                row["pnl_$"] for row in rows if isinstance(row.get("pnl_$"), (int, float))
+            )
+            market_value = sum(
+                row["last_close"] * row["shares"] for row in rows
+                if isinstance(row.get("last_close"), (int, float)) and isinstance(row.get("shares"), (int, float))
+            )
+        if cash is not None:
+            total_equity = cash + (market_value or 0.0)
+        if cash is not None and transactions is not None:
+            initial_capital = _compute_initial_capital(cash, transactions)
+        if total_equity is not None and initial_capital:
+            total_return = total_equity - initial_capital
+            total_return_pct = (total_equity / initial_capital - 1.0) * 100.0
+
+        return render_template(
+            "kangaroo_monitor.html",
+            rows=rows,
+            pending=pending,
             cash=cash,
             total_pnl=total_pnl,
             market_value=market_value,

@@ -1,0 +1,16 @@
+[Unit]
+Description=Run StockScanner Kangaroo Tail sleeve breakout watcher at 15:45 local time Mon-Fri
+
+[Timer]
+# Deliberately NOT virtual_buy.py's 09:45 slot -- this sleeve's "buy" is a
+# live intraday breakout-trigger check (has price traded through the
+# tail's own high yet?), not a next-day-open fill off a confirmed intent,
+# so it needs most of the trading day's range to have formed first. Runs
+# just before kangaroo-monitor so a freshly triggered position is also
+# evaluated for stop/target in the same cycle.
+OnCalendar=Mon..Fri 15:45
+Persistent=false
+Unit=stockscanner-kangaroo-buy.service
+
+[Install]
+WantedBy=timers.target
