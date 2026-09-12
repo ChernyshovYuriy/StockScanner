@@ -24,6 +24,11 @@
        own, but the book calls both out as a moment to pay attention. */
     .badge-highlight { background: #fffbeb; color: #b45309; }
 
+    /* Every header carries a plain-language title="" tooltip (native
+       browser hover) explaining what the column means -- cursor:help is
+       the one visual hint that hovering reveals more, kept deliberately
+       minimal rather than a custom tooltip widget for one line of text. */
+    .scanner-table thead th[title] { cursor: help; }
     .scanner-table th, .scanner-table td { text-align: right; }
     .scanner-table th:first-child, .scanner-table td:first-child { text-align: left; }
     .scanner-table thead tr.group-row th {
@@ -78,21 +83,59 @@
     <thead>
       <tr class="group-row">
         <th colspan="3"></th>
-        <th colspan="6" class="group-trend">Trend (Ch.22)</th>
-        <th colspan="6" class="group-macd">MACD (Ch.23)</th>
-        <th colspan="5" class="group-adx">Directional System / ADX (Ch.24)</th>
-        <th colspan="6" class="group-osc">Oscillators (Ch.25-27)</th>
-        <th colspan="8" class="group-vol">Volume (Ch.28-30)</th>
-        <th colspan="5" class="group-mtf">Multi-timeframe (Ch.39-40)</th>
+        <th colspan="6" class="group-trend" title="Where is the price heading, based on its moving averages?">Trend (Ch.22)</th>
+        <th colspan="6" class="group-macd" title="Is the trend accelerating or losing steam?">MACD (Ch.23)</th>
+        <th colspan="5" class="group-adx" title="How strong is the current trend, and who's winning: buyers or sellers?">Directional System / ADX (Ch.24)</th>
+        <th colspan="6" class="group-osc" title="Has the stock been pushed too far, too fast, in either direction lately?">Oscillators (Ch.25-27)</th>
+        <th colspan="8" class="group-vol" title="Is real trading activity backing up this price move, or is it thin?">Volume (Ch.28-30)</th>
+        <th colspan="5" class="group-mtf" title="Combining the bigger-picture (weekly) and shorter-term (daily) pictures.">Multi-timeframe (Ch.39-40)</th>
       </tr>
       <tr>
-        <th>Ticker</th><th>Price</th><th>%Chg</th>
-        <th class="col-first-in-group">MA22</th><th>MA50</th><th>MA200</th><th>MA Slope</th><th>Price vs MA</th><th>Value Zone</th>
-        <th class="col-first-in-group">MACD-H</th><th>Cross</th><th>Hist Slope</th><th>Trend Health</th><th>3mo Extreme</th><th>Divergence</th>
-        <th class="col-first-in-group">ADX</th><th>DI Bias</th><th>ADX Trend</th><th>Regime</th><th>ATR%</th>
-        <th class="col-first-in-group">RSI</th><th>RSI Zone</th><th>RSI Div</th><th>Stoch %K</th><th>Stoch Zone</th><th>Stoch Div</th>
-        <th class="col-first-in-group">Vol vs Avg</th><th>OBV Trend</th><th>OBV Div</th><th>A/D Trend</th><th>A/D Div</th><th>Force(2)</th><th>Force(13)</th><th>Force(13) Div</th>
-        <th class="col-first-in-group">Impulse D</th><th>Impulse W</th><th>Weekly Trend</th><th>Daily Trend</th><th>Triple Screen</th>
+        <th title="The stock's ticker symbol. Click it to open the quote on Yahoo Finance.">Ticker</th>
+        <th title="The most recent closing price.">Price</th>
+        <th title="Percent change from the previous day's close.">%Chg</th>
+
+        <th class="col-first-in-group" title="22-day average price — Elder's preferred short-term trend line, about one trading month of data.">MA22</th>
+        <th title="50-day average price — a common medium-term trend line.">MA50</th>
+        <th title="200-day average price — the classic long-term trend line.">MA200</th>
+        <th title="Is the 22-day average rising, falling, or flat right now? Rising means buyers are gaining the upper hand; falling means sellers are.">MA Slope</th>
+        <th title="Is today's price above or below its 22-day average? Above means the crowd is more bullish than usual; below means more bearish.">Price vs MA</th>
+        <th title="The price band between a faster and a slower moving average — Elder calls this band 'value'. Buying inside or below it avoids overpaying; buying above it means paying a premium.">Value Zone</th>
+
+        <th class="col-first-in-group" title="How far apart the fast and slow trend lines are. A taller bar means bulls or bears are firmly in control; a shrinking bar means the current move is losing steam.">MACD-H</th>
+        <th title="Is the fast trend line currently above or below the slow one? Above favors buyers, below favors sellers.">Cross</th>
+        <th title="Is that bar bigger or smaller than yesterday's? Bigger means momentum is building; smaller means it's fading.">Hist Slope</th>
+        <th title="Compares this bar's direction to price's own direction. When they agree, the trend is 'Safe'; when they disagree, the trend may be running out of steam ('Weak').">Trend Health</th>
+        <th title="Has this bar just hit a fresh 3-month high or low? A new extreme signals unusually strong buying or selling pressure.">3mo Extreme</th>
+        <th title="Price is making a new high/low but this indicator isn't confirming it — a classic early warning that the trend may be about to turn.">Divergence</th>
+
+        <th class="col-first-in-group" title="How strongly the market is trending, regardless of direction. Higher means a stronger trend; low means a flat, directionless market.">ADX</th>
+        <th title="Which side currently has the upper hand: buyers or sellers.">DI Bias</th>
+        <th title="Is trend strength itself increasing or decreasing?">ADX Trend</th>
+        <th title="A quick read on the market's phase: Choppy (flat, best to wait), Waking Up (a new trend may be starting), Trending (an established move), or Overheated (the move looks stretched — worth watching for a pause).">Regime</th>
+        <th title="Average daily price swing, as a percent of price — a simple gauge of how volatile this stock is right now.">ATR%</th>
+
+        <th class="col-first-in-group" title="A 0-100 gauge of recent buying vs. selling pressure.">RSI</th>
+        <th title="Is RSI unusually high (Overbought) or unusually low (Oversold) for this stock lately? Neutral means nothing extreme.">RSI Zone</th>
+        <th title="Price and RSI are disagreeing on direction — an early hint the current move may be losing conviction.">RSI Div</th>
+        <th title="A 0-100 gauge of where today's close sits within its recent trading range.">Stoch %K</th>
+        <th title="Same idea as RSI Zone, using the Stochastic reading instead.">Stoch Zone</th>
+        <th title="Price and Stochastic are disagreeing on direction — same early-warning idea as the RSI divergence.">Stoch Div</th>
+
+        <th class="col-first-in-group" title="Is today's trading volume unusually high or low compared to its recent average? High volume adds conviction to a move; low volume suggests less real commitment behind it.">Vol vs Avg</th>
+        <th title="Is the running tally of up-day vs. down-day volume rising or falling? Confirms whether real buying/selling is backing up the price move.">OBV Trend</th>
+        <th title="This volume flow is disagreeing with price — a hint the move isn't backed by real conviction.">OBV Div</th>
+        <th title="Similar idea to OBV, but weighted by where the stock closed within each day's range. Rising means buyers are winning the day-to-day tug of war.">A/D Trend</th>
+        <th title="Price and this volume measure are disagreeing — another early-warning divergence.">A/D Div</th>
+        <th title="A short-term (2-day) gauge combining price change and volume. Useful for spotting a brief dip worth buying in an uptrend, or a brief bounce worth selling in a downtrend.">Force(2)</th>
+        <th title="A longer-term (13-day) version of the same idea — whether buyers or sellers have been dominant lately.">Force(13)</th>
+        <th title="Price and the longer-term Force reading are disagreeing — a stronger, longer-term early warning.">Force(13) Div</th>
+
+        <th class="col-first-in-group" title="Elder's own 'traffic light' for the daily chart: Green = buyers control both the trend and its momentum, Red = sellers do, Blue = mixed signals — trade with caution.">Impulse D</th>
+        <th title="The same traffic light, read on the weekly chart — the bigger-picture view.">Impulse W</th>
+        <th title="Is the weekly (longer-term) trend pointed up or down?">Weekly Trend</th>
+        <th title="Is the daily (shorter-term) trend pointed up or down?">Daily Trend</th>
+        <th title="Elder's own rule for combining the weekly and daily trends: if they disagree, it may be a good entry point; if they agree, it's usually best to stand aside.">Triple Screen</th>
       </tr>
     </thead>
     <tbody>
