@@ -46,7 +46,7 @@ from kangaroo_dashboard_data import (
 from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
-from scanner_dashboard_data import build_scanner_state
+from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from triple_screen_tracker_dashboard_data import build_triple_screen_tracker_state
 
 _ERROR_STATUS = {
@@ -361,6 +361,7 @@ def create_app() -> Flask:
 
         return render_template(
             "scanner.html", rows=state["rows"], run_date=state["run_date"], error=error,
+            criteria_columns=scanner_criteria_columns(),
         )
 
     @app.get("/conviction")

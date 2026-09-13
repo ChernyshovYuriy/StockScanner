@@ -247,6 +247,9 @@ def test_scanner_page_renders_when_no_rows(client, monkeypatch):
     resp = client.get("/scanner")
     assert resp.status_code == 200
     assert b"Nothing scanned yet" in resp.data
+    # No rows -- the "Screen & sort" panel (which needs a row set to act on)
+    # stays out of the page entirely rather than rendering an empty shell.
+    assert b"scanner-rows-data" not in resp.data
 
 
 def test_scanner_page_renders_a_row(client, monkeypatch):
@@ -296,6 +299,14 @@ def test_scanner_page_renders_a_row(client, monkeypatch):
     assert "2026-09-15" in html
     assert "Go long setup" in html
     assert "badge-impulse-blue" in html
+
+    # "Screen & sort" panel: the row/column JSON blobs scanner_board.js
+    # reads, and the ticker's own row carries the data-ticker key the JS
+    # uses to find and reorder it.
+    assert 'id="scanner-rows-data"' in html
+    assert 'id="scanner-columns-data"' in html
+    assert 'data-ticker="AAA.TO"' in html
+    assert "Triple Screen" in html  # one of scanner_criteria_columns()'s dropdown labels
 
 
 def test_scanner_page_end_to_end_with_a_real_computed_row(client, monkeypatch, tmp_path):

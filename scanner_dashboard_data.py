@@ -30,7 +30,14 @@ import time
 from typing import Dict, List, Optional
 
 from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS, SCANNER_BOARD_DB_PATH
+from scanner_board.divergence import DivergenceType
+from scanner_board.slope import SlopeDirection
 from scanner_board.store import LABEL_COLUMNS
+from scanner_board.thesis_rules import (
+    ADXRegime, DIBias, ExtremeReading, ForceBias, ForceZone, MACDCross,
+    OscillatorZone, PriceVsMA, TrendHealth, ValueZonePosition, VolumeLevel,
+)
+from scanner_board.triple_screen import ImpulseColor, TrendDirection, TripleScreenAlignment
 
 _cache_lock = threading.Lock()
 _cache: Dict[str, object] = {"ts": 0.0, "state": None}
@@ -101,6 +108,97 @@ def slope_glyph(label: Optional[str]) -> str:
     if label is None:
         return ""
     return _SLOPE_GLYPH.get(label, "")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-criteria filter + sort panel (/scanner's "Screen & sort" box)
+# ─────────────────────────────────────────────────────────────────────────────
+# One row per column the scanner.html template actually renders as its own
+# <th> -- the single source of truth for the panel's column dropdown, kept
+# next to _WORD_BADGE/_SLOPE_GLYPH above rather than a third hand-typed
+# list. `kind` is "number" (a plain numeric compare), "label" (an
+# exact/not-exact match against a fixed word set), or "text" (substring
+# match, ticker only). A label column's option set is read straight off
+# its own Enum class below (scanner_board/thesis_rules.py,
+# scanner_board/triple_screen.py, scanner_board/slope.py,
+# scanner_board/divergence.py) rather than retyped by hand, so the
+# dropdown can never offer a value row.py could not actually produce.
+# `group` matches the template's own group-row header text, so the
+# JS-built <select> can group columns with <optgroup> the same way the
+# table itself is visually grouped.
+_GROUP_PRICE = "Price"
+_GROUP_TREND = "Trend (Ch.22)"
+_GROUP_MACD = "MACD (Ch.23)"
+_GROUP_ADX = "Directional System / ADX (Ch.24)"
+_GROUP_OSC = "Oscillators (Ch.25-27)"
+_GROUP_VOL = "Volume (Ch.28-30)"
+_GROUP_MTF = "Multi-timeframe (Ch.39-40)"
+
+_CRITERIA_SPEC = [
+    ("ticker", "Ticker", "text", _GROUP_PRICE, None),
+    ("price", "Price", "number", _GROUP_PRICE, None),
+    ("pct_chg", "%Chg", "number", _GROUP_PRICE, None),
+
+    ("ma22", "MA22", "number", _GROUP_TREND, None),
+    ("ma50", "MA50", "number", _GROUP_TREND, None),
+    ("ma200", "MA200", "number", _GROUP_TREND, None),
+    ("ma_slope", "MA Slope", "label", _GROUP_TREND, SlopeDirection),
+    ("price_vs_ma", "Price vs MA", "label", _GROUP_TREND, PriceVsMA),
+    ("value_zone", "Value Zone", "label", _GROUP_TREND, ValueZonePosition),
+
+    ("macd_hist", "MACD-H", "number", _GROUP_MACD, None),
+    ("macd_cross", "MACD Cross", "label", _GROUP_MACD, MACDCross),
+    ("macd_hist_slope", "MACD-H Slope", "label", _GROUP_MACD, SlopeDirection),
+    ("trend_health", "Trend Health", "label", _GROUP_MACD, TrendHealth),
+    ("macd_hist_extreme", "MACD-H 3mo Extreme", "label", _GROUP_MACD, ExtremeReading),
+    ("macd_hist_divergence", "MACD-H Divergence", "label", _GROUP_MACD, DivergenceType),
+
+    ("adx", "ADX", "number", _GROUP_ADX, None),
+    ("di_bias", "DI Bias", "label", _GROUP_ADX, DIBias),
+    ("adx_trend", "ADX Trend", "label", _GROUP_ADX, SlopeDirection),
+    ("adx_regime", "ADX Regime", "label", _GROUP_ADX, ADXRegime),
+    ("atr_pct", "ATR%", "number", _GROUP_ADX, None),
+
+    ("rsi", "RSI", "number", _GROUP_OSC, None),
+    ("rsi_zone", "RSI Zone", "label", _GROUP_OSC, OscillatorZone),
+    ("rsi_divergence", "RSI Divergence", "label", _GROUP_OSC, DivergenceType),
+    ("stoch_k", "Stoch %K", "number", _GROUP_OSC, None),
+    ("stoch_zone", "Stoch Zone", "label", _GROUP_OSC, OscillatorZone),
+    ("stoch_divergence", "Stoch Divergence", "label", _GROUP_OSC, DivergenceType),
+
+    ("volume_vs_avg", "Vol vs Avg", "label", _GROUP_VOL, VolumeLevel),
+    ("obv_trend", "OBV Trend", "label", _GROUP_VOL, SlopeDirection),
+    ("obv_divergence", "OBV Divergence", "label", _GROUP_VOL, DivergenceType),
+    ("ad_trend", "A/D Trend", "label", _GROUP_VOL, SlopeDirection),
+    ("ad_divergence", "A/D Divergence", "label", _GROUP_VOL, DivergenceType),
+    ("force_short_zone", "Force(2) Zone", "label", _GROUP_VOL, ForceZone),
+    ("force_long_bias", "Force(13) Bias", "label", _GROUP_VOL, ForceBias),
+    ("force_long_divergence", "Force(13) Divergence", "label", _GROUP_VOL, DivergenceType),
+
+    ("impulse_daily", "Impulse D", "label", _GROUP_MTF, ImpulseColor),
+    ("impulse_weekly", "Impulse W", "label", _GROUP_MTF, ImpulseColor),
+    ("weekly_trend", "Weekly Trend", "label", _GROUP_MTF, TrendDirection),
+    ("daily_trend", "Daily Trend", "label", _GROUP_MTF, TrendDirection),
+    ("triple_screen", "Triple Screen", "label", _GROUP_MTF, TripleScreenAlignment),
+]
+
+
+def scanner_criteria_columns() -> List[dict]:
+    """JSON-ready column metadata for the /scanner page's "Screen & sort"
+    panel (static/scanner_board.js) -- one dict per _CRITERIA_SPEC row. A
+    label column's `options` is every value of its own Enum, in that
+    Enum's declared order (not a designed bullish/bearish rank -- see
+    scanner_board.js's own comment on what that means when a user sorts,
+    rather than filters, by one of these columns). Static and independent
+    of any DB read, so it's available even when the board's DB is
+    temporarily unavailable."""
+    return [
+        {
+            "key": key, "label": label, "kind": kind, "group": group,
+            "options": [v.value for v in enum_cls] if enum_cls is not None else None,
+        }
+        for key, label, kind, group, enum_cls in _CRITERIA_SPEC
+    ]
 
 
 def _read_latest() -> List[dict]:

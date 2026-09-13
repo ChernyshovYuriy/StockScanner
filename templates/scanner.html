@@ -48,6 +48,34 @@
     .scanner-table thead tr.group-row th.group-mtf { border-left: 2px solid var(--border); }
     .scanner-table td.col-first-in-group, .scanner-table th.col-first-in-group { border-left: 2px solid var(--border); }
     .value-zone-plain { color: var(--text-muted); }
+    .scanner-table tbody tr[hidden] { display: none; }
+
+    /* "Screen & sort" panel -- a pure client-side filter+sort over rows
+       already sent to the page (see static/scanner_board.js). No fetch,
+       no server round-trip, no new signal: it only lets the reader
+       combine and order the same raw columns the table already shows. */
+    .criteria-panel {
+      background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 12px 14px; margin-bottom: 16px;
+    }
+    .criteria-panel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+    .criteria-panel-head strong { font-size: 13px; }
+    .criteria-hint { color: var(--text-muted); font-size: 12px; }
+    .criteria-sort-head { margin-top: 12px; }
+    .criteria-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+    .criteria-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .criteria-row select, .criteria-row input {
+      border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+      font-size: 13px; background: var(--card-bg); color: var(--text);
+    }
+    .criteria-row input.criteria-value { width: 110px; }
+    .criteria-remove {
+      border: 1px solid var(--border); background: var(--card-bg); color: var(--text-muted);
+      border-radius: 4px; padding: 3px 7px; cursor: pointer; font-size: 12px; line-height: 1.4;
+    }
+    .criteria-remove:hover { color: var(--sell); }
+    .criteria-actions { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+    .criteria-apply { font-weight: 600; }
   </style>
 {% endblock %}
 {% block content %}
@@ -78,6 +106,32 @@
   {% if not rows %}
     <p>Nothing scanned yet — scanner_pipeline.py hasn't run, or hasn't found any tickers.</p>
   {% else %}
+  <div class="criteria-panel">
+    <div class="criteria-panel-head">
+      <strong>Screen &amp; sort</strong>
+      <span class="criteria-hint">
+        Build your own combination of the columns below and see the matching tickers —
+        this only filters and orders the raw readings already in the table, it isn't
+        a score or a signal of its own.
+      </span>
+    </div>
+    <div id="criteria-list" class="criteria-list"></div>
+    <button type="button" id="add-criterion-btn" class="refresh-btn">+ Add criterion</button>
+
+    <div class="criteria-panel-head criteria-sort-head"><strong>Sort by</strong></div>
+    <div id="sort-list" class="criteria-list"></div>
+    <button type="button" id="add-sort-btn" class="refresh-btn">+ Add sort column</button>
+
+    <div class="criteria-actions">
+      <button type="button" id="apply-criteria-btn" class="refresh-btn criteria-apply">Apply</button>
+      <button type="button" id="reset-criteria-btn" class="refresh-btn">Reset</button>
+      <span id="criteria-count" class="stat"></span>
+    </div>
+  </div>
+
+  <script type="application/json" id="scanner-rows-data">{{ rows | tojson }}</script>
+  <script type="application/json" id="scanner-columns-data">{{ criteria_columns | tojson }}</script>
+
   <div class="table-wrap">
   <table class="sortable scanner-table">
     <thead>
@@ -140,7 +194,7 @@
     </thead>
     <tbody>
       {% for r in rows %}
-      <tr>
+      <tr data-ticker="{{ r.ticker }}">
         <td>
           <a href="https://ca.finance.yahoo.com/quote/{{ r.ticker }}" target="_blank" rel="noopener">{{ r.ticker }}</a>
         </td>
@@ -196,4 +250,7 @@
   </table>
   </div>
   {% endif %}
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='scanner_board.js') }}"></script>
 {% endblock %}

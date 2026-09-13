@@ -103,6 +103,59 @@ class TestSlopeGlyph:
         assert sdd.slope_glyph("Bull") == ""
 
 
+class TestScannerCriteriaColumns:
+    """The /scanner "Screen & sort" panel's column metadata (Phase 7
+    add-on) -- see scanner_board.js for how the panel consumes this."""
+
+    def test_every_entry_has_the_expected_shape(self):
+        cols = sdd.scanner_criteria_columns()
+        assert len(cols) > 0
+        for c in cols:
+            assert set(c.keys()) == {"key", "label", "kind", "group", "options"}
+            assert c["kind"] in ("number", "label", "text")
+            if c["kind"] == "label":
+                assert isinstance(c["options"], list) and len(c["options"]) >= 2
+                assert all(isinstance(o, str) for o in c["options"])
+            else:
+                assert c["options"] is None
+
+    def test_no_duplicate_keys(self):
+        cols = sdd.scanner_criteria_columns()
+        keys = [c["key"] for c in cols]
+        assert len(keys) == len(set(keys))
+
+    def test_every_key_besides_ticker_is_a_real_row_column(self):
+        """Every criterion the panel can offer must correspond to a column
+        scanner_board.row.compute_row()/store.py actually produce -- so the
+        panel can never filter/sort on a column that doesn't exist."""
+        cols = sdd.scanner_criteria_columns()
+        for c in cols:
+            if c["key"] == "ticker":
+                continue
+            assert c["key"] in store.ROW_VALUE_COLUMNS, c["key"]
+
+    def test_ticker_is_a_text_column(self):
+        cols = {c["key"]: c for c in sdd.scanner_criteria_columns()}
+        assert cols["ticker"]["kind"] == "text"
+        assert cols["ticker"]["options"] is None
+
+    def test_label_options_match_the_enum_that_produces_them(self):
+        cols = {c["key"]: c for c in sdd.scanner_criteria_columns()}
+        assert cols["triple_screen"]["options"] == ["Stand aside", "Go long setup", "Go short setup"]
+        assert cols["ma_slope"]["options"] == ["Rising", "Falling", "Flat"]
+
+    def test_numeric_column_has_no_options(self):
+        cols = {c["key"]: c for c in sdd.scanner_criteria_columns()}
+        assert cols["rsi"]["kind"] == "number"
+        assert cols["rsi"]["options"] is None
+
+    def test_available_without_a_db(self, tmp_path, monkeypatch):
+        """Static column metadata, unlike build_scanner_state() -- must
+        stay callable even when the board's DB is missing/unavailable."""
+        monkeypatch.setattr(sdd, "SCANNER_BOARD_DB_PATH", tmp_path / "does_not_exist.db")
+        assert len(sdd.scanner_criteria_columns()) > 0
+
+
 class TestReadLatest:
     def test_returns_empty_when_db_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sdd, "SCANNER_BOARD_DB_PATH", tmp_path / "does_not_exist.db")
