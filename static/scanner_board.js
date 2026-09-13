@@ -31,6 +31,19 @@
   const domRowByTicker = new Map();
   tbody.querySelectorAll("tr[data-ticker]").forEach((tr) => domRowByTicker.set(tr.dataset.ticker, tr));
 
+  // ---- Row selection -- click a row to highlight it, so it's easier to
+  // track which ticker you're on while scrolling this wide table left/right.
+  // Purely visual, single-select (click again to clear); independent of the
+  // filter/sort state above, so it survives an Apply/Reset untouched.
+  domRowByTicker.forEach((tr) => {
+    tr.addEventListener("click", (evt) => {
+      if (evt.target.closest("a")) return; // let the Yahoo Finance link navigate normally
+      const wasSelected = tr.classList.contains("row-selected");
+      domRowByTicker.forEach((other) => other.classList.remove("row-selected"));
+      if (!wasSelected) tr.classList.add("row-selected");
+    });
+  });
+
   const NUMBER_OPS = [
     { value: "gte", label: "≥" }, { value: "lte", label: "≤" },
     { value: "gt", label: ">" }, { value: "lt", label: "<" }, { value: "eq", label: "=" },

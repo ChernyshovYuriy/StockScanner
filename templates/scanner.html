@@ -49,6 +49,11 @@
     .scanner-table td.col-first-in-group, .scanner-table th.col-first-in-group { border-left: 2px solid var(--border); }
     .value-zone-plain { color: var(--text-muted); }
     .scanner-table tbody tr[hidden] { display: none; }
+    /* Click-to-select a row (static/scanner_board.js) -- a plain highlight
+       to keep your place while scrolling this wide table horizontally.
+       No signal of its own, same spirit as the filter panel below. */
+    .scanner-table tbody tr { cursor: pointer; }
+    .scanner-table tbody tr.row-selected td { background: rgba(47, 85, 212, 0.08); }
 
     /* "Screen & sort" panel -- a pure client-side filter+sort over rows
        already sent to the page (see static/scanner_board.js). No fetch,
