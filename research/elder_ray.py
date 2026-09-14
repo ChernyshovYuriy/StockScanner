@@ -46,10 +46,22 @@ the weekly Triple Screen gate left on):
         --lookback 15 --weekly-ema 13 --weekly-period 2y
 """
 import argparse
+import sys
+from pathlib import Path
 
 import pandas as pd
-import yfinance as yf
 from tabulate import tabulate
+
+# Repo root isn't on sys.path when this is run directly (`python
+# research/elder_ray.py` puts only research/ itself on sys.path) — added so
+# market_data's shared Yahoo Finance fetch can be reused here instead of a
+# local yfinance call, keeping every yfinance touchpoint in the project
+# behind that one module, research tools included.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from market_data import DEFAULT_PROVIDER  # noqa: E402
 
 EMA_PERIOD = 13     # Elder's own default for daily bars
 LOOKBACK = 10        # rows of history to print
@@ -61,12 +73,7 @@ WEEKLY_TREND_LAG = 3       # weekly EMA compared to this many weeks back for tre
 
 
 def fetch_bars(ticker: str, period: str, interval: str) -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.dropna()
-    df.index = pd.to_datetime(df.index)
-    return df
+    return DEFAULT_PROVIDER.download_bars(ticker, period=period, interval=interval)
 
 
 def compute_elder_ray(bars: pd.DataFrame, ema_period: int) -> pd.DataFrame:

@@ -21,7 +21,7 @@ Run standalone, ideally once a day after close:
 
     python -m conviction_watchlist.trailing_stop_monitor
 """
-import yfinance as yf
+from market_data import DEFAULT_PROVIDER
 
 from conviction_watchlist.holdings_store import load_holdings
 from conviction_watchlist.settings import load_settings
@@ -36,7 +36,7 @@ def compute_status() -> list:
     for h in holdings:
         ticker, entry_date, entry_price = h["ticker"], h["entry_date"], h["entry_price"]
         try:
-            hist = yf.Ticker(ticker).history(start=entry_date, interval="1d", auto_adjust=True)
+            hist = DEFAULT_PROVIDER.get(ticker, as_of=None, start_dt=entry_date)
         except Exception as e:
             results.append({**h, "error": str(e)})
             continue

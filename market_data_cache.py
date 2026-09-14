@@ -29,12 +29,12 @@ Usage
 from __future__ import annotations
 
 import os
-import time
 from typing import Dict, List, Optional, Tuple
 
 import duckdb
 import pandas as pd
-import yfinance as yf
+
+from market_data import LiveDataProvider
 
 CACHE_DB_PATH = "data/market_cache.db"
 
@@ -194,45 +194,14 @@ def sync_tickers(
         # each _upsert() otherwise auto-commits (and fsyncs) on its own.
         conn.execute("BEGIN TRANSACTION")
         try:
+            provider = LiveDataProvider(batch_size=_BATCH_SIZE, sleep_seconds=_SLEEP_SECONDS)
             for (g_start, g_end), g_tickers in groups.items():
-                for i in range(0, len(g_tickers), _BATCH_SIZE):
-                    batch = g_tickers[i : i + _BATCH_SIZE]
-                    try:
-                        raw = yf.download(
-                            batch,
-                            start=g_start,
-                            end=g_end,
-                            auto_adjust=True,
-                            progress=False,
-                            threads=True,
-                            timeout=10,
-                        )
-                        for ticker in batch:
-                            try:
-                                if isinstance(raw.columns, pd.MultiIndex):
-                                    df = pd.DataFrame({
-                                        "Open":   raw["Open"][ticker],
-                                        "High":   raw["High"][ticker],
-                                        "Low":    raw["Low"][ticker],
-                                        "Close":  raw["Close"][ticker],
-                                        "Volume": raw["Volume"][ticker],
-                                    }).dropna()
-                                else:
-                                    if ticker != batch[0]:
-                                        continue
-                                    df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
-
-                                if not df.empty:
-                                    df.index = pd.to_datetime(df.index).tz_localize(None)
-                                    _upsert(conn, ticker, df)
-                            except Exception:
-                                if not quiet:
-                                    print(f"  [market_data_cache] failed to fetch {ticker}")
-                    except Exception:
-                        if not quiet:
-                            print(f"  [market_data_cache] batch fetch failed: {batch}")
-
-                    time.sleep(_SLEEP_SECONDS)
+                data, failed = provider.download_range(g_tickers, start=g_start, end=g_end)
+                for ticker, df in data.items():
+                    _upsert(conn, ticker, df)
+                if not quiet:
+                    for ticker in failed:
+                        print(f"  [market_data_cache] failed to fetch {ticker}")
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")

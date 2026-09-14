@@ -371,6 +371,103 @@ class LiveDataProvider(MarketDataProvider):
         return _get_sector_cached(ticker)
 
     # ------------------------------------------------------------------
+    # get_info() — raw company-info dict (fundamentals/metadata)
+    # ------------------------------------------------------------------
+    def get_info(self, ticker: str) -> dict:
+        """Return the raw yfinance .info dict for ticker (market cap, EPS,
+        shortName, sector, etc.) — the one non-OHLCV Yahoo Finance shape live
+        code still needs. Raises on failure exactly like the underlying
+        yfinance call; callers own their own try/except and field selection
+        (see conviction_watchlist.quality_filter.fetch_info), same division
+        of responsibility as get_quote()/get_intraday_snapshot() above.
+
+        Live-only: never called by the backtester."""
+        return yf.Ticker(ticker).info
+
+    # ------------------------------------------------------------------
+    # download_bars() — generic single-ticker period/interval fetch
+    # ------------------------------------------------------------------
+    def download_bars(self, ticker: str, period: str, interval: str) -> pd.DataFrame:
+        """Fetch one ticker's OHLCV for an arbitrary yfinance period/interval
+        string (e.g. period="1y", interval="1wk") — the shape standalone
+        research scripts need that get()'s fixed daily/2y-or-explicit-range
+        contract doesn't cover. Same MultiIndex-flattening/dropna/
+        to_datetime-index convention as get()/download(), extracted from what
+        was three duplicated fetch_bars()/fetch() functions (research/elder_ray.py,
+        research/elder_ray_backtest.py, dip_grid_backtest.py).
+
+        Not part of the MarketDataProvider protocol — no HistoricalSliceProvider
+        equivalent exists, since these research scripts run standalone (never
+        inside the backtester) and always want live data.
+
+        Live-only: never called by the backtester."""
+        df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.dropna()
+        df.index = pd.to_datetime(df.index)
+        return df
+
+    # ------------------------------------------------------------------
+    # download_range() — batch fetch for an explicit [start, end], no
+    # quality gate (used by market_data_cache.py's raw cache sync)
+    # ------------------------------------------------------------------
+    def download_range(
+        self, tickers: List[str], start: str, end: str,
+    ) -> "tuple[Dict[str, pd.DataFrame], List[str]]":
+        """
+        Batch-download OHLCV for tickers over [start, end], returning
+        (data, failed_tickers). Same MultiIndex/single-ticker-collapse
+        normalization as download(), but without download()'s >200-row
+        live-pipeline quality gate — any non-empty history is kept, which is
+        what a raw cache sync wants. failed_tickers lists every ticker whose
+        batch raised or whose own slice came back empty, for the caller's
+        own logging.
+
+        Live-only: never called by the backtester."""
+        data: Dict[str, pd.DataFrame] = {}
+        failed: List[str] = []
+
+        for i in range(0, len(tickers), self.batch_size):
+            batch = tickers[i : i + self.batch_size]
+            try:
+                raw = yf.download(
+                    batch, start=start, end=end,
+                    auto_adjust=True, progress=False, threads=True, timeout=10,
+                )
+            except Exception:
+                failed.extend(batch)
+                time.sleep(self.sleep_seconds)
+                continue
+
+            for ticker in batch:
+                try:
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        df = pd.DataFrame({
+                            "Open":   raw["Open"][ticker],
+                            "High":   raw["High"][ticker],
+                            "Low":    raw["Low"][ticker],
+                            "Close":  raw["Close"][ticker],
+                            "Volume": raw["Volume"][ticker],
+                        }).dropna()
+                    else:
+                        if ticker != batch[0]:
+                            continue
+                        df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+
+                    if df.empty:
+                        failed.append(ticker)
+                        continue
+                    df.index = pd.to_datetime(df.index).tz_localize(None)
+                    data[ticker] = validate_ohlcv(df)
+                except Exception:
+                    failed.append(ticker)
+
+            time.sleep(self.sleep_seconds)
+
+        return data, failed
+
+    # ------------------------------------------------------------------
     # download_batch_with_reasons() — used by swing_tickers.py's universe
     # builder, which needs to know *why* a ticker was excluded (not just
     # whether it loaded) for its rejected-tickers report.

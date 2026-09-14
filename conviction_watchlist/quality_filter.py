@@ -33,7 +33,7 @@ slow part) so re-runs after the first are fast. Run standalone:
 import json
 import urllib.request
 
-import yfinance as yf
+from market_data import DEFAULT_PROVIDER
 
 from conviction_watchlist.config import INFO_CACHE_FILE, TICKERS_URL
 from conviction_watchlist.settings import load_settings
@@ -71,7 +71,7 @@ def fetch_info(ticker: str, cache: dict) -> dict:
     if ticker in cache:
         return cache[ticker]
     try:
-        info = yf.Ticker(ticker).info
+        info = DEFAULT_PROVIDER.get_info(ticker)
         record = {
             "marketCap": info.get("marketCap"),
             "trailingEps": info.get("trailingEps"),

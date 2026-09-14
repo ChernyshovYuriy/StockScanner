@@ -41,11 +41,24 @@ own convention for this kind of one-off analysis):
 
     python research/elder_ray_backtest.py
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from scipy import stats
 from tabulate import tabulate
+
+# Repo root isn't on sys.path when this is run directly (`python
+# research/elder_ray_backtest.py` puts only research/ itself on sys.path) —
+# added so market_data's shared Yahoo Finance fetch can be reused here
+# instead of a local yfinance call, same reasoning as elder_ray.py's own
+# bootstrap.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from market_data import DEFAULT_PROVIDER  # noqa: E402
 
 try:
     # documented usage: run directly (`python research/elder_ray_backtest.py`),
@@ -75,12 +88,7 @@ ROUND_TRIP_COST_BPS = 5      # crude commission+slippage assumption, matches dip
 
 
 def fetch(ticker: str, period: str, interval: str) -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.dropna()
-    df.index = pd.to_datetime(df.index)
-    return df
+    return DEFAULT_PROVIDER.download_bars(ticker, period=period, interval=interval)
 
 
 def compute_reads(daily_bars: pd.DataFrame, weekly_bars: pd.DataFrame, ema: int, weekly_ema: int):

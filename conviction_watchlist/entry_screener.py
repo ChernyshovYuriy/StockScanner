@@ -16,9 +16,10 @@ Run standalone, ideally once a day after close:
     python -m conviction_watchlist.entry_screener
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-import yfinance as yf
+from market_data import DEFAULT_PROVIDER
+from time_utils import date_to_iso_extended, market_today
 
 from conviction_watchlist.config import CANDIDATES_FILE
 from conviction_watchlist.quality_filter import load_cache, qualified_tickers
@@ -33,10 +34,11 @@ def compute_candidates(progress_cb=None) -> list:
     tickers = qualified_tickers()
     cache = load_cache()  # for sector, already fetched by the quality filter
 
+    one_year_ago = date_to_iso_extended(market_today() - timedelta(days=365))
     candidates = []
     for i, ticker in enumerate(tickers):
         try:
-            hist = yf.Ticker(ticker).history(period="1y", interval="1d", auto_adjust=True)
+            hist = DEFAULT_PROVIDER.get(ticker, as_of=None, start_dt=one_year_ago)
         except Exception:
             continue
         if hist.empty:

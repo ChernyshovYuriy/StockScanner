@@ -24,8 +24,9 @@ trading, just console output. Run standalone:
 """
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from tabulate import tabulate
+
+from market_data import DEFAULT_PROVIDER
 
 TICKERS = ["AAPL", "NVDA", "AMD"]
 INTERVAL = "60m"
@@ -38,12 +39,7 @@ ROUND_TRIP_COST_BPS = 5                # crude commission+slippage assumption pe
 
 
 def fetch_bars(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, period=PERIOD, interval=INTERVAL, progress=False, auto_adjust=True)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.dropna()
-    df.index = pd.to_datetime(df.index)
-    return df
+    return DEFAULT_PROVIDER.download_bars(ticker, period=PERIOD, interval=INTERVAL)
 
 
 def simulate(closes: np.ndarray, dip_pct: float, target_pct: float,
