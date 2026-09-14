@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import sqlite3
 import time
+import uuid
 from typing import Any, Callable
 
 import duckdb
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
+from concurrent_utils import acquire_lock
 from config import DASHBOARD_HOST, DASHBOARD_PORT
 from conviction_dashboard_data import build_conviction_view
 from conviction_watchlist import quality_filter as conviction_quality_filter
@@ -47,6 +49,7 @@ from macro_dashboard_data import build_macro_positions, get_current_regime, get_
 from manual_sell import sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
+from scanner_pipeline import run_pipeline as run_scanner_pipeline
 from triple_screen_tracker_dashboard_data import build_triple_screen_tracker_state
 
 _ERROR_STATUS = {
@@ -349,12 +352,15 @@ def create_app() -> Flask:
     @app.get("/scanner")
     def scanner():
         """Read-only view of the Ticker Indicator Board (see
-        scanner_board/PLAN.md). No action here, same as /triple-screen:
-        a display layer over whatever scanner_pipeline.py has already
-        computed, never a trigger for a fetch or a trade."""
+        scanner_board/PLAN.md): a display layer over whatever
+        scanner_pipeline.py has last computed -- no buy/sell/capital
+        action, same as /triple-screen. The one action available is the
+        "Fetch Fresh Data" button below, which runs that same pipeline
+        on demand (see /scanner/refresh) rather than waiting for its
+        17:15 ET scheduled run."""
         try:
             state = _read_with_retry(build_scanner_state)
-            error = None
+            error = request.args.get("error")
         except (sqlite3.Error, OSError):
             state = {"rows": [], "run_date": None}
             error = "Database temporarily unavailable — retrying on next refresh."
@@ -363,6 +369,27 @@ def create_app() -> Flask:
             "scanner.html", rows=state["rows"], run_date=state["run_date"], error=error,
             criteria_columns=scanner_criteria_columns(),
         )
+
+    @app.post("/scanner/refresh")
+    def scanner_refresh():
+        """The Scanner Board's one write action: run scanner_pipeline.py's
+        own run_pipeline() synchronously against the full CAN_TICKERS_URL
+        universe, then redirect back -- same blocking-POST-then-redirect
+        pattern as /conviction's refresh buttons. Guarded by the same
+        fcntl lock scanner_pipeline.py's __main__ takes for its scheduled
+        run, so a manual click here can't race a concurrent scan."""
+        try:
+            lock_path, lock_file = acquire_lock("scanner_board")
+        except BlockingIOError:
+            return redirect(url_for(
+                "scanner", error="A scan is already running (scheduled or manual) — try again shortly."))
+        try:
+            run_scanner_pipeline(uuid.uuid4().hex)
+        except Exception as e:
+            return redirect(url_for("scanner", error=f"Fetch failed: {e}"))
+        finally:
+            lock_file.close()
+        return redirect(url_for("scanner"))
 
     @app.get("/conviction")
     def conviction():

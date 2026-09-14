@@ -104,6 +104,14 @@
     <p class="banner banner-error">{{ error }}</p>
   {% endif %}
 
+  <form method="post" action="{{ url_for('scanner_refresh') }}" id="scanner-refresh-form">
+    <button class="refresh-btn" type="submit">📡 Fetch Fresh Data</button>
+  </form>
+  <p class="stat" id="scanner-refresh-working" hidden>
+    Working — scanning the full CAN_TICKERS_URL universe. This can take a
+    couple of minutes; the page reloads automatically when it's done.
+  </p>
+
   {% if run_date %}
     <p class="stat">Snapshot as of {{ run_date }}</p>
   {% endif %}
@@ -258,4 +266,23 @@
 {% endblock %}
 {% block scripts %}
   <script src="{{ url_for('static', filename='scanner_board.js') }}"></script>
+  <script>
+    // Fetch Fresh Data is a plain synchronous form POST (same pattern as
+    // /conviction's refresh buttons) -- it takes real time (a fetch per
+    // ticker in the full universe), so without this the button just sits
+    // there with no sign anything is happening.
+    (function () {
+      var form = document.getElementById('scanner-refresh-form');
+      var note = document.getElementById('scanner-refresh-working');
+      if (!form) return;
+      form.addEventListener('submit', function () {
+        var btn = form.querySelector('button[type="submit"]');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Fetching…';
+        }
+        if (note) note.hidden = false;
+      });
+    })();
+  </script>
 {% endblock %}
