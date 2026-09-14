@@ -1,6 +1,16 @@
 function makeSortable(table) {
   const tbody = table.querySelector("tbody");
-  const headers = Array.from(table.querySelectorAll("thead th"));
+  // Only the LAST <thead> row lines up 1:1 with each body row's <td>s --
+  // a table with an extra grouping header row above it (e.g. the Scanner
+  // Board's colspan'd "Trend (Ch.22)" / "MACD (Ch.23)" / ... row) would
+  // otherwise get folded into this same flat list, shifting every real
+  // column's index and pointing the sort at the wrong <td> (or past the
+  // end of the row, which silently sorts nothing). For every other table
+  // here, thead has exactly one row, so this is unchanged.
+  const headerRows = table.querySelectorAll("thead tr");
+  const headers = headerRows.length
+    ? Array.from(headerRows[headerRows.length - 1].querySelectorAll("th"))
+    : [];
   if (!tbody) return;
 
   const cellValue = (row, colIndex) => {
