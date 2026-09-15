@@ -8,18 +8,19 @@
   {% block head %}{% endblock %}
 </head>
 <body>
+  <div id="nav-progress-bar"></div>
   <nav class="topnav">
     <span class="brand">StockScanner</span>
-    <a href="{{ url_for('monitor') }}">Monitor</a>
-    <a href="{{ url_for('history') }}">History</a>
-    <a href="{{ url_for('momentum') }}">Momentum</a>
-    <a href="{{ url_for('macro') }}">Macro</a>
-    <a href="{{ url_for('kangaroo') }}">Kangaroo Tail</a>
-    <a href="{{ url_for('demand') }}">Demand</a>
-    <a href="{{ url_for('triple_screen') }}">Triple Screen</a>
-    <a href="{{ url_for('scanner') }}">Scanner Board</a>
-    <a href="{{ url_for('volume_spikes') }}">Volume Spikes</a>
-    <a href="{{ url_for('conviction') }}">Conviction</a>
+    <a href="{{ url_for('monitor') }}" class="{{ 'active' if request.endpoint == 'monitor' }}">Monitor</a>
+    <a href="{{ url_for('history') }}" class="{{ 'active' if request.endpoint == 'history' }}">History</a>
+    <a href="{{ url_for('momentum') }}" class="{{ 'active' if request.endpoint == 'momentum' }}">Momentum</a>
+    <a href="{{ url_for('macro') }}" class="{{ 'active' if request.endpoint == 'macro' }}">Macro</a>
+    <a href="{{ url_for('kangaroo') }}" class="{{ 'active' if request.endpoint == 'kangaroo' }}">Kangaroo Tail</a>
+    <a href="{{ url_for('demand') }}" class="{{ 'active' if request.endpoint == 'demand' }}">Demand</a>
+    <a href="{{ url_for('triple_screen') }}" class="{{ 'active' if request.endpoint == 'triple_screen' }}">Triple Screen</a>
+    <a href="{{ url_for('scanner') }}" class="{{ 'active' if request.endpoint == 'scanner' }}">Scanner Board</a>
+    <a href="{{ url_for('volume_spikes') }}" class="{{ 'active' if request.endpoint == 'volume_spikes' }}">Volume Spikes</a>
+    <a href="{{ url_for('conviction') }}" class="{{ 'active' if request.endpoint == 'conviction' }}">Conviction</a>
   </nav>
   <main>
     {% block content %}{% endblock %}

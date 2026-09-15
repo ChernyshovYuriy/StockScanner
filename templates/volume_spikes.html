@@ -31,15 +31,11 @@
     <code>volume_spike_scanner.py</code>.
   </p>
 
-  {% if error %}
-    <p class="banner banner-error">{{ error }}</p>
-  {% endif %}
+  <p class="stat" id="vs-loading">Scanning the universe for volume spikes — this takes a few seconds (a live fetch, not a stored snapshot)…</p>
+  <p class="banner banner-error" id="vs-error" hidden></p>
+  <p id="vs-empty" hidden>No spikes found — either nothing is running above its average volume right now, or the market's closed for the day.</p>
 
-  {% if not rows %}
-    <p>No spikes found — either nothing is running above its average volume
-       right now, or the scan hasn't been run yet. Click Refresh.</p>
-  {% else %}
-  <div class="table-wrap">
+  <div class="table-wrap" id="vs-table-wrap" hidden>
   <table class="sortable volspike-table">
     <thead>
       <tr>
@@ -49,19 +45,71 @@
         <th title="How far today's volume-so-far is running above that average.">Spike %</th>
       </tr>
     </thead>
-    <tbody>
-      {% for r in rows %}
-      <tr>
-        <td>
-          <a href="https://ca.finance.yahoo.com/quote/{{ r.ticker }}" target="_blank" rel="noopener">{{ r.ticker }}</a>
-        </td>
-        <td>{{ "{:,}".format(r.current_volume) }}</td>
-        <td>{{ "{:,.0f}".format(r.average_volume) }}</td>
-        <td class="spike-pct">+{{ "%.1f"|format(r.spike_pct) }}%</td>
-      </tr>
-      {% endfor %}
-    </tbody>
+    <tbody id="vs-tbody"></tbody>
   </table>
   </div>
-  {% endif %}
+{% endblock %}
+{% block scripts %}
+  <script>
+    // The scan itself (a live yfinance fetch across the whole universe)
+    // takes several seconds -- running it server-side before rendering
+    // meant the browser just sat on the OLD tab until it finished, with
+    // no visible sign the click even registered. This page now renders
+    // instantly (so the tab switch itself is immediate) and fetches the
+    // actual results afterward, showing the "Scanning…" state above in
+    // the meantime.
+    (function () {
+      var loading = document.getElementById("vs-loading");
+      var errorEl = document.getElementById("vs-error");
+      var emptyEl = document.getElementById("vs-empty");
+      var tableWrap = document.getElementById("vs-table-wrap");
+      var tbody = document.getElementById("vs-tbody");
+
+      var tickers = {{ tickers_override | tojson }};
+      var url = "/volume-spikes/data" + (tickers ? "?tickers=" + encodeURIComponent(tickers) : "");
+
+      function cell(text, cls) {
+        var td = document.createElement("td");
+        if (cls) td.className = cls;
+        td.textContent = text;
+        return td;
+      }
+
+      fetch(url)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          loading.hidden = true;
+          if (data.error) {
+            errorEl.textContent = data.error;
+            errorEl.hidden = false;
+            return;
+          }
+          if (!data.rows.length) {
+            emptyEl.hidden = false;
+            return;
+          }
+          data.rows.forEach(function (r) {
+            var tr = document.createElement("tr");
+            var tickerTd = document.createElement("td");
+            var link = document.createElement("a");
+            link.href = "https://ca.finance.yahoo.com/quote/" + encodeURIComponent(r.ticker);
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.textContent = r.ticker;
+            tickerTd.appendChild(link);
+            tr.appendChild(tickerTd);
+            tr.appendChild(cell(r.current_volume.toLocaleString()));
+            tr.appendChild(cell(Math.round(r.average_volume).toLocaleString()));
+            tr.appendChild(cell("+" + r.spike_pct.toFixed(1) + "%", "spike-pct"));
+            tbody.appendChild(tr);
+          });
+          tableWrap.hidden = false;
+        })
+        .catch(function (err) {
+          loading.hidden = true;
+          errorEl.textContent = "Scan failed: " + err;
+          errorEl.hidden = false;
+        });
+    })();
+  </script>
 {% endblock %}

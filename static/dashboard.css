@@ -37,6 +37,26 @@ body {
 .topnav .brand { font-weight: 700; margin-right: 12px; }
 .topnav a { color: var(--header-text); text-decoration: none; opacity: 0.85; }
 .topnav a:hover { opacity: 1; text-decoration: underline; }
+/* The tab you're actually on -- a full page navigation replaces the whole
+   document, so this is the only persistent cue (once the new page has
+   painted) confirming which tab you switched to; nav-progress-bar below
+   covers the moment *before* that paint happens. */
+.topnav a.active { opacity: 1; font-weight: 700; border-bottom: 2px solid var(--header-text); }
+
+/* Instant "something is happening" cue for a tab click / refresh, shown on
+   the CURRENT page the instant you click -- a plain <a href> navigation or
+   location.reload() otherwise gives no feedback at all until the next page
+   has fully loaded, which on a slow tab (a live scan, not just a DB read)
+   reads as "did the click even register?" It's cleared for free: the next
+   page replaces this whole document, DOM and all, as soon as it paints. */
+#nav-progress-bar {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0%;
+  background: var(--accent); z-index: 9999; opacity: 0;
+}
+#nav-progress-bar.active {
+  opacity: 1; width: 80%;
+  transition: width 6s cubic-bezier(0.1, 0.7, 0.3, 1), opacity 0.15s ease;
+}
 
 main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 

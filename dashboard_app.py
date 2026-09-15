@@ -396,19 +396,29 @@ def create_app() -> Flask:
     def volume_spikes():
         """Read-only, on-demand intraday volume-spike scan (see
         volume_spike_scanner.py) -- no capital, no positions, nothing
-        persisted: every page load / refresh runs a fresh live scan
-        against VOLUME_SPIKE_TICKERS_URL (or the ?tickers= override
-        below), unlike every other tab, which displays a snapshot some
-        scheduled pipeline already wrote to its own DB."""
+        persisted. Renders instantly with a loading placeholder rather
+        than running the scan itself: the scan is a live network fetch
+        across the whole universe (several seconds), and blocking this
+        route on it meant the browser just sat on the OLD tab with no
+        feedback until the scan finished -- the tab never visibly
+        "switched" until the data was already there. The scan itself now
+        happens client-side against /volume-spikes/data (see
+        templates/volume_spikes.html), so the tab switches immediately
+        and the loading state is what's actually visible while it runs."""
+        return render_template("volume_spikes.html", tickers_override=request.args.get("tickers", ""))
+
+    @app.get("/volume-spikes/data")
+    def volume_spikes_data():
+        """JSON data backing /volume-spikes' client-side fetch -- the
+        same scan_volume_spikes() call the page used to run
+        synchronously before rendering."""
         override = request.args.get("tickers")
         tickers = [t.strip().upper() for t in override.split(",") if t.strip()] if override else None
         try:
             rows = scan_volume_spikes(tickers)
-            error = None
+            return jsonify({"rows": [r.__dict__ for r in rows], "error": None})
         except Exception as e:
-            rows = []
-            error = f"Scan failed: {e}"
-        return render_template("volume_spikes.html", rows=rows, error=error)
+            return jsonify({"rows": [], "error": f"Scan failed: {e}"})
 
     @app.get("/conviction")
     def conviction():

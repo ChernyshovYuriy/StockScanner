@@ -45,6 +45,27 @@ function makeSortable(table) {
 
 document.querySelectorAll("table.sortable").forEach(makeSortable);
 
+// Instant loading feedback for tab navigation / full-page refreshes (see
+// #nav-progress-bar / .active in dashboard.css) -- covers every page via
+// base.html, since a plain <a href> or location.reload() otherwise leaves
+// the browser showing the OLD page with no visual cue until the next one
+// finishes loading.
+function showNavProgress() {
+  const bar = document.getElementById("nav-progress-bar");
+  if (bar) bar.classList.add("active");
+}
+
+document.querySelectorAll("nav.topnav a[href]").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    showNavProgress();
+  });
+});
+
+document.querySelectorAll("button.refresh-btn[onclick]").forEach((btn) => {
+  btn.addEventListener("click", showNavProgress);
+});
+
 function postSell(ticker, price) {
   const body = price === undefined ? {} : { price };
   return fetch(`/api/positions/${encodeURIComponent(ticker)}/sell`, {
