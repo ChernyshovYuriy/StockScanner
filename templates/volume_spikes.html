@@ -25,10 +25,11 @@
 
   <p class="banner banner-info">
     Every ticker in the CAN universe whose volume so far today is running
-    above its own 20-trading-day average, ranked by how far above.
-    Live, on-demand scan — nothing here is stored; each refresh re-scans
-    from scratch. Tickers at or below their own average are left out. See
-    <code>volume_spike_scanner.py</code>.
+    above its own 20-trading-day average <strong>and</strong> is trading up
+    on the day — a volume spike alone can just as easily mean selling, so
+    price direction is a hard filter here, not a separate column. Ranked by
+    how far above average. Live, on-demand scan — nothing here is stored;
+    each refresh re-scans from scratch. See <code>volume_spike_scanner.py</code>.
   </p>
 
   <p class="stat" id="vs-loading">Scanning the universe for volume spikes — this takes a few seconds (a live fetch, not a stored snapshot)…</p>

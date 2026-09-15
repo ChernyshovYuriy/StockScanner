@@ -14,19 +14,27 @@ import pytest
 import volume_spike_scanner as vss
 
 
-def _volumes(*values: float) -> pd.Series:
-    idx = pd.bdate_range(end="2026-09-15", periods=len(values))
-    return pd.Series(values, index=idx)
+def _ohlcv(volumes, closes=None) -> pd.DataFrame:
+    """Build a minimal OHLCV frame (Close + Volume) for compute_spikes().
+    Defaults to a flat price with today's close nudged up 1% above
+    yesterday's, so tests focused on the volume math aren't incidentally
+    excluded by the price-direction filter — tests that care about price
+    direction pass their own `closes`.
+    """
+    idx = pd.bdate_range(end="2026-09-15", periods=len(volumes))
+    if closes is None:
+        closes = [100.0] * (len(volumes) - 1) + [101.0]
+    return pd.DataFrame({"Close": closes, "Volume": volumes}, index=idx)
 
 
 def test_spike_above_average_is_included_and_ranked():
-    volume_by_ticker = {
+    data_by_ticker = {
         # 20 days of 100k, today 250k -> +150% spike
-        "AAA": _volumes(*([100_000] * 20 + [250_000])),
+        "AAA": _ohlcv([100_000] * 20 + [250_000]),
         # 20 days of 100k, today 130k -> +30% spike
-        "BBB": _volumes(*([100_000] * 20 + [130_000])),
+        "BBB": _ohlcv([100_000] * 20 + [130_000]),
     }
-    rows = vss.compute_spikes(volume_by_ticker)
+    rows = vss.compute_spikes(data_by_ticker)
     assert [r.ticker for r in rows] == ["AAA", "BBB"]
     assert rows[0].spike_pct == pytest.approx(150.0)
     assert rows[0].current_volume == 250_000
@@ -34,23 +42,23 @@ def test_spike_above_average_is_included_and_ranked():
 
 
 def test_at_or_below_average_is_excluded():
-    volume_by_ticker = {
-        "FLAT": _volumes(*([100_000] * 20 + [100_000])),   # exactly average
-        "LOW": _volumes(*([100_000] * 20 + [50_000])),      # below average
+    data_by_ticker = {
+        "FLAT": _ohlcv([100_000] * 20 + [100_000]),   # exactly average
+        "LOW": _ohlcv([100_000] * 20 + [50_000]),      # below average
     }
-    rows = vss.compute_spikes(volume_by_ticker)
+    rows = vss.compute_spikes(data_by_ticker)
     assert rows == []
 
 
 def test_zero_average_is_excluded_not_a_division_error():
-    volume_by_ticker = {"ZERO": _volumes(*([0] * 20 + [1_000]))}
-    rows = vss.compute_spikes(volume_by_ticker)
+    data_by_ticker = {"ZERO": _ohlcv([0] * 20 + [1_000])}
+    rows = vss.compute_spikes(data_by_ticker)
     assert rows == []
 
 
 def test_insufficient_history_is_skipped():
-    volume_by_ticker = {"NEW": _volumes(500_000)}
-    rows = vss.compute_spikes(volume_by_ticker)
+    data_by_ticker = {"NEW": _ohlcv([500_000])}
+    rows = vss.compute_spikes(data_by_ticker)
     assert rows == []
 
 
@@ -59,10 +67,35 @@ def test_average_window_only_uses_trailing_avg_volume_days():
     # 150k spike -- the average must be based on the trailing 20 days
     # (100k), not diluted by the older 200k history.
     volumes = [200_000] * 30 + [100_000] * 20 + [150_000]
-    rows = vss.compute_spikes({"AAA": _volumes(*volumes)})
+    rows = vss.compute_spikes({"AAA": _ohlcv(volumes)})
     assert len(rows) == 1
     assert rows[0].average_volume == pytest.approx(100_000.0)
     assert rows[0].spike_pct == pytest.approx(50.0)
+
+
+def test_price_down_excludes_despite_volume_spike():
+    # Volume clearly spikes (+150%), but the close is BELOW yesterday's --
+    # a volume spike on a down day reads as selling, not the buying
+    # interest this scanner is for, so it must be excluded.
+    volumes = [100_000] * 20 + [250_000]
+    closes = [100.0] * 20 + [95.0]
+    rows = vss.compute_spikes({"AAA": _ohlcv(volumes, closes)})
+    assert rows == []
+
+
+def test_price_flat_excludes_despite_volume_spike():
+    volumes = [100_000] * 20 + [250_000]
+    closes = [100.0] * 21  # today's close == yesterday's -- not "up"
+    rows = vss.compute_spikes({"AAA": _ohlcv(volumes, closes)})
+    assert rows == []
+
+
+def test_price_up_with_volume_spike_is_included():
+    volumes = [100_000] * 20 + [250_000]
+    closes = [100.0] * 20 + [100.01]  # barely up still counts
+    rows = vss.compute_spikes({"AAA": _ohlcv(volumes, closes)})
+    assert len(rows) == 1
+    assert rows[0].ticker == "AAA"
 
 
 class _FakeProvider:
@@ -74,8 +107,7 @@ class _FakeProvider:
 
 
 def test_scan_volume_spikes_uses_download_range(monkeypatch):
-    df = pd.DataFrame({"Volume": [100_000] * 20 + [300_000]},
-                       index=pd.bdate_range(end="2026-09-15", periods=21))
+    df = _ohlcv([100_000] * 20 + [300_000])
     fake = _FakeProvider({"AAA": df})
     monkeypatch.setattr(vss, "DEFAULT_PROVIDER", fake)
 

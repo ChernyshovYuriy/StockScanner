@@ -10,8 +10,11 @@ For every ticker in the VOLUME_SPIKE_TICKERS_URL universe, compares
 today's volume-so-far against that ticker's own recent average daily
 volume, via market_data.py's LiveDataProvider.download_range() — the one
 batched fetch with no >200-row quality gate (see its own docstring),
-which this simple comparison doesn't need. Only tickers actually spiking
-above their own average are returned (see compute_spikes()).
+which this simple comparison doesn't need. Only tickers BOTH spiking
+above their own average volume AND trading up on the day are returned
+(see compute_spikes()) — a volume spike alone is directionless (it can
+just as easily mean heavy selling), so price direction is a hard filter,
+not a separate displayed column.
 
 Usage
 -----
@@ -51,29 +54,35 @@ class VolumeSpikeRow:
     spike_pct: float
 
 
-def compute_spikes(volume_by_ticker: Dict[str, pd.Series]) -> List[VolumeSpikeRow]:
-    """Turn each ticker's daily Volume series (oldest → newest, most recent
-    bar being today's, still filling during the session) into a
-    VolumeSpikeRow, dropping any ticker at or below its own recent average
-    — the feature only wants to surface spikes. Sorted by spike_pct
-    descending.
+def compute_spikes(data_by_ticker: Dict[str, pd.DataFrame]) -> List[VolumeSpikeRow]:
+    """Turn each ticker's daily OHLCV (oldest → newest, most recent bar
+    being today's, still filling during the session) into a
+    VolumeSpikeRow, keeping only tickers that are BOTH running above
+    their own recent average volume AND trading up on the day (today's
+    close/last price above yesterday's close) — a volume spike on a down
+    day is more likely distribution/selling than the buying-interest
+    signal this scanner is for. Sorted by spike_pct descending.
     """
     rows = []
-    for ticker, volumes in volume_by_ticker.items():
-        if len(volumes) < 2:
+    for ticker, df in data_by_ticker.items():
+        if len(df) < 2:
             continue
-        current = float(volumes.iloc[-1])
-        history = volumes.iloc[-(AVG_VOLUME_DAYS + 1):-1]
-        if history.empty:
+        current_close = float(df["Close"].iloc[-1])
+        prev_close = float(df["Close"].iloc[-2])
+        if current_close <= prev_close:
             continue
-        average = float(history.mean())
-        if average <= 0 or current <= average:
+        current_volume = float(df["Volume"].iloc[-1])
+        volume_history = df["Volume"].iloc[-(AVG_VOLUME_DAYS + 1):-1]
+        if volume_history.empty:
             continue
-        spike_pct = (current - average) / average * 100.0
+        average_volume = float(volume_history.mean())
+        if average_volume <= 0 or current_volume <= average_volume:
+            continue
+        spike_pct = (current_volume - average_volume) / average_volume * 100.0
         rows.append(VolumeSpikeRow(
             ticker=ticker,
-            current_volume=int(current),
-            average_volume=average,
+            current_volume=int(current_volume),
+            average_volume=average_volume,
             spike_pct=spike_pct,
         ))
     rows.sort(key=lambda r: r.spike_pct, reverse=True)
@@ -90,8 +99,7 @@ def scan_volume_spikes(tickers: Optional[List[str]] = None) -> List[VolumeSpikeR
     # is actually included, not just history up to yesterday's close.
     end = date_to_iso_extended(today + timedelta(days=1))
     data, _failed = DEFAULT_PROVIDER.download_range(universe, start=start, end=end)
-    volume_by_ticker = {ticker: df["Volume"] for ticker, df in data.items()}
-    return compute_spikes(volume_by_ticker)
+    return compute_spikes(data)
 
 
 if __name__ == "__main__":
