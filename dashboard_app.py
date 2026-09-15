@@ -51,6 +51,7 @@ from momentum_dashboard_data import build_momentum_positions, get_momentum_cash,
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
 from triple_screen_tracker_dashboard_data import build_triple_screen_tracker_state
+from volume_spike_scanner import scan_volume_spikes
 
 _ERROR_STATUS = {
     "locked": 409,
@@ -390,6 +391,24 @@ def create_app() -> Flask:
         finally:
             lock_file.close()
         return redirect(url_for("scanner"))
+
+    @app.get("/volume-spikes")
+    def volume_spikes():
+        """Read-only, on-demand intraday volume-spike scan (see
+        volume_spike_scanner.py) -- no capital, no positions, nothing
+        persisted: every page load / refresh runs a fresh live scan
+        against VOLUME_SPIKE_TICKERS_URL (or the ?tickers= override
+        below), unlike every other tab, which displays a snapshot some
+        scheduled pipeline already wrote to its own DB."""
+        override = request.args.get("tickers")
+        tickers = [t.strip().upper() for t in override.split(",") if t.strip()] if override else None
+        try:
+            rows = scan_volume_spikes(tickers)
+            error = None
+        except Exception as e:
+            rows = []
+            error = f"Scan failed: {e}"
+        return render_template("volume_spikes.html", rows=rows, error=error)
 
     @app.get("/conviction")
     def conviction():

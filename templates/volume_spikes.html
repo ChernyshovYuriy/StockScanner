@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Volume Spikes — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    /* Next distinct accent after Scanner Board's slate -- a warm orange,
+       fitting for an "alert" style page (something unusual is happening
+       right now), unlike the calmer reference-board slate next to it. */
+    .volspike-accent { color: #c2410c; }
+    .volspike-badge {
+      display: inline-block; margin-left: 10px; padding: 2px 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 600;
+      background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;
+      vertical-align: middle;
+    }
+    .volspike-table th, .volspike-table td { text-align: right; }
+    .volspike-table th:first-child, .volspike-table td:first-child { text-align: left; }
+    .spike-pct { font-weight: 600; color: #c2410c; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="header-row">
+    <h1 class="volspike-accent">Volume Spikes <span class="volspike-badge">read-only</span></h1>
+    <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <p class="banner banner-info">
+    Every ticker in the CAN universe whose volume so far today is running
+    above its own 20-trading-day average, ranked by how far above.
+    Live, on-demand scan — nothing here is stored; each refresh re-scans
+    from scratch. Tickers at or below their own average are left out. See
+    <code>volume_spike_scanner.py</code>.
+  </p>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  {% if not rows %}
+    <p>No spikes found — either nothing is running above its average volume
+       right now, or the scan hasn't been run yet. Click Refresh.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table class="sortable volspike-table">
+    <thead>
+      <tr>
+        <th>Ticker</th>
+        <th title="Volume traded so far in today's session.">Current Volume</th>
+        <th title="Average daily volume over the trailing 20 trading days (today excluded).">Average Volume</th>
+        <th title="How far today's volume-so-far is running above that average.">Spike %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>
+          <a href="https://ca.finance.yahoo.com/quote/{{ r.ticker }}" target="_blank" rel="noopener">{{ r.ticker }}</a>
+        </td>
+        <td>{{ "{:,}".format(r.current_volume) }}</td>
+        <td>{{ "{:,.0f}".format(r.average_volume) }}</td>
+        <td class="spike-pct">+{{ "%.1f"|format(r.spike_pct) }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}

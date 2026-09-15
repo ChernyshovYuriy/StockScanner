@@ -100,6 +100,14 @@ MOMENTUM_CHAND_ARM_PCT = 8.0
 # against it with the relaxed MOMENTUM_MAX_ATR_PCT ceiling.
 MOMENTUM_RAW_TICKERS_URL = "https://raw.githubusercontent.com/ChernyshovYuriy/Financing/refs/heads/main/data/can_tickers_full"
 
+# Volume spike scanner — on-demand dashboard-only feature (no scheduled
+# service, no DB; see volume_spike_scanner.py). Same raw, unfiltered
+# full TSX/TSXV/CSE list as MOMENTUM_RAW_TICKERS_URL (a spike can happen on
+# a ticker CAN_TICKERS_URL's ATR pre-filter would have excluded) — its own
+# constant rather than reusing MOMENTUM_RAW_TICKERS_URL, keeping this
+# feature decoupled from the momentum sleeve.
+VOLUME_SPIKE_TICKERS_URL = "https://raw.githubusercontent.com/ChernyshovYuriy/Financing/refs/heads/main/data/can_tickers_full"
+
 # Output paths — kept fully separate from the core sleeve's out/ files.
 MOMENTUM_UNIVERSE_OUT_PATH = OUT_PATH / "can_tickers_momentum"
 MOMENTUM_SCREENER_OUT_PATH = OUT_PATH / "momentum_screener_out"
