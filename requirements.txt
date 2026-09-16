@@ -12,3 +12,4 @@ duckdb
 requests
 Flask
 waitress
+openai

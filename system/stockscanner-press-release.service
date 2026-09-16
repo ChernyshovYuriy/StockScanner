@@ -1,0 +1,16 @@
+[Unit]
+Description=StockScanner press-release tracker (news aggregator/LLM-parser/digest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/bin/python3 /home/pi/dev/stock-scanner/press_release_service.py
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

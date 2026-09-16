@@ -322,3 +322,57 @@ TRIPLE_SCREEN_TRACKER_DB_PATH = DATA_PATH / "triple_screen_tracker.db"
 # Screen tracker above. Scans the same CAN_TICKERS_URL universe every other
 # service uses (no separate SCANNER_*_TICKERS_URL needed).
 SCANNER_BOARD_DB_PATH = DATA_PATH / "scanner_board.db"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Press-release tracker — 10th service, a news aggregator/collector (see
+# press_release_tracker/ + press_release_service.py). No capital or
+# positions at all, same "pure collector" shape as EDGAR/demand-signals --
+# polls RSS newswire feeds, parses each new item with an LLM, and emails a
+# digest of what's new. Grew directly out of the Volume spike scanner's own
+# research above: the same-day intraday edge is real, but acting on it needs
+# the catalyst detected fast, and a press release is often that catalyst.
+# Built as a live, forward-observing collector (no historical press-release
+# archive was confirmed available to backtest against) rather than a
+# backtested sleeve -- see MEMORY for the OMI.V case study this grew from.
+PRESS_RELEASE_DB_PATH = DATA_PATH / "press_releases.db"
+
+# One feed to start (GlobeNewswire's "News from Canada" feed) -- a plain
+# list so a second/third source (e.g. Newsfile Corp, CNW) is just another
+# URL appended here later, no code change needed in press_release_service.py.
+PRESS_RELEASE_FEEDS = [
+    "https://www.globenewswire.com/RssFeed/country/Canada/feedTitle/GlobeNewswire%20-%20News%20from%20Canada",
+]
+
+# Fair-access identification for the RSS fetch (same spirit as
+# EDGAR_USER_AGENT / DEMAND_USER_AGENT / MACRO_USER_AGENT).
+PRESS_RELEASE_USER_AGENT = "StockScanner-PressRelease/0.1 (chernyshov.yuriy@gmail.com)"
+
+# OPENAI_API_KEY is read from .env by press_release_tracker/llm_parser.py
+# itself (same self-contained pattern as FINRA_CLIENT_ID/SECRET and
+# FRED_API_KEY -- config.py itself doesn't load .env). Unconfigured means
+# each item still gets emailed with its raw RSS title/link, just without
+# the LLM's ticker/company/category/materiality/summary fields -- same
+# "degrade gracefully, don't crash" convention as every other optional
+# credential in this repo.
+
+# Cheapest/smallest OpenAI text tier -- this task (short-text classify +
+# one-sentence summary) doesn't need a frontier model, and token cost
+# scales with model tier more than task difficulty here. Verify current
+# pricing/model availability at https://platform.openai.com/pricing before
+# relying on any cost estimate; this is a one-line change if a
+# cheaper/better tier appears later.
+PRESS_RELEASE_LLM_MODEL = "gpt-5-nano"
+
+# Truncate a release's RSS description before sending it to the LLM --
+# caps token spend per item regardless of how long a given press release
+# runs.
+PRESS_RELEASE_LLM_MAX_DESCRIPTION_CHARS = 2000
+
+# Two delivery lanes (see press_release_service.py): a materiality='high'
+# item emails immediately (its own run, no batching -- the whole point of
+# this sleeve is catching a market-moving catalyst fast); everything else
+# (medium/low/unclassified) accumulates and flushes in one digest at most
+# this often, so a busy newswire morning doesn't produce an email every 5
+# minutes (the timer's own poll interval) for routine releases.
+PRESS_RELEASE_BATCH_INTERVAL_MINUTES = 60

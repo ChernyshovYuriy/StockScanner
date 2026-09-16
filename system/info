@@ -95,3 +95,15 @@ journalctl -u stockscanner-kangaroo-monitor.service -n 100 --no-pager
 sudo systemctl enable --now stockscanner-scanner-pipeline.timer
 sudo systemctl start stockscanner-scanner-pipeline.service
 journalctl -u stockscanner-scanner-pipeline.service -n 100 --no-pager
+
+# Press-release tracker — 10th service, a news aggregator/collector (no
+# capital or positions; see config.py PRESS_RELEASE_* and
+# press_release_tracker/). Polls RSS newswire feeds every 5 minutes, all
+# day (news can break pre-market or after hours, unlike the trading
+# services this has no market-hours gate). OPENAI_API_KEY in .env is
+# optional — without it, items are still emailed with their raw RSS
+# title/link, just without the LLM's ticker/category/materiality/summary
+# fields.
+sudo systemctl enable --now stockscanner-press-release.timer
+sudo systemctl start stockscanner-press-release.service
+journalctl -u stockscanner-press-release.service -n 100 --no-pager

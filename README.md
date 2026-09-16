@@ -94,6 +94,17 @@ FINRA_CLIENT_SECRET=xxxx
 If unset, `darkpool.py` skips its fetch silently; `demand_signals`' other
 two sources (EDGAR insider buys, options flow) are unaffected.
 
+Optional, only needed for the press-release tracker's LLM parse step (see
+`press_release_tracker/llm_parser.py`) — add to the same `.env` file:
+
+```
+OPENAI_API_KEY=xxxx
+```
+
+If unset, `press_release_service.py` still emails each new release with
+its raw RSS title/link, just without the LLM's ticker/category/
+materiality/summary fields.
+
 ### 3. Run `main.py` before the first trading day
 
 Run this on the weekend before you want to start:
@@ -169,9 +180,9 @@ sudo systemctl enable --now stockscanner-dashboard.service
 
 `system/` also has unit pairs for the EDGAR collector, the momentum sleeve,
 the demand-signals collector, the macro conviction sleeve, the Triple Screen
-tracker, the Kangaroo Tail sleeve, and the Ticker Indicator Board —
-`system/info` has the complete enable/start/journalctl commands for every
-unit.
+tracker, the Kangaroo Tail sleeve, the Ticker Indicator Board, and the
+press-release tracker — `system/info` has the complete enable/start/
+journalctl commands for every unit.
 
 The dashboard listens on `DASHBOARD_HOST:DASHBOARD_PORT` from `config.py`
 (default `0.0.0.0:8080`, LAN-only, no authentication — deliberate for a
