@@ -405,7 +405,11 @@ def create_app() -> Flask:
         happens client-side against /volume-spikes/data (see
         templates/volume_spikes.html), so the tab switches immediately
         and the loading state is what's actually visible while it runs."""
-        return render_template("volume_spikes.html", tickers_override=request.args.get("tickers", ""))
+        return render_template(
+            "volume_spikes.html",
+            tickers_override=request.args.get("tickers", ""),
+            universe=request.args.get("universe", "full"),
+        )
 
     @app.get("/volume-spikes/data")
     def volume_spikes_data():
@@ -414,8 +418,9 @@ def create_app() -> Flask:
         synchronously before rendering."""
         override = request.args.get("tickers")
         tickers = [t.strip().upper() for t in override.split(",") if t.strip()] if override else None
+        universe = request.args.get("universe", "full")
         try:
-            rows = scan_volume_spikes(tickers)
+            rows = scan_volume_spikes(tickers, universe=universe)
             return jsonify({"rows": [r.__dict__ for r in rows], "error": None})
         except Exception as e:
             return jsonify({"rows": [], "error": f"Scan failed: {e}"})

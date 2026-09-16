@@ -16,10 +16,20 @@ above their own average volume AND trading up on the day are returned
 just as easily mean heavy selling), so price direction is a hard filter,
 not a separate displayed column.
 
+Also supports scanning just the curated ~106-name liquid large/mid-cap
+TSX universe (LIQUID_TICKERS, imported from volume_spike_intraday_backtest.py
+-- the same names volume_spike_same_day_backtest.py's validated same-day
+edge was tested on) instead of the full unfiltered list, via
+scan_volume_spikes(universe="liquid") / --universe liquid. The distinction
+matters because volume_spike_intraday_backtest.py's own expansion history
+found a spike on a junior TSXV name behaves differently (more
+news/pump-driven, less reliable) than one on a liquid large/mid-cap name.
+
 Usage
 -----
-  python volume_spike_scanner.py                    # full VOLUME_SPIKE_TICKERS_URL universe
-  python volume_spike_scanner.py AAPL MSFT SLF.TO     # manual test against explicit tickers
+  python volume_spike_scanner.py                    # full VOLUME_SPIKE_TICKERS_URL universe (~900 tickers)
+  python volume_spike_scanner.py --universe liquid    # curated ~106-name liquid large/mid-cap universe
+  python volume_spike_scanner.py AAPL MSFT SLF.TO     # manual test against explicit tickers (overrides --universe)
 """
 from __future__ import annotations
 
@@ -34,6 +44,7 @@ from config import VOLUME_SPIKE_TICKERS_URL
 from market_data import DEFAULT_PROVIDER
 from research.triple_screen.batch import load_tickers
 from time_utils import date_to_iso_extended, market_today
+from volume_spike_intraday_backtest import TICKERS as LIQUID_TICKERS
 
 # Trading days of history averaged against today's volume-so-far. 20 ≈ one
 # trading month — long enough to smooth out day-to-day noise, short enough
@@ -89,24 +100,34 @@ def compute_spikes(data_by_ticker: Dict[str, pd.DataFrame]) -> List[VolumeSpikeR
     return rows
 
 
-def scan_volume_spikes(tickers: Optional[List[str]] = None) -> List[VolumeSpikeRow]:
+def scan_volume_spikes(tickers: Optional[List[str]] = None, universe: str = "full") -> List[VolumeSpikeRow]:
     """Fetch + compute in one call — the entry point both the CLI and the
-    dashboard route use."""
-    universe = tickers if tickers is not None else load_tickers(VOLUME_SPIKE_TICKERS_URL)
+    dashboard route use. `tickers` (an explicit list) always wins;
+    otherwise `universe="liquid"` scans LIQUID_TICKERS instead of the
+    full VOLUME_SPIKE_TICKERS_URL list."""
+    if tickers is not None:
+        universe_list = tickers
+    elif universe == "liquid":
+        universe_list = LIQUID_TICKERS
+    else:
+        universe_list = load_tickers(VOLUME_SPIKE_TICKERS_URL)
     today = market_today()
     start = date_to_iso_extended(today - timedelta(days=LOOKBACK_CALENDAR_DAYS))
     # end is exclusive in yfinance -- +1 day so today's still-filling bar
     # is actually included, not just history up to yesterday's close.
     end = date_to_iso_extended(today + timedelta(days=1))
-    data, _failed = DEFAULT_PROVIDER.download_range(universe, start=start, end=end)
+    data, _failed = DEFAULT_PROVIDER.download_range(universe_list, start=start, end=end)
     return compute_spikes(data)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scan for intraday volume spikes")
     parser.add_argument("tickers", nargs="*",
-                         help="explicit tickers, e.g. AAPL MSFT SLF.TO (overrides VOLUME_SPIKE_TICKERS_URL)")
+                         help="explicit tickers, e.g. AAPL MSFT SLF.TO (overrides VOLUME_SPIKE_TICKERS_URL / --universe)")
+    parser.add_argument("--universe", choices=["full", "liquid"], default="full",
+                         help="full = VOLUME_SPIKE_TICKERS_URL, ~900 tickers (default); "
+                              "liquid = the curated ~106-name liquid large/mid-cap universe")
     args = parser.parse_args()
-    result = scan_volume_spikes(args.tickers or None)
+    result = scan_volume_spikes(args.tickers or None, universe=args.universe)
     for r in result:
         print(f"{r.ticker:10s} current={r.current_volume:>12,} avg={r.average_volume:>12,.0f} spike={r.spike_pct:+.1f}%")

@@ -129,3 +129,34 @@ def test_scan_volume_spikes_uses_ticker_list_url_by_default(monkeypatch):
 
     vss.scan_volume_spikes()
     assert calls["url"] == vss.VOLUME_SPIKE_TICKERS_URL
+
+
+def test_scan_volume_spikes_liquid_universe_skips_ticker_list_url(monkeypatch):
+    def fail_load_tickers(url):
+        raise AssertionError("liquid universe must not fetch VOLUME_SPIKE_TICKERS_URL")
+
+    seen = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def download_range(self, tickers, start, end):
+            seen["tickers"] = tickers
+            return super().download_range(tickers, start, end)
+
+    monkeypatch.setattr(vss, "load_tickers", fail_load_tickers)
+    monkeypatch.setattr(vss, "DEFAULT_PROVIDER", _CapturingProvider({}))
+
+    vss.scan_volume_spikes(universe="liquid")
+    assert seen["tickers"] == vss.LIQUID_TICKERS
+
+
+def test_scan_volume_spikes_explicit_tickers_override_universe(monkeypatch):
+    monkeypatch.setattr(vss, "DEFAULT_PROVIDER", _FakeProvider({}))
+
+    def fail_load_tickers(url):
+        raise AssertionError("explicit tickers must not trigger a universe fetch")
+
+    monkeypatch.setattr(vss, "load_tickers", fail_load_tickers)
+
+    # Should not raise even though universe="liquid" is also passed --
+    # an explicit tickers list always wins.
+    vss.scan_volume_spikes(["AAA"], universe="liquid")

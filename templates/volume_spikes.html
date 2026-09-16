@@ -15,21 +15,29 @@
     .volspike-table th, .volspike-table td { text-align: right; }
     .volspike-table th:first-child, .volspike-table td:first-child { text-align: left; }
     .spike-pct { font-weight: 600; color: #c2410c; }
+    .vs-universe-btn.active { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
   </style>
 {% endblock %}
 {% block content %}
   <div class="header-row">
     <h1 class="volspike-accent">Volume Spikes <span class="volspike-badge">read-only</span></h1>
+    <a href="{{ url_for('volume_spikes', universe='full') }}"
+       class="refresh-btn vs-universe-btn{{ ' active' if universe != 'liquid' else '' }}">Full (~900)</a>
+    <a href="{{ url_for('volume_spikes', universe='liquid') }}"
+       class="refresh-btn vs-universe-btn{{ ' active' if universe == 'liquid' else '' }}">Liquid only (~106)</a>
     <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
   </div>
 
   <p class="banner banner-info">
-    Every ticker in the CAN universe whose volume so far today is running
+    Every ticker in the {{ 'curated ~106-name liquid large/mid-cap' if universe == 'liquid' else 'full CAN' }}
+    universe whose volume so far today is running
     above its own 20-trading-day average <strong>and</strong> is trading up
     on the day — a volume spike alone can just as easily mean selling, so
     price direction is a hard filter here, not a separate column. Ranked by
     how far above average. Live, on-demand scan — nothing here is stored;
     each refresh re-scans from scratch. See <code>volume_spike_scanner.py</code>.
+    {% if universe == 'liquid' %}"Liquid only" scans the same curated large/mid-cap
+    names the same-day backtest was validated on — junior/TSXV names are excluded.{% endif %}
   </p>
 
   <p class="stat" id="vs-loading">Scanning the universe for volume spikes — this takes a few seconds (a live fetch, not a stored snapshot)…</p>
@@ -67,7 +75,10 @@
       var tbody = document.getElementById("vs-tbody");
 
       var tickers = {{ tickers_override | tojson }};
-      var url = "/volume-spikes/data" + (tickers ? "?tickers=" + encodeURIComponent(tickers) : "");
+      var universe = {{ universe | tojson }};
+      var url = "/volume-spikes/data?" + (tickers
+        ? "tickers=" + encodeURIComponent(tickers)
+        : "universe=" + encodeURIComponent(universe));
 
       function cell(text, cls) {
         var td = document.createElement("td");
