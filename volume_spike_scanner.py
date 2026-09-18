@@ -60,6 +60,7 @@ LOOKBACK_CALENDAR_DAYS = 45
 @dataclass
 class VolumeSpikeRow:
     ticker: str
+    price: float
     current_volume: int
     average_volume: float
     spike_pct: float
@@ -92,6 +93,7 @@ def compute_spikes(data_by_ticker: Dict[str, pd.DataFrame]) -> List[VolumeSpikeR
         spike_pct = (current_volume - average_volume) / average_volume * 100.0
         rows.append(VolumeSpikeRow(
             ticker=ticker,
+            price=current_close,
             current_volume=int(current_volume),
             average_volume=average_volume,
             spike_pct=spike_pct,
@@ -130,4 +132,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     result = scan_volume_spikes(args.tickers or None, universe=args.universe)
     for r in result:
-        print(f"{r.ticker:10s} current={r.current_volume:>12,} avg={r.average_volume:>12,.0f} spike={r.spike_pct:+.1f}%")
+        print(f"{r.ticker:10s} price={r.price:>9,.2f} current={r.current_volume:>12,} avg={r.average_volume:>12,.0f} spike={r.spike_pct:+.1f}%")

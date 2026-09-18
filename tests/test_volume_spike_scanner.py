@@ -38,6 +38,7 @@ def test_spike_above_average_is_included_and_ranked():
     assert [r.ticker for r in rows] == ["AAA", "BBB"]
     assert rows[0].spike_pct == pytest.approx(150.0)
     assert rows[0].current_volume == 250_000
+    assert rows[0].price == pytest.approx(101.0)   # today's close, shown as the Price column
     assert rows[0].average_volume == pytest.approx(100_000.0)
 
 

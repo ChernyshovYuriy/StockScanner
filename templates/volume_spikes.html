@@ -2,20 +2,22 @@
 {% block title %}Volume Spikes — StockScanner{% endblock %}
 {% block head %}
   <style>
-    /* Next distinct accent after Scanner Board's slate -- a warm orange,
-       fitting for an "alert" style page (something unusual is happening
-       right now), unlike the calmer reference-board slate next to it. */
-    .volspike-accent { color: #c2410c; }
+    /* Green accent, matching dashboard.css's --hold/--hold-bg pair: every
+       row on this page is by construction a ticker trading UP on heavy
+       volume (see compute_spikes()'s price-direction filter), so the
+       warm-orange "alert" accent this page started with read as a warning
+       for what is actually a bullish list. */
+    .volspike-accent { color: #0a7c4e; }
     .volspike-badge {
       display: inline-block; margin-left: 10px; padding: 2px 8px;
       border-radius: 999px; font-size: 12px; font-weight: 600;
-      background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;
+      background: #f0fdf7; color: #0a7c4e; border: 1px solid #bfe8d5;
       vertical-align: middle;
     }
     .volspike-table th, .volspike-table td { text-align: right; }
     .volspike-table th:first-child, .volspike-table td:first-child { text-align: left; }
-    .spike-pct { font-weight: 600; color: #c2410c; }
-    .vs-universe-btn.active { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+    .spike-pct { font-weight: 600; color: #0a7c4e; }
+    .vs-universe-btn.active { background: #f0fdf7; color: #0a7c4e; border-color: #bfe8d5; }
   </style>
 {% endblock %}
 {% block content %}
@@ -49,6 +51,7 @@
     <thead>
       <tr>
         <th>Ticker</th>
+        <th title="Last traded price in today's session.">Price</th>
         <th title="Volume traded so far in today's session.">Current Volume</th>
         <th title="Average daily volume over the trailing 20 trading days (today excluded).">Average Volume</th>
         <th title="How far today's volume-so-far is running above that average.">Spike %</th>
@@ -110,6 +113,7 @@
             link.textContent = r.ticker;
             tickerTd.appendChild(link);
             tr.appendChild(tickerTd);
+            tr.appendChild(cell(r.price.toFixed(2)));
             tr.appendChild(cell(r.current_volume.toLocaleString()));
             tr.appendChild(cell(Math.round(r.average_volume).toLocaleString()));
             tr.appendChild(cell("+" + r.spike_pct.toFixed(1) + "%", "spike-pct"));
