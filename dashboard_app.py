@@ -50,7 +50,9 @@ from macro_dashboard_data import build_macro_positions, get_current_regime, get_
 from manual_sell import get_market_price, sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 from news_watchlist import store as news_watchlist_store
-from news_watchlist_dashboard_data import build_news_watchlist_state, invalidate_news_watchlist_cache
+from news_watchlist_dashboard_data import (
+    build_news_watchlist_state, fetch_ticker_volume, invalidate_news_watchlist_cache,
+)
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
 from time_utils import market_now, market_today_str
@@ -546,11 +548,14 @@ def create_app() -> Flask:
             conn.close()
         invalidate_news_watchlist_cache()
         days_since_flagged = (date.today() - date.fromisoformat(item["flagged_at"])).days
+        vol = fetch_ticker_volume(item["ticker"])
         return jsonify({"ok": True, "item": {
             "id": item["id"], "ticker": item["ticker"], "company": item["company"],
             "flagged_at": item["flagged_at"], "flag_price": item["flag_price"],
             "latest_price": item["flag_price"], "pct_change": 0.0,
             "days_since_flagged": days_since_flagged, "note": item["note"] or "",
+            "current_volume": vol["current_volume"] if vol else None,
+            "average_volume": vol["average_volume"] if vol else None,
         }})
 
     @app.post("/news-watchlist/<int:item_id>/dismiss")

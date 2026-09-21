@@ -50,6 +50,11 @@
     details.dismissed-details summary {
       cursor: pointer; font-size: 15px; font-weight: 600; user-select: none;
     }
+    /* Volume column: only the "so-far today" number is colored (average is
+       the reference line, not itself bullish/bearish) -- same --buy/--sell
+       vars the Confirm/Dismiss buttons already use on this page. */
+    .vol-above { color: var(--buy, #15803d); font-weight: 600; }
+    .vol-below { color: var(--sell); font-weight: 600; }
 
     .inline-form {
       display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
@@ -140,12 +145,14 @@
         <thead>
           <tr>
             <th>Ticker</th><th>Company</th><th>Flagged</th><th>Flag Price</th>
-            <th>Latest</th><th>Change</th><th>Days</th><th>History</th><th>Note</th><th></th>
+            <th>Latest</th><th>Change</th><th>Days</th>
+            <th title="Volume so far today / trailing 20-trading-day average (green = above, red = below).">Volume</th>
+            <th>History</th><th>Note</th><th></th>
           </tr>
         </thead>
         <tbody id="watching-tbody">
           {% if not watching %}
-          <tr class="watching-empty-row"><td colspan="10">Nothing confirmed yet — confirm an inbox item above, or add one manually below.</td></tr>
+          <tr class="watching-empty-row"><td colspan="11">Nothing confirmed yet — confirm an inbox item above, or add one manually below.</td></tr>
           {% endif %}
           {% for item in watching %}
           <tr>
@@ -158,6 +165,14 @@
               {{ "%+.1f%%"|format(item.pct_change) if item.pct_change is not none else "—" }}
             </td>
             <td>{{ item.days_since_flagged if item.days_since_flagged is not none else "—" }}</td>
+            <td>
+              {% if item.current_volume is not none and item.average_volume %}
+                <span class="{{ 'vol-above' if item.current_volume > item.average_volume else 'vol-below' }}">{{ "{:,.0f}".format(item.current_volume) }}</span>
+                / {{ "{:,.0f}".format(item.average_volume) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
             <td>
               <details class="history">
                 <summary>{{ item.price_history|length }} day(s)</summary>
@@ -307,6 +322,18 @@
       const tdDays = document.createElement("td");
       tdDays.textContent = item.days_since_flagged != null ? item.days_since_flagged : "—";
       tr.appendChild(tdDays);
+
+      const tdVolume = document.createElement("td");
+      if (item.current_volume != null && item.average_volume) {
+        const volSpan = document.createElement("span");
+        volSpan.className = item.current_volume > item.average_volume ? "vol-above" : "vol-below";
+        volSpan.textContent = Math.round(item.current_volume).toLocaleString();
+        tdVolume.appendChild(volSpan);
+        tdVolume.appendChild(document.createTextNode(" / " + Math.round(item.average_volume).toLocaleString()));
+      } else {
+        tdVolume.textContent = "—";
+      }
+      tr.appendChild(tdVolume);
 
       const tdHistory = document.createElement("td");
       const details = document.createElement("details");

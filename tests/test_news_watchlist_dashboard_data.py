@@ -6,6 +6,15 @@ import news_watchlist_dashboard_data as nwd
 from news_watchlist import store
 
 
+@pytest.fixture(autouse=True)
+def _no_network_volume_fetch(monkeypatch):
+    """_build_news_watchlist_state() now calls _fetch_volumes() (a live
+    download_range() against Yahoo Finance) for every watching-status
+    ticker. Stub it so this file's offline/no-network guarantee holds;
+    a test that actually wants to exercise volume data overrides this."""
+    monkeypatch.setattr(nwd, "_fetch_volumes", lambda tickers: {})
+
+
 def test_read_returns_empty_when_db_does_not_exist(tmp_path, monkeypatch):
     monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", tmp_path / "does_not_exist.db")
     assert nwd._read_items() == []
@@ -88,6 +97,54 @@ def test_build_news_watchlist_state_caches_within_ttl(tmp_path, monkeypatch):
 
     assert first == second
     assert len(second["watching"]) == 1
+
+
+def test_watching_row_gets_volume_from_fetch_volumes(tmp_path, monkeypatch):
+    db_path = tmp_path / "nw.db"
+    conn = store.connect(db_path)
+    store.add_manual(conn, ticker="AAPL", note="", flagged_at="2026-09-18", flag_price=100.0,
+                      created_at="2026-09-18T17:10:00")
+    monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", db_path)
+    monkeypatch.setattr(
+        nwd, "_fetch_volumes",
+        lambda tickers: {"AAPL": {"current_volume": 5_000_000.0, "average_volume": 2_000_000.0}},
+    )
+
+    row = nwd._build_news_watchlist_state()["watching"][0]
+    assert row["current_volume"] == 5_000_000.0
+    assert row["average_volume"] == 2_000_000.0
+
+
+def test_watching_row_volume_is_none_when_fetch_has_no_entry(tmp_path, monkeypatch):
+    db_path = tmp_path / "nw.db"
+    conn = store.connect(db_path)
+    store.add_manual(conn, ticker="AAPL", note="", flagged_at="2026-09-18", flag_price=100.0,
+                      created_at="2026-09-18T17:10:00")
+    monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", db_path)
+
+    row = nwd._build_news_watchlist_state()["watching"][0]
+    assert row["current_volume"] is None
+    assert row["average_volume"] is None
+
+
+def test_inbox_rows_never_trigger_a_volume_fetch(tmp_path, monkeypatch):
+    """Volume is a Watching-only enrichment -- fetching it for a 100+ row
+    inbox on every page load would slow the page the way a full
+    /volume-spikes scan does. _build_news_watchlist_state() must only
+    pass watching-status tickers to _fetch_volumes()."""
+    db_path = tmp_path / "nw.db"
+    conn = store.connect(db_path)
+    store.seed_inbox_item(
+        conn, guid="g1", ticker="OMI.V", company=None, category=None, materiality="high",
+        summary=None, source_link=None, flagged_at="2026-09-20", flag_price=0.12,
+        created_at="2026-09-20T17:10:00",
+    )
+    monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", db_path)
+    seen_tickers = []
+    monkeypatch.setattr(nwd, "_fetch_volumes", lambda tickers: seen_tickers.extend(tickers) or {})
+
+    nwd._build_news_watchlist_state()
+    assert seen_tickers == []
 
 
 def test_invalidate_cache_forces_a_fresh_read(tmp_path, monkeypatch):
