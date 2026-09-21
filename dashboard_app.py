@@ -22,6 +22,7 @@ from __future__ import annotations
 import sqlite3
 import time
 import uuid
+from datetime import date
 from typing import Any, Callable
 
 import duckdb
@@ -526,33 +527,53 @@ def create_app() -> Flask:
 
     @app.post("/news-watchlist/<int:item_id>/confirm")
     def news_watchlist_confirm(item_id: int):
+        """JSON, not redirect -- called via fetch (see templates/
+        news_watchlist.html) so the row can just be moved from the Inbox
+        table to the Watching table client-side instead of reloading the
+        whole page. With a 100+ row inbox, a full-page redirect on every
+        single triage click was resetting the user's sort and scroll
+        position each time -- the actual bug this endpoint shape fixes.
+        Returns the confirmed item's display fields (mirroring
+        news_watchlist_dashboard_data's row shape) so the page can render
+        its new Watching row without a second round-trip; latest_price/
+        pct_change are the flag price/0% since a just-confirmed item has no
+        price_history yet."""
         conn = news_watchlist_store.connect()
         try:
             news_watchlist_store.set_status(conn, item_id, "watching", market_now().isoformat())
+            item = news_watchlist_store.get_item(conn, item_id)
         finally:
             conn.close()
         invalidate_news_watchlist_cache()
-        return redirect(url_for("news_watchlist"))
+        days_since_flagged = (date.today() - date.fromisoformat(item["flagged_at"])).days
+        return jsonify({"ok": True, "item": {
+            "id": item["id"], "ticker": item["ticker"], "company": item["company"],
+            "flagged_at": item["flagged_at"], "flag_price": item["flag_price"],
+            "latest_price": item["flag_price"], "pct_change": 0.0,
+            "days_since_flagged": days_since_flagged, "note": item["note"] or "",
+        }})
 
     @app.post("/news-watchlist/<int:item_id>/dismiss")
     def news_watchlist_dismiss(item_id: int):
+        """JSON, not redirect -- see news_watchlist_confirm's docstring."""
         conn = news_watchlist_store.connect()
         try:
             news_watchlist_store.set_status(conn, item_id, "dismissed", market_now().isoformat())
         finally:
             conn.close()
         invalidate_news_watchlist_cache()
-        return redirect(url_for("news_watchlist"))
+        return jsonify({"ok": True})
 
     @app.post("/news-watchlist/<int:item_id>/note")
     def news_watchlist_note(item_id: int):
+        """JSON, not redirect -- see news_watchlist_confirm's docstring."""
         conn = news_watchlist_store.connect()
         try:
             news_watchlist_store.set_note(conn, item_id, request.form.get("note", ""))
         finally:
             conn.close()
         invalidate_news_watchlist_cache()
-        return redirect(url_for("news_watchlist"))
+        return jsonify({"ok": True})
 
     @app.post("/news-watchlist/add")
     def news_watchlist_add():

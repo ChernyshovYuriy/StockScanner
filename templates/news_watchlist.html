@@ -85,7 +85,7 @@
   {% endif %}
 
   <div class="nw-section">
-    <h2>Inbox — needs review ({{ inbox|length }})</h2>
+    <h2>Inbox — needs review (<span class="nw-count">{{ inbox|length }}</span>)</h2>
     {% if not inbox %}
       <p>Nothing awaiting review.</p>
     {% else %}
@@ -113,12 +113,8 @@
             <td>{{ item.flagged_at }} ({{ item.days_since_flagged }}d)</td>
             <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td class="nw-actions">
-              <form method="post" action="{{ url_for('news_watchlist_confirm', item_id=item.id) }}">
-                <button class="confirm-btn" type="submit">Watch</button>
-              </form>
-              <form method="post" action="{{ url_for('news_watchlist_dismiss', item_id=item.id) }}">
-                <button class="remove-btn" type="submit">Dismiss</button>
-              </form>
+              <button class="confirm-btn" type="button" data-nw-action="confirm" data-id="{{ item.id }}">Watch</button>
+              <button class="remove-btn" type="button" data-nw-action="dismiss" data-id="{{ item.id }}">Dismiss</button>
             </td>
           </tr>
           {% endfor %}
@@ -129,10 +125,7 @@
   </div>
 
   <div class="nw-section">
-    <h2>Watching ({{ watching|length }})</h2>
-    {% if not watching %}
-      <p>Nothing confirmed yet — confirm an inbox item above, or add one manually below.</p>
-    {% else %}
+    <h2>Watching (<span class="nw-count">{{ watching|length }}</span>)</h2>
     <div class="table-wrap">
       <table class="sortable">
         <thead>
@@ -141,7 +134,10 @@
             <th>Latest</th><th>Change</th><th>Days</th><th>History</th><th>Note</th><th></th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="watching-tbody">
+          {% if not watching %}
+          <tr class="watching-empty-row"><td colspan="10">Nothing confirmed yet — confirm an inbox item above, or add one manually below.</td></tr>
+          {% endif %}
           {% for item in watching %}
           <tr>
             <td><a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a></td>
@@ -173,16 +169,14 @@
               </form>
             </td>
             <td>
-              <form method="post" action="{{ url_for('news_watchlist_dismiss', item_id=item.id) }}">
-                <button class="remove-btn" type="submit" onclick="return confirm('Dismiss {{ item.ticker }} from the watchlist?')">Dismiss</button>
-              </form>
+              <button class="remove-btn" type="button" data-nw-action="dismiss" data-id="{{ item.id }}"
+                      data-confirm-message="Dismiss {{ item.ticker }} from the watchlist?">Dismiss</button>
             </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-    {% endif %}
 
     <h2 style="margin-top:18px;">Add Ticker Manually</h2>
     <p class="nw-note">For a catalyst the feed missed — goes straight to Watching (typing it in is the review step).</p>
@@ -225,4 +219,173 @@
       {% endif %}
     </details>
   </div>
+
+  <script>
+    // Confirm/Dismiss/Note post via fetch and update the DOM in place,
+    // instead of the full-page POST+redirect every other write action in
+    // this dashboard uses -- with a 100+ row inbox, reloading the whole
+    // page on every single triage click was resetting the column sort and
+    // scroll position each time. Confirming an Inbox item also builds and
+    // inserts its new Watching row from the fields the /confirm endpoint
+    // returns (see dashboard_app.py's news_watchlist_confirm docstring),
+    // so it appears immediately instead of waiting for the next reload.
+    function updateCount(row, delta) {
+      const section = row.closest(".nw-section");
+      const countEl = section && section.querySelector(".nw-count");
+      if (countEl) countEl.textContent = Math.max(0, parseInt(countEl.textContent, 10) + delta);
+    }
+
+    function wireNoteForm(form) {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const btn = form.querySelector("button[type=submit]");
+        const input = form.querySelector("input[name=note]");
+        const original = btn.textContent;
+        btn.disabled = true;
+        fetch(form.action, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ note: input.value }),
+        })
+          .then((res) => res.json())
+          .then((data) => { btn.textContent = data.ok ? "Saved" : "Failed"; })
+          .catch(() => { btn.textContent = "Failed"; })
+          .finally(() => {
+            btn.disabled = false;
+            setTimeout(() => { btn.textContent = original; }, 1500);
+          });
+      });
+    }
+
+    // Built via DOM methods (textContent), not an innerHTML template string
+    // -- ticker/company/summary ultimately come from an LLM parse of
+    // external press-release text, so treating them as trusted-enough for
+    // raw HTML interpolation would be a real injection risk.
+    function buildWatchingRow(item) {
+      const tr = document.createElement("tr");
+
+      const tdTicker = document.createElement("td");
+      const link = document.createElement("a");
+      link.href = `https://ca.finance.yahoo.com/quote/${encodeURIComponent(item.ticker)}`;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = item.ticker;
+      tdTicker.appendChild(link);
+      tr.appendChild(tdTicker);
+
+      const tdCompany = document.createElement("td");
+      tdCompany.textContent = item.company || "—";
+      tr.appendChild(tdCompany);
+
+      const tdFlagged = document.createElement("td");
+      tdFlagged.textContent = item.flagged_at;
+      tr.appendChild(tdFlagged);
+
+      const tdFlagPrice = document.createElement("td");
+      tdFlagPrice.textContent = item.flag_price != null ? `$${item.flag_price.toFixed(2)}` : "—";
+      tr.appendChild(tdFlagPrice);
+
+      const tdLatest = document.createElement("td");
+      tdLatest.textContent = item.latest_price != null ? `$${item.latest_price.toFixed(2)}` : "—";
+      tr.appendChild(tdLatest);
+
+      const tdChange = document.createElement("td");
+      tdChange.className = item.pct_change != null && item.pct_change >= 0 ? "pnl-pos" : "pnl-neg";
+      tdChange.textContent = item.pct_change != null
+        ? `${item.pct_change >= 0 ? "+" : ""}${item.pct_change.toFixed(1)}%` : "—";
+      tr.appendChild(tdChange);
+
+      const tdDays = document.createElement("td");
+      tdDays.textContent = item.days_since_flagged != null ? item.days_since_flagged : "—";
+      tr.appendChild(tdDays);
+
+      const tdHistory = document.createElement("td");
+      const details = document.createElement("details");
+      details.className = "history";
+      const summary = document.createElement("summary");
+      summary.textContent = "0 day(s)";
+      details.appendChild(summary);
+      const histTable = document.createElement("table");
+      histTable.innerHTML = "<thead><tr><th>Date</th><th>Close</th></tr></thead><tbody></tbody>";
+      details.appendChild(histTable);
+      tdHistory.appendChild(details);
+      tr.appendChild(tdHistory);
+
+      const tdNote = document.createElement("td");
+      const noteForm = document.createElement("form");
+      noteForm.className = "note-form";
+      noteForm.method = "post";
+      noteForm.action = `/news-watchlist/${item.id}/note`;
+      const noteInput = document.createElement("input");
+      noteInput.type = "text";
+      noteInput.name = "note";
+      noteInput.value = item.note || "";
+      noteInput.placeholder = "e.g. bought @0.15";
+      const noteBtn = document.createElement("button");
+      noteBtn.className = "save-btn";
+      noteBtn.type = "submit";
+      noteBtn.textContent = "Save";
+      noteForm.appendChild(noteInput);
+      noteForm.appendChild(noteBtn);
+      wireNoteForm(noteForm);
+      tdNote.appendChild(noteForm);
+      tr.appendChild(tdNote);
+
+      const tdDismiss = document.createElement("td");
+      const dismissBtn = document.createElement("button");
+      dismissBtn.className = "remove-btn";
+      dismissBtn.type = "button";
+      dismissBtn.dataset.nwAction = "dismiss";
+      dismissBtn.dataset.id = item.id;
+      dismissBtn.dataset.confirmMessage = `Dismiss ${item.ticker} from the watchlist?`;
+      dismissBtn.textContent = "Dismiss";
+      tdDismiss.appendChild(dismissBtn);
+      tr.appendChild(tdDismiss);
+
+      return tr;
+    }
+
+    function insertWatchingRow(item) {
+      const tbody = document.getElementById("watching-tbody");
+      if (!tbody) return;
+      const emptyRow = tbody.querySelector(".watching-empty-row");
+      if (emptyRow) emptyRow.remove();
+      const row = buildWatchingRow(item);
+      tbody.insertBefore(row, tbody.firstChild);
+      updateCount(row, 1);
+    }
+
+    document.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-nw-action]");
+      if (!btn) return;
+      if (btn.dataset.confirmMessage && !confirm(btn.dataset.confirmMessage)) return;
+
+      const action = btn.dataset.nwAction;
+      const url = `/news-watchlist/${btn.dataset.id}/${action}`;
+      btn.disabled = true;
+      fetch(url, { method: "POST" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data.ok) {
+            alert("Action failed.");
+            btn.disabled = false;
+            return;
+          }
+          const row = btn.closest("tr");
+          if (row) {
+            updateCount(row, -1);
+            row.remove();
+          }
+          if (action === "confirm" && data.item) {
+            insertWatchingRow(data.item);
+          }
+        })
+        .catch((err) => {
+          alert("Request failed: " + err);
+          btn.disabled = false;
+        });
+    });
+
+    document.querySelectorAll(".note-form").forEach(wireNoteForm);
+  </script>
 {% endblock %}
