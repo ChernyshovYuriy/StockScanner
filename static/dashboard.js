@@ -13,11 +13,19 @@ function makeSortable(table) {
     : [];
   if (!tbody) return;
 
+  // A cell can override what it sorts on via data-sort-value, instead of
+  // its own displayed text -- e.g. news_watchlist.html's Inbox "Flagged"
+  // column displays a coarse "Xd" (days since flagged, 0 for most
+  // same-day items) but sorts on the full created_at timestamp instead,
+  // so same-day ties don't collapse into an unordered clump.
   const cellValue = (row, colIndex) => {
     const cell = row.children[colIndex];
-    const text = cell ? cell.textContent.trim() : "";
+    if (!cell) return { text: "", num: NaN, raw: false };
+    const sortValue = cell.dataset.sortValue;
+    if (sortValue !== undefined) return { text: sortValue, num: NaN, raw: true };
+    const text = cell.textContent.trim();
     const num = parseFloat(text.replace(/[$%,+]/g, ""));
-    return { text, num };
+    return { text, num, raw: false };
   };
 
   headers.forEach((th, colIndex) => {
@@ -29,7 +37,7 @@ function makeSortable(table) {
       rows.sort((rowA, rowB) => {
         const a = cellValue(rowA, colIndex);
         const b = cellValue(rowB, colIndex);
-        const bothNumeric = a.text !== "—" && b.text !== "—" && !isNaN(a.num) && !isNaN(b.num);
+        const bothNumeric = !a.raw && !b.raw && a.text !== "—" && b.text !== "—" && !isNaN(a.num) && !isNaN(b.num);
         const cmp = bothNumeric ? a.num - b.num : a.text.localeCompare(b.text);
         return ascending ? cmp : -cmp;
       });
