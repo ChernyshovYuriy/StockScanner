@@ -58,7 +58,12 @@ body {
   transition: width 6s cubic-bezier(0.1, 0.7, 0.3, 1), opacity 0.15s ease;
 }
 
-main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+/* 1200px was leaving large, wasted side margins on every page once tables
+   started growing wide (Scanner Board's many indicator columns, News
+   Watchlist's own recent Volume column) -- widened so wide tables get to
+   use the actual window, while still capping on ultra-wide monitors so
+   line length on non-tabular pages doesn't run away. */
+main { padding: 20px 32px; max-width: 1800px; margin: 0 auto; }
 
 h1 { font-size: 18px; margin: 20px 0 10px; }
 
