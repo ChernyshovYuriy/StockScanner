@@ -27,6 +27,13 @@
        (single-line) cells default to baseline-aligning with its FIRST
        line, which looks lopsided -- top-align the whole row instead. */
     .inbox-table td { vertical-align: top; }
+    /* The table is width:100%, and with table-layout:auto every column
+       without its own width shares the leftover space proportionally --
+       so short columns like Ticker/Flagged/Flag Price end up far wider
+       than their content needs. width:1% is the standard "shrink this
+       column to its content" trick under auto layout; Summary (the one
+       column without this class) absorbs all the freed-up space. */
+    .nw-tight { width: 1%; }
     .nw-actions { display: flex; gap: 6px; white-space: nowrap; }
     .confirm-btn {
       background: var(--buy, #15803d); color: #fff; border: none;
@@ -93,26 +100,28 @@
       <table class="sortable inbox-table">
         <thead>
           <tr>
-            <th>Ticker</th><th>Company</th><th>Category</th><th>Materiality</th>
-            <th>Summary</th><th>Flagged</th><th>Flag Price</th><th></th>
+            <th class="nw-tight">Ticker</th><th class="nw-tight">Company</th>
+            <th class="nw-tight">Category</th><th class="nw-tight">Materiality</th>
+            <th>Summary</th><th class="nw-tight">Flagged</th>
+            <th class="nw-tight">Flag Price</th><th class="nw-tight"></th>
           </tr>
         </thead>
         <tbody>
           {% for item in inbox %}
           <tr>
-            <td>
+            <td class="nw-tight">
               <a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a>
               {% if item.source_link %}
                 &nbsp;<a href="{{ item.source_link }}" target="_blank" rel="noopener" title="Source release">🔗</a>
               {% endif %}
             </td>
-            <td>{{ item.company or "—" }}</td>
-            <td>{{ item.category or "—" }}</td>
-            <td>{{ item.materiality or "—" }}</td>
+            <td class="nw-tight">{{ item.company or "—" }}</td>
+            <td class="nw-tight">{{ item.category or "—" }}</td>
+            <td class="nw-tight">{{ item.materiality or "—" }}</td>
             <td class="nw-summary">{{ item.summary or "—" }}</td>
-            <td>{{ item.flagged_at }} ({{ item.days_since_flagged }}d)</td>
-            <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
-            <td class="nw-actions">
+            <td class="nw-tight" title="{{ item.flagged_at }}">{{ item.days_since_flagged }}d</td>
+            <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
+            <td class="nw-tight nw-actions">
               <button class="confirm-btn" type="button" data-nw-action="confirm" data-id="{{ item.id }}">Watch</button>
               <button class="remove-btn" type="button" data-nw-action="dismiss" data-id="{{ item.id }}">Dismiss</button>
             </td>
