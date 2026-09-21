@@ -12,10 +12,12 @@ split-schedule-single-script precedent as position_monitor.py's
                          press_release_tracker's own "no market-hours gate":
                          news can break any time). Reads data/press_releases.db
                          READ-ONLY for parsed_releases rows with a non-null
-                         ticker not already seeded into this watchlist, and
-                         inserts each as a fresh status='inbox' candidate
-                         stamped with today's price. If it finds anything
-                         new, emails an immediate alert (news_watchlist/
+                         ticker not already seeded into this watchlist and
+                         no older than NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS
+                         (config.py), and inserts each as a fresh
+                         status='inbox' candidate stamped with today's
+                         price. If it finds anything new, emails an
+                         immediate alert (news_watchlist/
                          digest.py) -- a direct nudge to go review the
                          watchlist tab, separate from press_release_tracker's
                          own email for the same underlying catalyst (the
@@ -48,10 +50,11 @@ import argparse
 import sqlite3
 import sys
 import uuid
-from datetime import date
+from datetime import date, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 from concurrent_utils import acquire_lock
-from config import PRESS_RELEASE_DB_PATH
+from config import NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS, PRESS_RELEASE_DB_PATH
 from log_utils import log
 from manual_sell import get_market_price
 from send_report import send_text_email
@@ -64,18 +67,37 @@ def _is_trading_day(today: date) -> bool:
     return today.weekday() < 5 and today.isoformat() not in TSX_HOLIDAYS
 
 
+def _is_stale(pubdate: str, now, max_age_days: int) -> bool:
+    """True if pubdate (a seen_items.pubdate value -- the feed's own RFC
+    822 <pubDate>, see press_release_tracker/feeds.py) is older than
+    max_age_days relative to now. An empty or unparseable pubdate is
+    treated as NOT stale -- a parse edge case shouldn't silently drop a
+    genuine candidate."""
+    if not pubdate:
+        return False
+    try:
+        published = parsedate_to_datetime(pubdate)
+    except (TypeError, ValueError):
+        return False
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    return (now - published) > timedelta(days=max_age_days)
+
+
 def _read_parsed_candidates(pr_db_path) -> list[dict]:
     """Every parsed_releases row with a non-null ticker, joined against
-    seen_items for its link -- [] if press_releases.db doesn't exist yet
-    (press_release_service.py hasn't run), same "not yet available"
-    convention every read-only cross-DB reader in this repo uses."""
+    seen_items for its link and pubdate -- [] if press_releases.db doesn't
+    exist yet (press_release_service.py hasn't run), same "not yet
+    available" convention every read-only cross-DB reader in this repo
+    uses."""
     try:
         conn = sqlite3.connect(f"file:{pr_db_path}?mode=ro", uri=True)
     except sqlite3.OperationalError:
         return []
     try:
         rows = conn.execute(
-            "SELECT p.guid, p.ticker, p.company, p.category, p.materiality, p.summary, s.link "
+            "SELECT p.guid, p.ticker, p.company, p.category, p.materiality, p.summary, "
+            "       s.link, s.pubdate "
             "FROM parsed_releases p JOIN seen_items s ON s.guid = p.guid "
             "WHERE p.ticker IS NOT NULL AND p.ticker != ''"
         ).fetchall()
@@ -83,7 +105,7 @@ def _read_parsed_candidates(pr_db_path) -> list[dict]:
         return []
     finally:
         conn.close()
-    cols = ["guid", "ticker", "company", "category", "materiality", "summary", "link"]
+    cols = ["guid", "ticker", "company", "category", "materiality", "summary", "link", "pubdate"]
     return [dict(zip(cols, r)) for r in rows]
 
 
@@ -93,16 +115,27 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
     (store.find_pending_inbox_item()), collapse into that row instead
     (store.update_inbox_item()) so a busy ticker (several procedural
     filings for the same story) doesn't flood the inbox with one row per
-    article. Returns the list of newly seeded/updated items (ticker/
-    company/category/materiality/summary/flag_price) for the caller to
-    alert on -- [] if nothing new."""
+    article. A candidate whose own pubDate is older than
+    NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS is skipped entirely (marked
+    processed, never seeded) -- this service is about fast follow-through
+    on a fresh catalyst, and a stale article surfacing late (e.g. after
+    the service was down for a while) has no such catalyst left to follow.
+    Returns the list of newly seeded/updated items (ticker/company/
+    category/materiality/summary/flag_price) for the caller to alert on --
+    [] if nothing new."""
     today_str = market_today_str()
-    now = market_now().isoformat()
+    now_dt = market_now()
+    now = now_dt.isoformat()
     already_seeded = store.seeded_guids(conn)
     candidates = [c for c in _read_parsed_candidates(pr_db_path) if c["guid"] not in already_seeded]
 
     seeded = []
     for c in candidates:
+        if _is_stale(c["pubdate"], now_dt, NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS):
+            log("news_watchlist", run_id, "candidate_too_stale", ticker=c["ticker"], pubdate=c["pubdate"])
+            if not dry_run:
+                store.mark_guid_processed(conn, c["guid"], now)
+            continue
         try:
             price, _source = price_fetcher(c["ticker"])
         except Exception as e:

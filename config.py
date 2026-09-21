@@ -393,3 +393,10 @@ PRESS_RELEASE_BATCH_INTERVAL_MINUTES = 60
 # dashboard tab); `update-prices` runs once daily and appends today's price
 # to every already-confirmed watching item.
 NEWS_WATCHLIST_DB_PATH = DATA_PATH / "news_watchlist.db"
+# A candidate's own RSS pubDate older than this many days is skipped by
+# seed_inbox() rather than seeded -- this service is about fast follow-
+# through on a fresh catalyst; a stale article surfacing late (e.g. after
+# the service was down, or a delayed LLM parse) has no such catalyst left
+# to follow, and would otherwise get stamped with today's date/price as if
+# it just broke.
+NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS = 7

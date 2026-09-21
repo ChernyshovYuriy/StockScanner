@@ -35,11 +35,11 @@ def _no_real_email(monkeypatch):
     return calls
 
 
-def _seed_parsed_release(pr_db_path, guid, ticker, **overrides):
+def _seed_parsed_release(pr_db_path, guid, ticker, pubdate="Mon, 21 Sep 2026 08:36:00 GMT", **overrides):
     conn = pr_store.connect(pr_db_path)
     item = FeedItem(
         guid=guid, feed_url="https://feed-a", title=f"Release {guid}",
-        link=f"https://example.com/{guid}.html", pubdate="Mon, 21 Sep 2026 08:36:00 GMT",
+        link=f"https://example.com/{guid}.html", pubdate=pubdate,
         description="desc", categories=[],
     )
     pr_store.mark_seen(conn, item, first_seen_at="2026-09-21T08:40:00")
@@ -132,6 +132,60 @@ def test_release_for_a_watching_ticker_starts_a_fresh_inbox_item(tmp_path):
 
     assert len(store.list_by_status(conn, "inbox")) == 1
     assert len(store.list_by_status(conn, "watching")) == 1
+
+
+def test_stale_candidate_is_skipped_and_marked_processed(tmp_path):
+    """A release whose own pubDate is older than
+    NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS (7) is never seeded -- and its guid
+    is still marked processed, so it isn't re-evaluated on every future
+    run either."""
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "OMI.V", pubdate="Mon, 07 Sep 2026 08:36:00 GMT")
+    conn = store.connect(tmp_path / "nw.db")
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", conn=conn, press_release_db_path=pr_db,
+        price_fetcher=_fake_price({"OMI.V": 0.12}))
+
+    assert store.list_by_status(conn, "inbox") == []
+    assert store.seeded_guids(conn) == {"g1"}
+
+
+def test_stale_candidate_dry_run_leaves_no_trace(tmp_path):
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "OMI.V", pubdate="Mon, 07 Sep 2026 08:36:00 GMT")
+    conn = store.connect(tmp_path / "nw.db")
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", dry_run=True, conn=conn, press_release_db_path=pr_db,
+        price_fetcher=_fake_price({"OMI.V": 0.12}))
+
+    assert store.list_by_status(conn, "inbox") == []
+    assert store.seeded_guids(conn) == set()
+
+
+def test_candidate_within_max_age_is_still_seeded(tmp_path):
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "OMI.V", pubdate="Wed, 16 Sep 2026 08:36:00 GMT")
+    conn = store.connect(tmp_path / "nw.db")
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", conn=conn, press_release_db_path=pr_db,
+        price_fetcher=_fake_price({"OMI.V": 0.12}))
+
+    assert len(store.list_by_status(conn, "inbox")) == 1
+
+
+def test_missing_pubdate_is_not_treated_as_stale(tmp_path):
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "OMI.V", pubdate="")
+    conn = store.connect(tmp_path / "nw.db")
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", conn=conn, press_release_db_path=pr_db,
+        price_fetcher=_fake_price({"OMI.V": 0.12}))
+
+    assert len(store.list_by_status(conn, "inbox")) == 1
 
 
 def test_parsed_item_with_no_ticker_is_never_seeded(tmp_path):
