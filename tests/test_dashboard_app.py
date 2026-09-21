@@ -242,6 +242,29 @@ def test_demand_page_renders_signals_grouped_by_ticker(client, monkeypatch):
     assert "badge-bearish" in html
 
 
+def test_news_watchlist_volumes_endpoint_returns_fetched_volumes(client, monkeypatch):
+    """The Inbox table's async volume fill (templates/news_watchlist.html)
+    hits this endpoint after the page renders. fetch_volumes() itself is
+    a live Yahoo Finance call -- mocked here, same as build_scanner_state
+    above, to keep this a routing/response-shape test, not a network test."""
+    monkeypatch.setattr(
+        "dashboard_app.fetch_volumes",
+        lambda tickers: {"AAA.TO": {"current_volume": 5_000_000.0, "average_volume": 2_000_000.0}},
+    )
+    resp = client.get("/news-watchlist/volumes?tickers=AAA.TO,BBB.TO")
+    assert resp.status_code == 200
+    assert resp.get_json() == {
+        "volumes": {"AAA.TO": {"current_volume": 5_000_000.0, "average_volume": 2_000_000.0}}
+    }
+
+
+def test_news_watchlist_volumes_endpoint_handles_no_tickers(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.fetch_volumes", lambda tickers: {} if not tickers else 1 / 0)
+    resp = client.get("/news-watchlist/volumes")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"volumes": {}}
+
+
 def test_scanner_page_renders_when_no_rows(client, monkeypatch):
     monkeypatch.setattr("dashboard_app.build_scanner_state", lambda: {"rows": [], "run_date": None})
     resp = client.get("/scanner")

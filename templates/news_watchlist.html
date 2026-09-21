@@ -108,7 +108,9 @@
             <th class="nw-tight">Ticker</th><th class="nw-tight">Company</th>
             <th class="nw-tight">Category</th><th class="nw-tight">Materiality</th>
             <th>Summary</th><th class="nw-tight">Flagged</th>
-            <th class="nw-tight">Flag Price</th><th class="nw-tight"></th>
+            <th class="nw-tight">Flag Price</th>
+            <th class="nw-tight" title="Volume so far today / trailing 20-trading-day average (green = above, red = below). Loaded after the page renders.">Volume</th>
+            <th class="nw-tight"></th>
           </tr>
         </thead>
         <tbody>
@@ -126,6 +128,7 @@
             <td class="nw-summary">{{ item.summary or "—" }}</td>
             <td class="nw-tight" title="{{ item.flagged_at }}">{{ item.days_since_flagged }}d</td>
             <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
+            <td class="nw-tight nw-volume" data-ticker="{{ item.ticker }}">…</td>
             <td class="nw-tight nw-actions">
               <button class="confirm-btn" type="button" data-nw-action="confirm" data-id="{{ item.id }}">Watch</button>
               <button class="remove-btn" type="button" data-nw-action="dismiss" data-id="{{ item.id }}">Dismiss</button>
@@ -259,6 +262,48 @@
       if (countEl) countEl.textContent = Math.max(0, parseInt(countEl.textContent, 10) + delta);
     }
 
+    // Shared by the Watching row builder below and the Inbox async volume
+    // fill -- "current / average", current colored green/red vs. average.
+    function volumeContent(currentVolume, averageVolume) {
+      const frag = document.createDocumentFragment();
+      if (currentVolume != null && averageVolume) {
+        const span = document.createElement("span");
+        span.className = currentVolume > averageVolume ? "vol-above" : "vol-below";
+        span.textContent = Math.round(currentVolume).toLocaleString();
+        frag.appendChild(span);
+        frag.appendChild(document.createTextNode(" / " + Math.round(averageVolume).toLocaleString()));
+      } else {
+        frag.appendChild(document.createTextNode("—"));
+      }
+      return frag;
+    }
+
+    // Inbox can run to 100+ rows, so unlike Watching's volume (fetched
+    // server-side as part of the already-cached page read), Inbox's is
+    // fetched client-side after the page has already rendered -- same
+    // defer-after-render shape /volume-spikes uses for its own full-
+    // universe scan (see templates/volume_spikes.html). Cells start as
+    // "…" placeholders (see the Inbox table markup) and get filled in
+    // once this resolves; a failed fetch just leaves them as "—".
+    (function () {
+      const cells = document.querySelectorAll(".nw-volume[data-ticker]");
+      if (!cells.length) return;
+      const tickers = [...new Set([...cells].map((c) => c.dataset.ticker))];
+      fetch("/news-watchlist/volumes?tickers=" + encodeURIComponent(tickers.join(",")))
+        .then((res) => res.json())
+        .then((data) => {
+          const volumes = data.volumes || {};
+          cells.forEach((cell) => {
+            const v = volumes[cell.dataset.ticker];
+            cell.textContent = "";
+            cell.appendChild(volumeContent(v ? v.current_volume : null, v ? v.average_volume : null));
+          });
+        })
+        .catch(() => {
+          cells.forEach((cell) => { cell.textContent = "—"; });
+        });
+    })();
+
     function wireNoteForm(form) {
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -324,15 +369,7 @@
       tr.appendChild(tdDays);
 
       const tdVolume = document.createElement("td");
-      if (item.current_volume != null && item.average_volume) {
-        const volSpan = document.createElement("span");
-        volSpan.className = item.current_volume > item.average_volume ? "vol-above" : "vol-below";
-        volSpan.textContent = Math.round(item.current_volume).toLocaleString();
-        tdVolume.appendChild(volSpan);
-        tdVolume.appendChild(document.createTextNode(" / " + Math.round(item.average_volume).toLocaleString()));
-      } else {
-        tdVolume.textContent = "—";
-      }
+      tdVolume.appendChild(volumeContent(item.current_volume, item.average_volume));
       tr.appendChild(tdVolume);
 
       const tdHistory = document.createElement("td");

@@ -85,6 +85,18 @@ def fetch_ticker_volume(ticker: str) -> Optional[Dict[str, float]]:
     return _fetch_volumes([ticker]).get(ticker)
 
 
+def fetch_volumes(tickers: List[str]) -> Dict[str, Dict[str, float]]:
+    """Public multi-ticker wrapper around _fetch_volumes(), used by
+    dashboard_app.py's /news-watchlist/volumes route -- the Inbox table's
+    async volume fill (see templates/news_watchlist.html). Inbox can run
+    to 100+ rows, so unlike Watching's own fetch (folded into the page's
+    already-cached read), this one is deliberately NOT part of
+    build_news_watchlist_state() -- it's fetched client-side, after the
+    page has already rendered, same defer-after-render shape
+    /volume-spikes/data uses for its own full-universe scan."""
+    return _fetch_volumes(tickers)
+
+
 def _days_since(flagged_at_str):
     try:
         return (date.today() - date.fromisoformat(flagged_at_str)).days

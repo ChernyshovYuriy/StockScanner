@@ -51,7 +51,7 @@ from manual_sell import get_market_price, sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 from news_watchlist import store as news_watchlist_store
 from news_watchlist_dashboard_data import (
-    build_news_watchlist_state, fetch_ticker_volume, invalidate_news_watchlist_cache,
+    build_news_watchlist_state, fetch_ticker_volume, fetch_volumes, invalidate_news_watchlist_cache,
 )
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
@@ -526,6 +526,19 @@ def create_app() -> Flask:
             inbox=state["inbox"], watching=state["watching"], dismissed=state["dismissed"],
             error=error,
         )
+
+    @app.get("/news-watchlist/volumes")
+    def news_watchlist_volumes():
+        """JSON data backing the Inbox table's async volume fill (see
+        templates/news_watchlist.html) -- a live Yahoo Finance fetch across
+        a 100+ row inbox is too slow to run inline with the page render
+        (same reasoning /volume-spikes/data's own deferred scan has), so
+        the page renders with placeholder cells and this endpoint fills
+        them in afterward. `tickers` is a comma-separated list from the
+        page's own already-rendered rows."""
+        tickers = [t for t in request.args.get("tickers", "").split(",") if t]
+        volumes = fetch_volumes(tickers)
+        return jsonify({"volumes": volumes})
 
     @app.post("/news-watchlist/<int:item_id>/confirm")
     def news_watchlist_confirm(item_id: int):
