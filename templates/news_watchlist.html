@@ -98,6 +98,8 @@
 
   <div class="nw-section">
     <h2>Inbox — needs review (<span class="nw-count">{{ inbox|length }}</span>)</h2>
+    <p class="nw-note" id="nw-volume-loading" hidden>⏳ Fetching live Volume — a live scan across every inbox
+      ticker can take up to a minute on first load; results are cached for a minute or two after that.</p>
     {% if not inbox %}
       <p>Nothing awaiting review.</p>
     {% else %}
@@ -288,6 +290,8 @@
     (function () {
       const cells = document.querySelectorAll(".nw-volume[data-ticker]");
       if (!cells.length) return;
+      const loadingEl = document.getElementById("nw-volume-loading");
+      if (loadingEl) loadingEl.hidden = false;
       const tickers = [...new Set([...cells].map((c) => c.dataset.ticker))];
       fetch("/news-watchlist/volumes?tickers=" + encodeURIComponent(tickers.join(",")))
         .then((res) => res.json())
@@ -301,6 +305,9 @@
         })
         .catch(() => {
           cells.forEach((cell) => { cell.textContent = "—"; });
+        })
+        .finally(() => {
+          if (loadingEl) loadingEl.hidden = true;
         });
     })();
 

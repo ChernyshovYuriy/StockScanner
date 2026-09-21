@@ -39,6 +39,16 @@ _ITEM_COLUMNS = (
 _AVG_VOLUME_DAYS = 20
 _VOLUME_LOOKBACK_CALENDAR_DAYS = 45
 
+# download_range() batches 30 tickers/call with a 0.5s sleep between
+# batches (see market_data.py's LiveDataProvider) -- on a Pi's weaker
+# CPU/network, an ~88-ticker Inbox can take the better part of a minute.
+# Per-ticker TTL cache so a page reload / confirm / dismiss within this
+# window (the common case -- the Inbox's ticker set rarely changes
+# between clicks) is served instantly instead of re-paying that cost.
+_volume_cache_lock = threading.Lock()
+_volume_cache: Dict[str, "tuple[float, Dict[str, float]]"] = {}
+_VOLUME_CACHE_TTL_SECONDS = 90
+
 
 def _pct(flag_price, other_price):
     if not flag_price:
@@ -47,35 +57,54 @@ def _pct(flag_price, other_price):
 
 
 def _fetch_volumes(tickers: List[str]) -> Dict[str, Dict[str, float]]:
-    """Today's volume-so-far + trailing _AVG_VOLUME_DAYS average, one
-    batched download_range() call -- same source/window
-    volume_spike_scanner.py uses. Restricted to Watching-tab tickers only
-    (called with a handful, not the whole inbox), since a live per-ticker
-    fetch across a 100+ row inbox would slow the page the same way a full
-    /volume-spikes scan does (see that page's own async-fetch workaround).
-    A ticker missing from the result (network failure, no history yet)
-    just gets no entry -- caller renders '—'."""
+    """Today's volume-so-far + trailing _AVG_VOLUME_DAYS average, same
+    source/window volume_spike_scanner.py uses. Called both for Watching
+    (a handful of tickers, folded into the page's own TTL-cached read) and
+    for Inbox (up to 100+, fetched client-side -- see fetch_volumes()).
+    Per-ticker results are served from _volume_cache when fresh, so only
+    tickers actually missing/stale get a real download_range() call. A
+    ticker still missing from the result after that (network failure, no
+    history yet) just gets no entry -- caller renders '—'."""
     if not tickers:
         return {}
-    today = market_today()
-    start = date_to_iso_extended(today - timedelta(days=_VOLUME_LOOKBACK_CALENDAR_DAYS))
-    # end is exclusive in yfinance -- +1 day so today's still-filling bar
-    # is actually included, same as volume_spike_scanner.py.
-    end = date_to_iso_extended(today + timedelta(days=1))
-    data, _failed = DEFAULT_PROVIDER.download_range(sorted(set(tickers)), start=start, end=end)
-
+    unique = sorted(set(tickers))
+    now = time.monotonic()
     out: Dict[str, Dict[str, float]] = {}
-    for ticker, df in data.items():
-        if df.empty:
-            continue
-        current_volume = float(df["Volume"].iloc[-1])
-        history = df["Volume"].iloc[-(_AVG_VOLUME_DAYS + 1):-1]
-        if history.empty:
-            continue
-        average_volume = float(history.mean())
-        if average_volume <= 0:
-            continue
-        out[ticker] = {"current_volume": current_volume, "average_volume": average_volume}
+    to_fetch: List[str] = []
+    with _volume_cache_lock:
+        for ticker in unique:
+            cached = _volume_cache.get(ticker)
+            if cached is not None and now - cached[0] < _VOLUME_CACHE_TTL_SECONDS:
+                out[ticker] = cached[1]
+            else:
+                to_fetch.append(ticker)
+
+    if to_fetch:
+        today = market_today()
+        start = date_to_iso_extended(today - timedelta(days=_VOLUME_LOOKBACK_CALENDAR_DAYS))
+        # end is exclusive in yfinance -- +1 day so today's still-filling bar
+        # is actually included, same as volume_spike_scanner.py.
+        end = date_to_iso_extended(today + timedelta(days=1))
+        data, _failed = DEFAULT_PROVIDER.download_range(to_fetch, start=start, end=end)
+
+        fresh: Dict[str, Dict[str, float]] = {}
+        for ticker, df in data.items():
+            if df.empty:
+                continue
+            current_volume = float(df["Volume"].iloc[-1])
+            history = df["Volume"].iloc[-(_AVG_VOLUME_DAYS + 1):-1]
+            if history.empty:
+                continue
+            average_volume = float(history.mean())
+            if average_volume <= 0:
+                continue
+            fresh[ticker] = {"current_volume": current_volume, "average_volume": average_volume}
+
+        with _volume_cache_lock:
+            for ticker, vol in fresh.items():
+                _volume_cache[ticker] = (now, vol)
+        out.update(fresh)
+
     return out
 
 

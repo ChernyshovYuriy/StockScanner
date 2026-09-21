@@ -1,9 +1,16 @@
 """Offline tests for news_watchlist_dashboard_data (no network)."""
 
+import pandas as pd
 import pytest
 
 import news_watchlist_dashboard_data as nwd
 from news_watchlist import store
+
+# Captured before the autouse fixture below ever patches nwd._fetch_volumes
+# -- the caching tests further down need to call the REAL implementation
+# (with DEFAULT_PROVIDER.download_range mocked instead), not the blanket
+# no-network stub every other test in this file gets.
+_REAL_FETCH_VOLUMES = nwd._fetch_volumes
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +152,50 @@ def test_inbox_rows_never_trigger_a_volume_fetch(tmp_path, monkeypatch):
 
     nwd._build_news_watchlist_state()
     assert seen_tickers == []
+
+
+def _fake_volume_df(volume=1_000_000.0, rows=21):
+    return pd.DataFrame({"Volume": [volume] * rows})
+
+
+def test_fetch_volumes_caches_per_ticker_within_ttl(monkeypatch):
+    """A repeat call for the same ticker within _VOLUME_CACHE_TTL_SECONDS
+    must be served from _volume_cache, not re-hit download_range -- the
+    fix for the Pi's ~88-ticker Inbox otherwise re-paying a ~minute-long
+    batched yfinance fetch on every single page load/confirm/dismiss."""
+    monkeypatch.setattr(nwd, "_fetch_volumes", _REAL_FETCH_VOLUMES)
+    nwd._volume_cache.clear()
+    calls = []
+
+    def fake_download_range(tickers, start, end):
+        calls.append(list(tickers))
+        return {"AAPL": _fake_volume_df()}, []
+
+    monkeypatch.setattr(nwd.DEFAULT_PROVIDER, "download_range", fake_download_range)
+
+    first = nwd._fetch_volumes(["AAPL"])
+    second = nwd._fetch_volumes(["AAPL"])
+
+    assert len(calls) == 1
+    assert first == second == {"AAPL": {"current_volume": 1_000_000.0, "average_volume": 1_000_000.0}}
+
+
+def test_fetch_volumes_refetches_once_cache_entry_expires(monkeypatch):
+    monkeypatch.setattr(nwd, "_fetch_volumes", _REAL_FETCH_VOLUMES)
+    monkeypatch.setattr(nwd, "_VOLUME_CACHE_TTL_SECONDS", 0)
+    nwd._volume_cache.clear()
+    calls = []
+
+    def fake_download_range(tickers, start, end):
+        calls.append(list(tickers))
+        return {"AAPL": _fake_volume_df()}, []
+
+    monkeypatch.setattr(nwd.DEFAULT_PROVIDER, "download_range", fake_download_range)
+
+    nwd._fetch_volumes(["AAPL"])
+    nwd._fetch_volumes(["AAPL"])
+
+    assert len(calls) == 2
 
 
 def test_invalidate_cache_forces_a_fresh_read(tmp_path, monkeypatch):
