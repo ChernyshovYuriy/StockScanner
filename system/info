@@ -107,3 +107,23 @@ journalctl -u stockscanner-scanner-pipeline.service -n 100 --no-pager
 sudo systemctl enable --now stockscanner-press-release.timer
 sudo systemctl start stockscanner-press-release.service
 journalctl -u stockscanner-press-release.service -n 100 --no-pager
+
+# News watchlist — 11th service, a follow-through tracker for
+# press_release_tracker's own catches (no capital/positions; own DB,
+# data/news_watchlist.db). TWO units, not one — easy to enable just the
+# first and miss the second:
+#   stockscanner-news-watchlist-seed.timer     — every ~10 minutes, all
+#     day, every day (no trading-day gate, same reasoning as press-release
+#     above); seeds fresh inbox candidates and emails an immediate alert
+#     if it finds any (subject "News Watchlist", distinct from
+#     press-release's own "Stock News Results")
+#   stockscanner-news-watchlist.timer          — once daily at 17:10
+#     (after triple-screen-tracker's 17:00, before scanner-pipeline's
+#     17:15); appends today's price to every human-confirmed "watching"
+#     item — no alert, pure bookkeeping
+sudo systemctl enable --now stockscanner-news-watchlist-seed.timer
+sudo systemctl enable --now stockscanner-news-watchlist.timer
+sudo systemctl start stockscanner-news-watchlist-seed.service
+sudo systemctl start stockscanner-news-watchlist.service
+journalctl -u stockscanner-news-watchlist-seed.service -n 100 --no-pager
+journalctl -u stockscanner-news-watchlist.service -n 100 --no-pager

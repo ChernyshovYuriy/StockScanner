@@ -15,7 +15,18 @@
     .nw-section { margin: 24px 0; }
     .nw-section h2 { font-size: 15px; margin: 0 0 10px; }
     .nw-note { color: var(--text-muted); font-size: 12px; margin: 4px 0 10px; }
-    .nw-summary { color: var(--text-muted); font-size: 12px; max-width: 260px; }
+    /* dashboard.css's base `td { white-space: nowrap }` is right for every
+       other column here (tickers, dates, prices) but wrong for this one --
+       without overriding it, a long summary just overflows on top of the
+       neighboring columns instead of wrapping. */
+    .nw-summary {
+      color: var(--text-muted); font-size: 12px; max-width: 260px;
+      white-space: normal; overflow-wrap: break-word;
+    }
+    /* Once the summary cell wraps to multiple lines, the row's other
+       (single-line) cells default to baseline-aligning with its FIRST
+       line, which looks lopsided -- top-align the whole row instead. */
+    .inbox-table td { vertical-align: top; }
     .nw-actions { display: flex; gap: 6px; white-space: nowrap; }
     .confirm-btn {
       background: var(--buy, #15803d); color: #fff; border: none;
@@ -79,7 +90,7 @@
       <p>Nothing awaiting review.</p>
     {% else %}
     <div class="table-wrap">
-      <table class="sortable">
+      <table class="sortable inbox-table">
         <thead>
           <tr>
             <th>Ticker</th><th>Company</th><th>Category</th><th>Materiality</th>
