@@ -1,390 +1,230 @@
-# TSX Swing Trading System
+# StockScanner
 
-A fully automated virtual swing-trading system for **Canadian (TSX) stocks**.
-Screens the market daily, detects technical entry patterns, executes virtual
-buys and sells, and emails a report after every trade.
+An automated **paper-trading and market-intelligence system for TSX/TSXV stocks**,
+plus one tool for a real brokerage account. It runs as eleven independent
+scheduled services (screeners, paper-trading sleeves, and news/filing
+collectors) that all write to their own database and feed one Flask
+dashboard. Nothing here places a real trade except `conviction_watchlist/`,
+which only records trades the user made by hand elsewhere.
 
-> Data source: Yahoo Finance via `yfinance`. All transactions are virtual —
-> no real brokerage connection.
+> Data source: Yahoo Finance (`yfinance`), FRED, SEC EDGAR, FINRA, and
+> GlobeNewswire RSS. All sleeves below `virtual_buy.py`/`momentum_buy.py`/
+> `macro_buy.py`/`kangaroo_buy.py` are **virtual** — no brokerage connection.
+
+For full architecture detail, config keys, and the research/backtests behind
+each design choice, see [`CLAUDE.md`](CLAUDE.md).
 
 ---
 
-## How it works
+## What's in here
 
-Three scheduled services cooperate across the trading day:
+**Paper-trading sleeves** (each has its own cash, positions, and exit rules —
+independent virtual accounts, never merged):
 
-| Time (ET) | Service | What it does |
+| Sleeve | Entry mechanic | DB |
 |---|---|---|
-| **4:30 PM** | `main.py` | Checks market regime → rebuilds universe → runs screener → detects patterns → queues buy candidates |
-| **9:45 AM** | `virtual_buy.py` | Reads the candidate queue, fetches live prices, sizes and executes virtual buys → sends trade email |
-| **3:50 PM** | `position_monitor.py` | Evaluates open positions against exit rules using intraday data → executes virtual sells → sends trade email |
+| **Core** (`main.py` / `virtual_buy.py` / `position_monitor.py`) | Weinstein Stage II + RS + MACD + OBV + ADX screener → VCP / EMA-pullback / base-breakout pattern detection | `data/trading.db` |
+| **Momentum** (`momentum_*.py`) | Same detectors, relaxed ATR universe, wide trailing stop — catches vertical moves the core sleeve's basing requirement rejects | `data/momentum.db` |
+| **Macro** (`macro_buy.py` / `macro_monitor.py`) | FRED yield-curve/credit-spread/Fed-balance-sheet regime gate; concentrated bets on the *core* sleeve's own candidates when risk-on | `data/macro.db` |
+| **Kangaroo Tail** (`kangaroo_*.py`) | Breakout-entry (stop = tail low, target = R-multiple) off a bullish reversal candle — the one entry mechanic that backtested with a real edge | `data/kangaroo.db` |
 
-> The live services no-op outside TSX trading hours (weekday, 09:30–16:00 ET,
-> non-holiday) via `is_market_open()`, so an off-schedule trigger never
-> transacts on stale prices.
+**Research trackers** (no capital, no positions — track an idea, not a trade):
 
-All state — cash, positions, trades, signals, intents — lives in a single
-**DuckDB database** at `data/trading.db`.
+| Service | Question it answers | DB |
+|---|---|---|
+| **Triple Screen tracker** (`triple_screen_tracker_service.py`) | After an Elder Triple Screen BUY signal, how does price behave until it first closes below entry? | `data/triple_screen_tracker.db` |
+| **Ticker Indicator Board** (`scanner_pipeline.py`) | One row per ticker, one column per Elder indicator — a read-only screen, deliberately no composite score | `data/scanner_board.db` |
+| **Volume spike scanner** (`volume_spike_scanner.py`) | Which tickers are trading above their own 20-day average volume, on rising price — on-demand only, no schedule | *(none — live scan)* |
+
+**Collectors** (external data, normalized and screenable):
+
+| Service | Source | DB |
+|---|---|---|
+| **EDGAR collector** (`edgar_service.py`) | SEC insider buys (Form 4) + 13D/13G ownership filings | `data/edgar.db` |
+| **Demand signals** (`demand_signals_service.py`) | EDGAR insider buys + FINRA dark-pool + FINRA short-volume + options flow, normalized into one schema | `data/demand_signals.db` |
+| **Press-release tracker** (`press_release_service.py`) | GlobeNewswire RSS, LLM-classified (ticker/category/materiality), emailed within minutes of publication | `data/press_releases.db` |
+| **News watchlist** (`news_watchlist_service.py`) | Human-curated follow-through tracker on top of the press-release tracker's own catches (inbox → watching → dismissed) | `data/news_watchlist.db` |
+
+**Real account** (`conviction_watchlist/`): a quality filter + 52-week-dip
+entry screen + trailing-stop sell flag for the user's own RBC account.
+Nothing here executes a trade — holdings are entered by hand after the user
+actually trades. State: `data/conviction_*.json`.
+
+**Dashboard** (`dashboard_app.py`, Flask, LAN-only, no auth):
+
+| Route | Sleeve/service | Read/write |
+|---|---|---|
+| `/` , `/history` | Core | read-only + manual sell button |
+| `/momentum` | Momentum sleeve | read-only |
+| `/macro` | Macro sleeve | read-only |
+| `/kangaroo` | Kangaroo Tail sleeve | read-only |
+| `/triple-screen` | Triple Screen tracker | read-only |
+| `/scanner` | Ticker Indicator Board | read-only |
+| `/volume-spikes` | Volume spike scanner | read-only (live scan) |
+| `/demand` | Demand signals | read-only |
+| `/news-watchlist` | News watchlist | read/write (confirm/dismiss/note) |
+| `/conviction` | Real account | read/write (edit holdings, refresh candidates) |
 
 ---
 
 ## Installation
 
-**Requirements:** Python 3.10+, internet access (Yahoo Finance).
+**Requirements:** Python 3.10+, internet access.
 
 ```bash
 git clone <repo>
 cd StockScanner
-
-python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
----
-
 ## First-time setup
 
-### 1. Set your starting capital
-
-Run once before anything else. Replace `50000` with your paper-trading capital:
+Initialize the core sleeve's database and starting capital (run once):
 
 ```bash
 python -c "from db import init_db, set_cash; init_db(); set_cash(50_000)"
 ```
 
-Verify the database was created and the balance is correct:
+Every other sleeve seeds its own capital on its first run
+(`MOMENTUM_INITIAL_CAPITAL` / `MACRO_INITIAL_CAPITAL` / `KANGAROO_INITIAL_CAPITAL`
+in `config.py`) — nothing else to run by hand. The research trackers and
+collectors create their databases on first run with no capital step at all.
 
-```bash
-python -c "
-from db import init_db, get_cash, get_open_positions
-init_db()
-print('Cash     :', get_cash())
-print('Positions:', get_open_positions())
-"
-```
-
-### 2. Configure email (optional but recommended)
-
-The system sends a trade notification email after every buy or sell.
-Gmail requires an **App Password** (not your regular password).
-
-1. Enable 2-Step Verification at <https://myaccount.google.com/security>
-2. Create an App Password → copy the 16-character code
-3. Create a `.env` file in the repo root:
-
-```
-GMAIL_SENDER=you@gmail.com
-GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
-GMAIL_RECIPIENT=you@gmail.com
-```
-
-If `.env` is absent the system runs normally — it just skips emails.
-
-Optional, only needed for `demand_signals/darkpool.py`'s FINRA ATS dark-pool
-source (free, but requires a free registered app — see
-<https://developer.finra.org>): add to the same `.env` file —
-
-```
-FINRA_CLIENT_ID=xxxx
-FINRA_CLIENT_SECRET=xxxx
-```
-
-If unset, `darkpool.py` skips its fetch silently; `demand_signals`' other
-two sources (EDGAR insider buys, options flow) are unaffected.
-
-Optional, only needed for the press-release tracker's LLM parse step (see
-`press_release_tracker/llm_parser.py`) — add to the same `.env` file:
-
-```
-OPENAI_API_KEY=xxxx
-```
-
-If unset, `press_release_service.py` still emails each new release with
-its raw RSS title/link, just without the LLM's ticker/category/
-materiality/summary fields.
-
-### 3. Run `main.py` before the first trading day
-
-Run this on the weekend before you want to start:
+Run `main.py` once (e.g. over a weekend) before the first live trading day so
+`virtual_buy.py` has something to buy Monday morning:
 
 ```bash
 python main.py
 ```
 
-This populates `data/trading.db` with the first batch of signals and queues
-any `CONFIRMED` setups as pending buy intents. `virtual_buy.py` will consume
-them Monday morning.
+### Optional `.env` keys
+
+Nothing below is required — every integration degrades gracefully (skips its
+own step, keeps running) if its key is absent.
+
+| Key | Used by | Effect if unset |
+|---|---|---|
+| `GMAIL_SENDER` / `GMAIL_APP_PASSWORD` / `GMAIL_RECIPIENT` | trade + digest emails across every service | emails are skipped, everything else runs |
+| `FINRA_CLIENT_ID` / `FINRA_CLIENT_SECRET` | `demand_signals/darkpool.py` | dark-pool signal skipped; insider-buy and options-flow signals unaffected |
+| `FRED_API_KEY` | `macro_regime.py` | every regime vote reads 0 → macro sleeve stays in cash |
+| `OPENAI_API_KEY` | `press_release_tracker/llm_parser.py` | releases still emailed, just unclassified (raw RSS title/link only) |
+
+Gmail requires an **App Password**, not your normal password — enable
+2-Step Verification at <https://myaccount.google.com/security>, then create one.
 
 ---
 
 ## Daily operation
 
-Once the system is running, the three services execute automatically on their
-schedule. To run them manually:
+The core sleeve's three services, runnable manually or via systemd:
 
 ```bash
-# End-of-day (after 4:30 PM ET)
-python main.py
-
-# Next morning (at/after 9:45 AM ET open)
-python virtual_buy.py
-
-# Pre-close (around 3:50 PM ET, market still open)
-python position_monitor.py --mode pre-close
-
-# Optional post-close informational run
-python position_monitor.py --mode post-close
+python main.py                                    # 4:30 PM — screen, detect, queue candidates
+python virtual_buy.py                              # 9:45 AM — size and execute queued buys
+python position_monitor.py --mode pre-close        # 3:50 PM — evaluate exits, execute sells
+python position_monitor.py --mode post-close       # informational only, no sells
 ```
 
-### Dry-run mode
+`virtual_buy.py` and `position_monitor.py` both support `--dry-run` (preview,
+no DB writes). All live services no-op outside TSX trading hours
+(`is_market_open()`), so an off-schedule manual run is always safe.
 
-Both `virtual_buy.py` and `position_monitor.py` support `--dry-run` to
-preview activity without touching the database:
-
-```bash
-python virtual_buy.py --dry-run
-python position_monitor.py --mode pre-close --dry-run  # not yet wired — informational only
-```
+Every other service's manual-run command is listed in its own `--help`, and
+summarized in `CLAUDE.md`'s Commands section.
 
 ---
 
 ## Systemd deployment (Linux)
 
-The `system/` directory contains `.service` and `.timer` unit files for
-running the three services automatically on a Linux host.
-
-### First-time install
+`system/` holds one `.service`/`.timer` pair per scheduled job (33 units
+covering all eleven services) plus one always-on `.service` for the
+dashboard. `system/info` has the full install/enable/status/journalctl
+command list; the short version:
 
 ```bash
-# Copy unit files to systemd
 sudo cp system/*.service system/*.timer /etc/systemd/system/
-
-# Reload systemd so it sees the new units
 sudo systemctl daemon-reload
-
-# Enable timers so they survive reboots
-sudo systemctl enable stockscanner-main.timer
-sudo systemctl enable stockscanner-buy.timer
-sudo systemctl enable stockscanner-monitor.timer
-
-# Start the timers now
-sudo systemctl start stockscanner-main.timer
-sudo systemctl start stockscanner-buy.timer
-sudo systemctl start stockscanner-monitor.timer
-
-# The web dashboard is always-on (not timer-driven) — enable and start it directly
-sudo systemctl enable --now stockscanner-dashboard.service
+sudo systemctl enable --now stockscanner-main.timer stockscanner-buy.timer stockscanner-monitor.timer
+sudo systemctl enable --now stockscanner-dashboard.service    # always-on, not timer-driven
 ```
 
-`system/` also has unit pairs for the EDGAR collector, the momentum sleeve,
-the demand-signals collector, the macro conviction sleeve, the Triple Screen
-tracker, the Kangaroo Tail sleeve, the Ticker Indicator Board, and the
-press-release tracker — `system/info` has the complete enable/start/
-journalctl commands for every unit.
+Repeat `enable --now` for whichever other sleeves/collectors you want
+running (`stockscanner-momentum-*`, `stockscanner-macro-*`,
+`stockscanner-kangaroo-*`, `stockscanner-edgar.timer`,
+`stockscanner-demand-signals.timer`, `stockscanner-triple-screen-tracker.timer`,
+`stockscanner-scanner-pipeline.timer`, `stockscanner-press-release.timer`,
+`stockscanner-news-watchlist.timer`, `stockscanner-news-watchlist-seed.timer`).
 
 The dashboard listens on `DASHBOARD_HOST:DASHBOARD_PORT` from `config.py`
-(default `0.0.0.0:8080`, LAN-only, no authentication — deliberate for a
-home-network deployment). Browse to `http://<jetson-lan-ip>:8080/` from any
-device on the LAN.
+(default `0.0.0.0:8080`, LAN-only, no auth — deliberate for a home-network
+deployment).
 
-### After editing a .service or .timer file
-
-```bash
-# Copy updated files
-sudo cp system/stockscanner-main.service /etc/systemd/system/
-# (repeat for whichever files changed)
-
-# Tell systemd to reload its configuration
-sudo systemctl daemon-reload
-
-# Restart the affected service if it is currently running
-sudo systemctl restart stockscanner-main.service
-```
-
-### Useful status commands
-
-```bash
-# Check whether timers are active and when they next fire
-systemctl list-timers stockscanner-*
-
-# View recent output for a service
-journalctl -u stockscanner-main.service -n 50
-
-# Check the current status of a service
-systemctl status stockscanner-main.service
-
-# Run a service immediately (outside its schedule)
-sudo systemctl start stockscanner-main.service
-```
-
-> The timers use `Persistent=false`, so a slot missed while the host is down is
-> skipped rather than run late on stale prices. Combined with the
-> `is_market_open()` guard, starting a `*.service` manually outside trading
-> hours is a safe no-op for live buys/sells (a report may still be generated).
-
-### Tickers URL
-
-The main service is started with `--tickers-url` pointing to a remote file
-(one ticker per line). To change the URL, edit
-`system/stockscanner-main.service` and re-run the install steps above.
-The default URL is also set in `config.py` (`CAN_TICKERS_URL`) and is used
-when running services manually from the command line without `--tickers-url`.
+> Timers use `Persistent=false` — a slot missed while the host is down is
+> skipped, not run late on stale prices. Don't change this; it's a
+> deliberate second layer of defence alongside `is_market_open()`.
 
 ---
 
-## Querying the database
+## Querying a database
 
-Use DuckDB directly for ad-hoc queries:
+Every sleeve's DB is a plain DuckDB (core/momentum/macro/kangaroo) or SQLite
+(everything else) file under `data/` — open it directly:
 
 ```python
 import duckdb
-conn = duckdb.connect("data/trading.db")
-
-conn.execute("SELECT * FROM transactions ORDER BY trade_date").df()     # full ledger
-conn.execute("SELECT * FROM positions").df()                             # open positions
-conn.execute("SELECT * FROM trades ORDER BY sell_date").df()             # closed trades
-conn.execute("SELECT * FROM account").df()                               # cash balance
+conn = duckdb.connect("data/trading.db")   # or momentum.db / macro.db / kangaroo.db
+conn.execute("SELECT * FROM positions").df()
+conn.execute("SELECT * FROM trades ORDER BY sell_date").df()
 conn.execute("SELECT * FROM intents WHERE intent_status = 'PENDING'").df()
-
 conn.close()
 ```
 
-### Database tables
-
-| Table | Contents |
-|---|---|
-| `account` | Current cash balance |
-| `positions` | Open virtual positions (ticker, entry date, price, shares, planned stop) |
-| `trades` | Permanent closed-trade log with full P&L |
-| `transactions` | Unified ledger — every BUY and SELL in chronological order |
-| `signals` | Pipeline signal state machine (rebuilt each run) |
-| `intents` | Buy candidate queue with execution history |
+Core/momentum/macro/kangaroo share one schema: `account` (cash), `positions`
+(open), `trades` (closed, append-only), `transactions` (unified BUY+SELL
+ledger), `signals` (pipeline state machine), `intents` (buy queue). The
+collectors and research trackers each have their own unrelated schema — see
+`CLAUDE.md`'s "State files" section.
 
 ---
 
-## Screener
+## Screener (core sleeve)
 
-`canadian_stock_screener.py` scores each ticker in the TSX universe with a
-weighted factor stack:
+`canadian_stock_screener.py` scores each ticker in the universe on Weinstein
+Stage II alignment, RS vs XIU.TO, MACD, OBV slope, ADX, volatility-adjusted
+momentum, and 52-week proximity. Universe: `CAN_TICKERS_URL` (`config.py`).
+Output: `out/screener_out/YYYYMMDD_HHMM.csv`. Weights/thresholds: the
+`CONFIG` dict inside the file.
 
-- **Weinstein Stage II alignment**
-- **Relative Strength vs XIU.TO**
-- **MACD momentum**
-- **OBV slope** (volume accumulation)
-- **ADX trend strength**
-- **Volatility-adjusted momentum (VAM)**
-- **52-week high proximity / breakout pressure**
+`auto_pipeline.py` then runs three pattern detectors (VCP, EMA pullback
+reclaim, base breakout) and advances a `FORMING → AT_PIVOT → CONFIRMED →
+ACTIVE/FAILED` state machine; `CONFIRMED` setups become `PENDING` intents for
+`virtual_buy.py`. Before generating new signals, `main.py` checks XIU.TO
+against its 200-day SMA — in a bear regime, no new signals, existing
+positions still monitored.
 
-**Universe:** loaded from `CAN_TICKERS_URL` in `config.py` (one ticker per line).
-
-**Output:** `out/screener_out/YYYYMMDD_HHMM.csv`
-
-**Configure** via `CONFIG` dict inside `canadian_stock_screener.py`:
-`top_n`, `min_price`, `min_avg_volume`, `weights`, `lookback_days`.
-
----
-
-## Entry pipeline
-
-`auto_pipeline.py` reads screener CSVs, tracks tickers across days, and runs
-three pattern detectors:
-
-1. **VCP** — Volatility Contraction Pattern
-2. **EMA pullback reclaim** — EMA21 and EMA50 variants
-3. **Base breakout** — tight range + volume confirmation
-
-### Signal state machine
-
-```
-FORMING  →  AT_PIVOT  →  CONFIRMED  →  ACTIVE
-                     ↘              ↘  FAILED / EXPIRED
-```
-
-`CONFIRMED` setups are written to the `intents` table as `PENDING` buy
-candidates. `virtual_buy.py` processes them the following morning.
-
-### Market regime filter
-
-Before generating new signals, `main.py` checks whether **XIU.TO** is above
-its 200-day SMA. In a bear regime, signal generation is skipped — no new
-positions are opened. Existing positions continue to be monitored.
-
----
-
-## Exit rules (`position_monitor.py`)
-
-Each position is evaluated against four exit rules (defaults):
+### Exit rules (`position_monitor.py`)
 
 | Rule | Trigger |
 |---|---|
-| Initial stop | Entry − 1.5 × ATR(14) |
-| Chandelier trail | Highest high since entry − 2.5 × ATR(14) |
-| Profit giveback | Max profit ≥ 6% and current profit drops ≥ 3% below peak |
-| Time stop | ≥ 20 trading days held with profit < 0% |
-
-When a position carries a `stop_price` persisted from its buy intent (the
-swing-low-aware planned stop), that level is used as the initial stop instead
-of the `Entry − 1.5 × ATR(14)` formula, so the exit matches the stop the trade
-was sized against. Legacy positions without a stored stop fall back to the ATR
-formula.
+| Initial stop | Persisted `stop_price` from the buy intent, or `Entry − 1.5×ATR(14)` if none was stored |
+| Chandelier trail | Highest high since entry − 2.5×ATR(14) |
+| Profit giveback | Peak profit ≥ 6%, current profit ≥ 3pts below that peak |
+| Time stop | ≥ 20 trading days held, profit < 0% |
 
 ---
 
-## Backtesting
-
-Run a historical backtest over any date range:
+## Backtesting (core sleeve only)
 
 ```bash
-# Single run
 python run_backtest.py --start 2022-01-01 --end 2024-01-01
-
-# Custom tickers (URL or file)
-python run_backtest.py --tickers https://example.com/tickers.txt --start 2022-01-01 --end 2024-01-01
-
-# Exit-param sweep: time_stop_days × stop_atr (4×4=16 combinations)
-python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep
-
-# Walk-forward gap filter optimization (find best GAP_FILTER_PCT via sliding windows)
-python run_backtest.py --start 2022-01-01 --end 2025-01-01 --walk-forward-gap
-python run_backtest.py --start 2022-01-01 --end 2025-01-01 --walk-forward-gap --wf-in-days 84 --wf-out-days 21
-
+python run_backtest.py --start 2022-01-01 --end 2024-01-01 --sweep              # exit-param grid
+python run_backtest.py --start 2022-01-01 --end 2025-01-01 --walk-forward-gap    # gap-filter optimization
 python run_backtest.py --help
 ```
 
-The backtest simulates the live gap filter when `gap_filter_pct` is set in `BacktestConfig`
-(default `None` = no filter, matching historical behaviour before May 2026).
-
-Output files are written to `out/`:
-- `backtest_DATES_TIMESTAMP.html` — HTML report with equity curve and trade log
-- `backtest_trades_TIMESTAMP.csv` — full trade log
-- `backtest_equity_TIMESTAMP.csv` — day-by-day equity curve
-- `backtest_wf_gap_DATES_TIMESTAMP.csv` — walk-forward gap optimization results
-
----
-
-## Directory layout
-
-```
-.
-├── main.py                  # end-of-day service (4:30 PM)
-├── virtual_buy.py           # morning buy execution (9:45 AM)
-├── position_monitor.py      # pre/post-close monitor (3:50 PM)
-├── auto_pipeline.py         # pattern detection + signal state machine
-├── canadian_stock_screener.py
-├── run_backtest.py          # backtest CLI
-├── db.py                    # DuckDB persistence layer
-├── send_report.py           # Gmail email sender
-├── config.py                # path constants + trading parameters
-├── data/
-│   └── trading.db           # all live state (auto-created on first run)
-└── out/
-    ├── screener_out/        # daily screener CSVs
-    ├── alerts/              # daily alert CSVs + HTML report
-    ├── logs/                # service run logs
-    └── locks/               # process lock files
-```
+Outputs land in `out/`: an HTML report with equity curve, a trade-log CSV,
+and a day-by-day equity CSV.
 
 ---
 
@@ -394,61 +234,57 @@ Output files are written to `out/`:
 pytest tests/ -v
 
 # By phase gate (backtest refactor)
-pytest -v -m phase1    # clock injection
-pytest -v -m phase2    # MarketDataProvider
-pytest -v -m phase3    # PortfolioState
-pytest -v -m phase4    # BacktestRunner
-pytest -v -m phase5    # HTML report
-pytest -v -m phase6    # CLI entry point
+pytest -v -m phase1   # clock injection
+pytest -v -m phase2   # MarketDataProvider
+pytest -v -m phase3   # PortfolioState
+pytest -v -m phase4   # BacktestRunner
+pytest -v -m phase5   # HTML report
+pytest -v -m phase6   # CLI entry point
+pytest -v -m characterization  # golden-value business logic locks
+```
 
-# Specific files
-pytest tests/test_db.py -v           # database layer
-pytest tests/test_integration.py -v  # service integration
+---
+
+## Directory layout
+
+```
+.
+├── main.py / virtual_buy.py / position_monitor.py   # core sleeve
+├── momentum_pipeline.py / momentum_buy.py / momentum_monitor.py
+├── macro_regime.py / macro_buy.py / macro_monitor.py
+├── kangaroo_pipeline.py / kangaroo_buy.py / kangaroo_monitor.py
+├── edgar_service.py            edgar/
+├── demand_signals_service.py   demand_signals/
+├── triple_screen_tracker_service.py   triple_screen_tracker/   research/triple_screen/
+├── scanner_pipeline.py         scanner_board/
+├── volume_spike_scanner.py
+├── press_release_service.py    press_release_tracker/
+├── news_watchlist_service.py   news_watchlist/
+├── conviction_watchlist/       # real-account tool, no scheduled service
+├── auto_pipeline.py            # core sleeve pattern detection + state machine
+├── canadian_stock_screener.py
+├── run_backtest.py             db.py             # backtest CLI / DuckDB persistence
+├── market_data.py               # sole yfinance access point (LiveDataProvider/HistoricalSliceProvider)
+├── send_report.py               config.py         # email sender / all path+param constants
+├── dashboard_app.py             templates/        static/
+├── data/                        # all *.db + conviction *.json (gitignored)
+├── out/                         # screener CSVs, alerts, logs, locks
+├── system/                      # systemd .service/.timer units + system/info
+└── tests/
 ```
 
 ---
 
 ## Notes / limitations
 
-- `yfinance` depends on Yahoo Finance endpoints — intermittent rate limits
-  or missing data can occur.
-- The screener and benchmark (`XIU.TO`) are designed for **TSX tickers**.
-- The pipeline caps tracked tickers (default 40) to limit API calls.
-- All transactions are virtual — this system does **not** connect to any
-  brokerage.
-
----
-
-## EDGAR collector (4th service — US filings)
-
-A separate operational service (`edgar_service.py`) that complements the TSX
-momentum system with a **fundamentals / ownership** signal from SEC EDGAR. Daily
-after the US close (Mon–Fri ~6:30 PM ET) it sweeps EDGAR's daily index, stores
-filings in its **own** SQLite DB (`data/edgar.db`, separate from `trading.db`),
-and emails a plain-text **digest of flagged hits only** — quiet day, no email.
-
-It reuses StockScanner's infrastructure (config, Gmail sender, logging, lock); it
-does not reimplement them. US filers only — no overlap with the TSX universe.
-
-```bash
-python -m edgar.run watchlist MU,KEY,AMD   # set the insider-buy watchlist (US tickers)
-python edgar_service.py --dry-run          # build & print the digest, send nothing
-python edgar_service.py                    # daily run (scan, store, email)
-```
-
-**Interim flagging:** watchlist insider open-market buys + all SC 13D/13G
-market-wide. Richer flag logic (dollar-value threshold, 10b5-1 vs discretionary,
-insider clustering, 13D filer/% body parse) is a planned next step.
-
-> Every filing is a lagged disclosure (4–10+ days) — a research trigger, never a
-> price predictor or financial advice. Sells are intentionally never flagged.
-
----
-
-## Disclaimer
-
-For research and education only. Does **not** constitute financial advice.
-Trading involves risk of loss.
+- `yfinance` hits live Yahoo Finance endpoints — intermittent rate limits or
+  missing data can occur.
+- The core screener and its benchmark (`XIU.TO`) are TSX-specific.
+- Every sleeve above is virtual paper trading. `conviction_watchlist/` never
+  places trades either — it only records what the user already did in their
+  real account.
+- For research and education only. Not financial advice. Trading involves
+  risk of loss.
 
 ---
 
