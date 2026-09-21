@@ -51,7 +51,8 @@ from manual_sell import get_market_price, sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 from news_watchlist import store as news_watchlist_store
 from news_watchlist_dashboard_data import (
-    build_news_watchlist_state, fetch_ticker_volume, fetch_volumes, invalidate_news_watchlist_cache,
+    build_news_watchlist_state, fetch_ticker_volume, fetch_volumes, format_volume_compact,
+    invalidate_news_watchlist_cache,
 )
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
@@ -105,6 +106,7 @@ def create_app() -> Flask:
     to the production default, which would clobber a test's tmp_path DB if
     called again in here."""
     app = Flask(__name__)
+    app.jinja_env.filters["volfmt"] = format_volume_compact
 
     @app.get("/healthz")
     def healthz():

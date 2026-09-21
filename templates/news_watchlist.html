@@ -20,8 +20,15 @@
        without overriding it, a long summary just overflows on top of the
        neighboring columns instead of wrapping. */
     .nw-summary {
-      color: var(--text-muted); font-size: 12px; max-width: 260px;
+      color: var(--text-muted); font-size: 12px; max-width: 320px;
       white-space: normal; overflow-wrap: break-word;
+      /* Capped to 3 lines with a "…" instead of wrapping to however many
+         lines the LLM summary needs -- an uncapped summary could run to
+         8+ lines, stretching the whole row and leaving every other
+         (short, single-line) cell in it mostly blank. Full text is still
+         available via the cell's own title tooltip on hover. */
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+      overflow: hidden;
     }
     /* Once the summary cell wraps to multiple lines, the row's other
        (single-line) cells default to baseline-aligning with its FIRST
@@ -127,7 +134,7 @@
             <td class="nw-tight">{{ item.company or "—" }}</td>
             <td class="nw-tight">{{ item.category or "—" }}</td>
             <td class="nw-tight">{{ item.materiality or "—" }}</td>
-            <td class="nw-summary">{{ item.summary or "—" }}</td>
+            <td class="nw-summary" title="{{ item.summary or '' }}">{{ item.summary or "—" }}</td>
             <td class="nw-tight" title="{{ item.flagged_at }}">{{ item.days_since_flagged }}d</td>
             <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td class="nw-tight nw-volume" data-ticker="{{ item.ticker }}">…</td>
@@ -172,8 +179,8 @@
             <td>{{ item.days_since_flagged if item.days_since_flagged is not none else "—" }}</td>
             <td>
               {% if item.current_volume is not none and item.average_volume %}
-                <span class="{{ 'vol-above' if item.current_volume > item.average_volume else 'vol-below' }}">{{ "{:,.0f}".format(item.current_volume) }}</span>
-                / {{ "{:,.0f}".format(item.average_volume) }}
+                <span class="{{ 'vol-above' if item.current_volume > item.average_volume else 'vol-below' }}">{{ item.current_volume | volfmt }}</span>
+                / {{ item.average_volume | volfmt }}
               {% else %}
                 —
               {% endif %}
@@ -264,6 +271,18 @@
       if (countEl) countEl.textContent = Math.max(0, parseInt(countEl.textContent, 10) + delta);
     }
 
+    // Mirrors news_watchlist_dashboard_data.format_volume_compact() (the
+    // `volfmt` Jinja filter used for Watching's server-rendered cells) --
+    // the raw comma-grouped form was wide enough to push these tables into
+    // horizontal scroll once the Volume column was added.
+    function formatVolumeCompact(v) {
+      if (v == null) return "—";
+      if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
+      if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+      if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+      return Math.round(v).toString();
+    }
+
     // Shared by the Watching row builder below and the Inbox async volume
     // fill -- "current / average", current colored green/red vs. average.
     function volumeContent(currentVolume, averageVolume) {
@@ -271,9 +290,9 @@
       if (currentVolume != null && averageVolume) {
         const span = document.createElement("span");
         span.className = currentVolume > averageVolume ? "vol-above" : "vol-below";
-        span.textContent = Math.round(currentVolume).toLocaleString();
+        span.textContent = formatVolumeCompact(currentVolume);
         frag.appendChild(span);
-        frag.appendChild(document.createTextNode(" / " + Math.round(averageVolume).toLocaleString()));
+        frag.appendChild(document.createTextNode(" / " + formatVolumeCompact(averageVolume)));
       } else {
         frag.appendChild(document.createTextNode("—"));
       }

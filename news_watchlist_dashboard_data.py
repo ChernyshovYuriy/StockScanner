@@ -108,6 +108,26 @@ def _fetch_volumes(tickers: List[str]) -> Dict[str, Dict[str, float]]:
     return out
 
 
+def format_volume_compact(v: Optional[float]) -> str:
+    """Compact K/M/B display for a volume number -- the raw comma-grouped
+    form ("1,038,054 / 276,764") was wide enough that adding the Volume
+    column pushed the Inbox/Watching tables into horizontal scroll.
+    Registered as the `volfmt` Jinja filter by dashboard_app.py for the
+    Watching table's server-rendered cells; mirrored in JS by
+    templates/news_watchlist.html's own formatVolumeCompact() for the
+    Inbox's async-filled cells and the Watching row builder."""
+    if v is None:
+        return "—"
+    v = float(v)
+    if v >= 1_000_000_000:
+        return f"{v / 1_000_000_000:.2f}B"
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.2f}M"
+    if v >= 1_000:
+        return f"{v / 1_000:.1f}K"
+    return f"{v:.0f}"
+
+
 def fetch_ticker_volume(ticker: str) -> Optional[Dict[str, float]]:
     """One-ticker lookup for dashboard_app.py's confirm route -- a
     freshly-confirmed item has no cached row yet to read this off of."""
