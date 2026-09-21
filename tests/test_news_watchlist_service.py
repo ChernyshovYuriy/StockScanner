@@ -87,6 +87,53 @@ def test_already_seeded_guid_is_not_reseeded(tmp_path):
     assert len(store.list_by_status(conn, "inbox")) == 1
 
 
+def test_second_release_for_pending_ticker_collapses_into_the_same_row(tmp_path):
+    """A ticker that already has an unreviewed inbox item shouldn't flood
+    the inbox with one row per press release -- a fresh one for the same
+    ticker updates the existing row's content instead."""
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "CYG.V", summary="First update.")
+    conn = store.connect(tmp_path / "nw.db")
+    price_fetcher = _fake_price({"CYG.V": 0.17})
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", conn=conn, press_release_db_path=pr_db, price_fetcher=price_fetcher)
+
+    _seed_parsed_release(pr_db, "g2", "CYG.V", summary="Second update.")
+    news_watchlist_service.run_collector(
+        "run2", mode="seed", conn=conn, press_release_db_path=pr_db, price_fetcher=price_fetcher)
+
+    inbox = store.list_by_status(conn, "inbox")
+    assert len(inbox) == 1
+    assert inbox[0]["summary"] == "Second update."
+    assert inbox[0]["guid"] == "g2"
+    # Both guids stay remembered even though only g2 is now on the row --
+    # otherwise g1 would look "not yet seeded" again on the next run.
+    assert store.seeded_guids(conn) == {"g1", "g2"}
+
+
+def test_release_for_a_watching_ticker_starts_a_fresh_inbox_item(tmp_path):
+    """Collapsing only applies to a still-unreviewed ('inbox') item -- once
+    a ticker has been confirmed to Watching, a new release is a genuinely
+    fresh thing to review, not an update to something already decided."""
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "CYG.V")
+    conn = store.connect(tmp_path / "nw.db")
+    price_fetcher = _fake_price({"CYG.V": 0.17})
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", conn=conn, press_release_db_path=pr_db, price_fetcher=price_fetcher)
+    first_id = store.list_by_status(conn, "inbox")[0]["id"]
+    store.set_status(conn, first_id, "watching", "2026-09-21T09:00:00")
+
+    _seed_parsed_release(pr_db, "g2", "CYG.V")
+    news_watchlist_service.run_collector(
+        "run2", mode="seed", conn=conn, press_release_db_path=pr_db, price_fetcher=price_fetcher)
+
+    assert len(store.list_by_status(conn, "inbox")) == 1
+    assert len(store.list_by_status(conn, "watching")) == 1
+
+
 def test_parsed_item_with_no_ticker_is_never_seeded(tmp_path):
     pr_db = tmp_path / "pr.db"
     _seed_parsed_release(pr_db, "g1", None)

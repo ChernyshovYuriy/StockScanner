@@ -88,10 +88,14 @@ def _read_parsed_candidates(pr_db_path) -> list[dict]:
 
 
 def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[dict]:
-    """Insert every not-yet-seeded parsed_releases candidate as a fresh
-    inbox item. Returns the list of newly seeded items (ticker/company/
-    category/materiality/summary/flag_price) for the caller to alert on --
-    [] if nothing new."""
+    """Insert every not-yet-processed parsed_releases candidate as a fresh
+    inbox item -- or, if that ticker already has an unreviewed inbox item
+    (store.find_pending_inbox_item()), collapse into that row instead
+    (store.update_inbox_item()) so a busy ticker (several procedural
+    filings for the same story) doesn't flood the inbox with one row per
+    article. Returns the list of newly seeded/updated items (ticker/
+    company/category/materiality/summary/flag_price) for the caller to
+    alert on -- [] if nothing new."""
     today_str = market_today_str()
     now = market_now().isoformat()
     already_seeded = store.seeded_guids(conn)
@@ -108,11 +112,20 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
             log("news_watchlist", run_id, "price_unavailable", ticker=c["ticker"])
             continue
         if not dry_run:
-            store.seed_inbox_item(
-                conn, guid=c["guid"], ticker=c["ticker"], company=c["company"],
-                category=c["category"], materiality=c["materiality"], summary=c["summary"],
-                source_link=c["link"], flagged_at=today_str, flag_price=price, created_at=now,
-            )
+            existing = store.find_pending_inbox_item(conn, c["ticker"])
+            if existing:
+                store.update_inbox_item(
+                    conn, existing["id"], guid=c["guid"], company=c["company"],
+                    category=c["category"], materiality=c["materiality"], summary=c["summary"],
+                    source_link=c["link"], flagged_at=today_str, flag_price=price,
+                )
+            else:
+                store.seed_inbox_item(
+                    conn, guid=c["guid"], ticker=c["ticker"], company=c["company"],
+                    category=c["category"], materiality=c["materiality"], summary=c["summary"],
+                    source_link=c["link"], flagged_at=today_str, flag_price=price, created_at=now,
+                )
+            store.mark_guid_processed(conn, c["guid"], now)
         seeded.append({
             "ticker": c["ticker"], "company": c["company"], "category": c["category"],
             "materiality": c["materiality"], "summary": c["summary"], "flag_price": price,
