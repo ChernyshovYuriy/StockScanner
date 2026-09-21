@@ -21,6 +21,7 @@
     <a href="{{ url_for('scanner') }}" class="{{ 'active' if request.endpoint == 'scanner' }}">Scanner Board</a>
     <a href="{{ url_for('volume_spikes') }}" class="{{ 'active' if request.endpoint == 'volume_spikes' }}">Volume Spikes</a>
     <a href="{{ url_for('conviction') }}" class="{{ 'active' if request.endpoint == 'conviction' }}">Conviction</a>
+    <a href="{{ url_for('news_watchlist') }}" class="{{ 'active' if request.endpoint == 'news_watchlist' }}">News Watchlist</a>
   </nav>
   <main>
     {% block content %}{% endblock %}

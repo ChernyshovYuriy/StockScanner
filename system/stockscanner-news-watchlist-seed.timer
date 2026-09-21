@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner News Watchlist's inbox seed every 10 minutes, all day, every day (no market-hours gate, same reasoning as press-release's own timer -- news can break pre-market or after hours)
+
+[Timer]
+OnCalendar=*-*-* *:0/10
+Persistent=false
+Unit=stockscanner-news-watchlist-seed.service
+
+[Install]
+WantedBy=timers.target

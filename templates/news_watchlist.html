@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}News Watchlist — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    /* Distinct accent, unused elsewhere -- a blue signals "news/inbox",
+       different from Conviction's amber (real account) and Triple
+       Screen's teal (price-tracking experiment). */
+    .nw-accent { color: #1d4ed8; }
+    .nw-badge {
+      display: inline-block; margin-left: 10px; padding: 2px 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 600;
+      background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+      vertical-align: middle;
+    }
+    .nw-section { margin: 24px 0; }
+    .nw-section h2 { font-size: 15px; margin: 0 0 10px; }
+    .nw-note { color: var(--text-muted); font-size: 12px; margin: 4px 0 10px; }
+    .nw-summary { color: var(--text-muted); font-size: 12px; max-width: 260px; }
+    .nw-actions { display: flex; gap: 6px; white-space: nowrap; }
+    .confirm-btn {
+      background: var(--buy, #15803d); color: #fff; border: none;
+      border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+    }
+    .note-form { display: flex; gap: 4px; align-items: center; }
+    .note-form input {
+      border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+      font-size: 12px; background: var(--page-bg); color: var(--text); width: 140px;
+    }
+    details.history summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+    details.history table { margin-top: 6px; width: auto; }
+    details.history td, details.history th { padding: 4px 8px; white-space: nowrap; }
+    details.dismissed-details summary {
+      cursor: pointer; font-size: 15px; font-weight: 600; user-select: none;
+    }
+
+    .inline-form {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 12px 14px;
+    }
+    .field { display: flex; flex-direction: column; gap: 3px; }
+    .field label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.03em; color: var(--text-muted);
+    }
+    .field input {
+      border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
+      font-size: 13px; background: var(--page-bg); color: var(--text); width: 160px;
+    }
+    .save-btn {
+      background: var(--accent, #2f55d4); color: #fff; border: none;
+      border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;
+    }
+    .remove-btn {
+      background: none; border: 1px solid var(--sell); color: var(--sell);
+      border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 12px;
+    }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="header-row">
+    <h1 class="nw-accent">News Watchlist <span class="nw-badge">follow-through tracker</span></h1>
+    <button onclick="location.reload()" class="refresh-btn">↻ Refresh page</button>
+  </div>
+  <p class="nw-note">
+    Auto-seeded daily from the press-release tracker's own parsed catches (see
+    <code>news_watchlist/__init__.py</code>) — but nothing here gets price-tracked until
+    you confirm it. No capital, no positions, no auto-buy: this only stops a candidate
+    from getting forgotten while you decide whether it's worth following.
+  </p>
+
+  {% if error %}
+    <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+
+  <div class="nw-section">
+    <h2>Inbox — needs review ({{ inbox|length }})</h2>
+    {% if not inbox %}
+      <p>Nothing awaiting review.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="sortable">
+        <thead>
+          <tr>
+            <th>Ticker</th><th>Company</th><th>Category</th><th>Materiality</th>
+            <th>Summary</th><th>Flagged</th><th>Flag Price</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in inbox %}
+          <tr>
+            <td>
+              <a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a>
+              {% if item.source_link %}
+                &nbsp;<a href="{{ item.source_link }}" target="_blank" rel="noopener" title="Source release">🔗</a>
+              {% endif %}
+            </td>
+            <td>{{ item.company or "—" }}</td>
+            <td>{{ item.category or "—" }}</td>
+            <td>{{ item.materiality or "—" }}</td>
+            <td class="nw-summary">{{ item.summary or "—" }}</td>
+            <td>{{ item.flagged_at }} ({{ item.days_since_flagged }}d)</td>
+            <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
+            <td class="nw-actions">
+              <form method="post" action="{{ url_for('news_watchlist_confirm', item_id=item.id) }}">
+                <button class="confirm-btn" type="submit">Watch</button>
+              </form>
+              <form method="post" action="{{ url_for('news_watchlist_dismiss', item_id=item.id) }}">
+                <button class="remove-btn" type="submit">Dismiss</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="nw-section">
+    <h2>Watching ({{ watching|length }})</h2>
+    {% if not watching %}
+      <p>Nothing confirmed yet — confirm an inbox item above, or add one manually below.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="sortable">
+        <thead>
+          <tr>
+            <th>Ticker</th><th>Company</th><th>Flagged</th><th>Flag Price</th>
+            <th>Latest</th><th>Change</th><th>Days</th><th>History</th><th>Note</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in watching %}
+          <tr>
+            <td><a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a></td>
+            <td>{{ item.company or "—" }}</td>
+            <td>{{ item.flagged_at }}</td>
+            <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
+            <td>{{ "$%.2f"|format(item.latest_price) if item.latest_price is not none else "—" }}</td>
+            <td class="{{ 'pnl-pos' if item.pct_change and item.pct_change >= 0 else 'pnl-neg' }}">
+              {{ "%+.1f%%"|format(item.pct_change) if item.pct_change is not none else "—" }}
+            </td>
+            <td>{{ item.days_since_flagged if item.days_since_flagged is not none else "—" }}</td>
+            <td>
+              <details class="history">
+                <summary>{{ item.price_history|length }} day(s)</summary>
+                <table>
+                  <thead><tr><th>Date</th><th>Close</th></tr></thead>
+                  <tbody>
+                    {% for h in item.price_history %}
+                    <tr><td>{{ h.date }}</td><td>${{ "%.2f"|format(h.close_price) }}</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </details>
+            </td>
+            <td>
+              <form class="note-form" method="post" action="{{ url_for('news_watchlist_note', item_id=item.id) }}">
+                <input type="text" name="note" value="{{ item.note or '' }}" placeholder="e.g. bought @0.15">
+                <button class="save-btn" type="submit">Save</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="{{ url_for('news_watchlist_dismiss', item_id=item.id) }}">
+                <button class="remove-btn" type="submit" onclick="return confirm('Dismiss {{ item.ticker }} from the watchlist?')">Dismiss</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <h2 style="margin-top:18px;">Add Ticker Manually</h2>
+    <p class="nw-note">For a catalyst the feed missed — goes straight to Watching (typing it in is the review step).</p>
+    <form class="inline-form" method="post" action="{{ url_for('news_watchlist_add') }}">
+      <div class="field">
+        <label for="ticker">Ticker</label>
+        <input type="text" id="ticker" name="ticker" placeholder="OMI.V" required>
+      </div>
+      <div class="field">
+        <label for="note">Note</label>
+        <input type="text" id="note" name="note" placeholder="optional">
+      </div>
+      <button class="save-btn" type="submit">Add</button>
+    </form>
+  </div>
+
+  <div class="nw-section">
+    <details class="dismissed-details">
+      <summary>Dismissed ({{ dismissed|length }})</summary>
+      {% if not dismissed %}
+        <p>Nothing dismissed yet.</p>
+      {% else %}
+      <div class="table-wrap">
+        <table class="sortable">
+          <thead>
+            <tr><th>Ticker</th><th>Flagged</th><th>Flag Price</th><th>Note</th></tr>
+          </thead>
+          <tbody>
+            {% for item in dismissed %}
+            <tr>
+              <td>{{ item.ticker }}</td>
+              <td>{{ item.flagged_at }}</td>
+              <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
+              <td>{{ item.note or "—" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </details>
+  </div>
+{% endblock %}

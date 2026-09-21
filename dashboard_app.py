@@ -46,10 +46,13 @@ from kangaroo_dashboard_data import (
     get_kangaroo_transactions,
 )
 from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
-from manual_sell import sell_position
+from manual_sell import get_market_price, sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
+from news_watchlist import store as news_watchlist_store
+from news_watchlist_dashboard_data import build_news_watchlist_state, invalidate_news_watchlist_cache
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
+from time_utils import market_now, market_today_str
 from triple_screen_tracker_dashboard_data import build_triple_screen_tracker_state
 from volume_spike_scanner import scan_volume_spikes
 
@@ -502,6 +505,74 @@ def create_app() -> Flask:
         except Exception as e:
             return redirect(url_for("conviction", error=f"Update failed: {e}"))
         return redirect(url_for("conviction"))
+
+    @app.get("/news-watchlist")
+    def news_watchlist():
+        """Read/write view of the news_watchlist package -- a follow-through
+        tracker for press_release_tracker's own catches, NOT a paper-trading
+        sleeve (no capital/positions). See news_watchlist/__init__.py for
+        the inbox -> watching -> dismissed triage model this page drives."""
+        try:
+            state = _read_with_retry(build_news_watchlist_state)
+            error = request.args.get("error")
+        except (sqlite3.Error, OSError):
+            state = {"inbox": [], "watching": [], "dismissed": []}
+            error = "Database temporarily unavailable — retrying on next refresh."
+        return render_template(
+            "news_watchlist.html",
+            inbox=state["inbox"], watching=state["watching"], dismissed=state["dismissed"],
+            error=error,
+        )
+
+    @app.post("/news-watchlist/<int:item_id>/confirm")
+    def news_watchlist_confirm(item_id: int):
+        conn = news_watchlist_store.connect()
+        try:
+            news_watchlist_store.set_status(conn, item_id, "watching", market_now().isoformat())
+        finally:
+            conn.close()
+        invalidate_news_watchlist_cache()
+        return redirect(url_for("news_watchlist"))
+
+    @app.post("/news-watchlist/<int:item_id>/dismiss")
+    def news_watchlist_dismiss(item_id: int):
+        conn = news_watchlist_store.connect()
+        try:
+            news_watchlist_store.set_status(conn, item_id, "dismissed", market_now().isoformat())
+        finally:
+            conn.close()
+        invalidate_news_watchlist_cache()
+        return redirect(url_for("news_watchlist"))
+
+    @app.post("/news-watchlist/<int:item_id>/note")
+    def news_watchlist_note(item_id: int):
+        conn = news_watchlist_store.connect()
+        try:
+            news_watchlist_store.set_note(conn, item_id, request.form.get("note", ""))
+        finally:
+            conn.close()
+        invalidate_news_watchlist_cache()
+        return redirect(url_for("news_watchlist"))
+
+    @app.post("/news-watchlist/add")
+    def news_watchlist_add():
+        ticker = request.form.get("ticker", "").strip().upper()
+        if not ticker:
+            return redirect(url_for("news_watchlist", error="Ticker is required."))
+        price, _source = get_market_price(ticker)
+        if price is None:
+            return redirect(url_for("news_watchlist", error=f"No market price available for {ticker}."))
+        conn = news_watchlist_store.connect()
+        try:
+            news_watchlist_store.add_manual(
+                conn, ticker=ticker, note=request.form.get("note", ""),
+                flagged_at=market_today_str(), flag_price=price,
+                created_at=market_now().isoformat(),
+            )
+        finally:
+            conn.close()
+        invalidate_news_watchlist_cache()
+        return redirect(url_for("news_watchlist"))
 
     @app.get("/history")
     def history():

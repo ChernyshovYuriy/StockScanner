@@ -17,6 +17,7 @@ data/macro.db
 data/triple_screen_tracker.db
 data/scanner_board.db
 data/press_releases.db
+data/news_watchlist.db
 data/conviction_holdings.json
 data/conviction_settings.json
 data/conviction_entry_candidates.json

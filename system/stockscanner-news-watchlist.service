@@ -1,0 +1,16 @@
+[Unit]
+Description=StockScanner News Watchlist -- daily price update for confirmed "watching" items
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/bin/python3 /home/pi/dev/stock-scanner/news_watchlist_service.py --mode update-prices
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -376,3 +376,20 @@ PRESS_RELEASE_LLM_MAX_DESCRIPTION_CHARS = 2000
 # this often, so a busy newswire morning doesn't produce an email every 5
 # minutes (the timer's own poll interval) for routine releases.
 PRESS_RELEASE_BATCH_INTERVAL_MINUTES = 60
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# News watchlist — 11th service, a follow-through tracker for
+# press_release_tracker's own catches (see news_watchlist/__init__.py). No
+# capital or positions, same "pure collector" shape as press_release_tracker
+# above. Reads data/press_releases.db read-only (never writes back) to
+# auto-seed an "inbox" of ticker candidates; a human confirms an item into
+# "watching" before it gets any daily price tracking at all -- the triage
+# step stays manual by design, so automating the bookkeeping doesn't drown
+# the judgment call in noise. Two independently-scheduled modes (see
+# news_watchlist_service.py's --mode): `seed` runs every ~10 minutes and
+# emails an immediate alert the moment something new lands in the inbox
+# (the user explicitly asked to keep getting notified fast, on top of the
+# dashboard tab); `update-prices` runs once daily and appends today's price
+# to every already-confirmed watching item.
+NEWS_WATCHLIST_DB_PATH = DATA_PATH / "news_watchlist.db"

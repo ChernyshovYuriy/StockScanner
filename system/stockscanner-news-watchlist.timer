@@ -1,0 +1,10 @@
+[Unit]
+Description=Run StockScanner News Watchlist's daily price update at 17:10 local time Mon-Fri (after triple-screen-tracker's 17:00, before scanner-pipeline's 17:15)
+
+[Timer]
+OnCalendar=Mon..Fri 17:10
+Persistent=false
+Unit=stockscanner-news-watchlist.service
+
+[Install]
+WantedBy=timers.target
