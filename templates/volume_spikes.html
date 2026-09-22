@@ -18,6 +18,13 @@
     .volspike-table th:first-child, .volspike-table td:first-child { text-align: left; }
     .spike-pct { font-weight: 600; color: #0a7c4e; }
     .vs-universe-btn.active { background: #f0fdf7; color: #0a7c4e; border-color: #bfe8d5; }
+    /* Marks the row last clicked (or whose ticker link was opened) so a
+       long spike list doesn't lose your place after tabbing away to read
+       the linked quote and coming back -- same pattern as News Watchlist's
+       .nw-row-visited (see templates/news_watchlist.html), persisted in
+       localStorage so it survives a refresh, not just a re-scan. */
+    tr[data-row-id].vs-row-visited > td { background: var(--row-alt, rgba(47,85,212,0.10)); }
+    tr[data-row-id].vs-row-visited > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   </style>
 {% endblock %}
 {% block content %}
@@ -90,6 +97,21 @@
         return td;
       }
 
+      // Same row-highlight pattern as News Watchlist's wireRowHighlight
+      // (see templates/news_watchlist.html) -- click handler wired up
+      // front via delegation so it works on rows appended later, restore
+      // happens after the fetch populates the table below.
+      var VS_STORAGE_KEY = "vs-last-row-" + (tickers || universe);
+      function setHighlight(row) {
+        tbody.querySelectorAll("tr.vs-row-visited").forEach(function (r) { r.classList.remove("vs-row-visited"); });
+        row.classList.add("vs-row-visited");
+        try { localStorage.setItem(VS_STORAGE_KEY, row.dataset.rowId); } catch (e) { /* ignore */ }
+      }
+      tbody.addEventListener("click", function (event) {
+        var row = event.target.closest("tr[data-row-id]");
+        if (row) setHighlight(row);
+      });
+
       fetch(url)
         .then(function (res) { return res.json(); })
         .then(function (data) {
@@ -105,6 +127,7 @@
           }
           data.rows.forEach(function (r) {
             var tr = document.createElement("tr");
+            tr.dataset.rowId = r.ticker;
             var tickerTd = document.createElement("td");
             var link = document.createElement("a");
             link.href = "https://ca.finance.yahoo.com/quote/" + encodeURIComponent(r.ticker);
@@ -120,6 +143,16 @@
             tbody.appendChild(tr);
           });
           tableWrap.hidden = false;
+
+          var savedId;
+          try { savedId = localStorage.getItem(VS_STORAGE_KEY); } catch (e) { savedId = null; }
+          if (savedId) {
+            var savedRow = tbody.querySelector('tr[data-row-id="' + CSS.escape(savedId) + '"]');
+            if (savedRow) {
+              savedRow.classList.add("vs-row-visited");
+              savedRow.scrollIntoView({ block: "center" });
+            }
+          }
         })
         .catch(function (err) {
           loading.hidden = true;
