@@ -198,6 +198,45 @@ def test_fetch_volumes_refetches_once_cache_entry_expires(monkeypatch):
     assert len(calls) == 2
 
 
+# ── build_quote_link: Ticker column Yahoo Finance link ───────────────────
+
+def test_quote_link_prefers_the_resolved_yahoo_ticker():
+    link = nwd.build_quote_link("AYA", "AYA.TO", "Aya Gold & Silver")
+    assert link == "https://ca.finance.yahoo.com/quote/AYA.TO"
+
+
+def test_quote_link_falls_back_to_an_already_suffixed_ticker():
+    link = nwd.build_quote_link("KTO.V", None, "Kootenay Silver")
+    assert link == "https://ca.finance.yahoo.com/quote/KTO.V"
+
+
+def test_quote_link_falls_back_to_a_company_name_search_when_unresolved():
+    """A legacy row seeded before yahoo_ticker existed and never
+    backfilled, with a bare ticker -- must not build a dead quote-page
+    link out of a symbol nothing ever confirmed has data."""
+    link = nwd.build_quote_link("AYA", None, "Aya Gold & Silver")
+    assert link == "https://ca.finance.yahoo.com/lookup?s=Aya%20Gold%20%26%20Silver"
+
+
+def test_quote_link_search_fallback_uses_the_ticker_when_company_is_unknown():
+    link = nwd.build_quote_link("AYA", None, None)
+    assert link == "https://ca.finance.yahoo.com/lookup?s=AYA"
+
+
+def test_build_state_computes_quote_link_for_every_item(tmp_path, monkeypatch):
+    db_path = tmp_path / "nw.db"
+    conn = store.connect(db_path)
+    store.seed_inbox_item(
+        conn, guid="g1", ticker="AYA", company="Aya Gold & Silver", category=None,
+        materiality="high", summary=None, source_link=None, flagged_at="2026-09-20",
+        flag_price=40.24, created_at="2026-09-20T17:10:00", yahoo_ticker="AYA.TO",
+    )
+    monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", db_path)
+
+    row = nwd._build_news_watchlist_state()["inbox"][0]
+    assert row["quote_link"] == "https://ca.finance.yahoo.com/quote/AYA.TO"
+
+
 def test_invalidate_cache_forces_a_fresh_read(tmp_path, monkeypatch):
     db_path = tmp_path / "nw.db"
     conn = store.connect(db_path)

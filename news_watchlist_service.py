@@ -67,7 +67,7 @@ def _is_trading_day(today: date) -> bool:
     return today.weekday() < 5 and today.isoformat() not in TSX_HOLIDAYS
 
 
-def _resolve_market_price(ticker: str) -> tuple[float, str] | tuple[None, None]:
+def _resolve_market_price(ticker: str) -> tuple[float, str, str] | tuple[None, None, None]:
     """get_market_price(), but first disambiguates a bare ticker (no
     exchange suffix) -- press_release_tracker/llm_parser.py extracts
     whatever symbol the release text states with no Yahoo-Finance-suffix
@@ -81,14 +81,23 @@ def _resolve_market_price(ticker: str) -> tuple[float, str] | tuple[None, None]:
     bare symbol only if neither suffixed form has data -- a genuinely
     non-Canadian name (e.g. "XENE", Nasdaq-only) still resolves
     correctly. A ticker already carrying a suffix (e.g. "KTO.V", already
-    correct from the parser) is passed through unchanged."""
+    correct from the parser) is passed through unchanged.
+
+    Returns (price, source, yahoo_ticker) -- yahoo_ticker is whichever
+    candidate symbol actually had data, persisted by callers into
+    watchlist_items.yahoo_ticker so the dashboard's Ticker column link
+    can point at a real Yahoo Finance quote page instead of the bare,
+    often-wrong symbol (see news_watchlist/store.py's schema comment).
+    (None, None, None) if no candidate has data at all."""
     if "." in ticker:
-        return get_market_price(ticker)
+        price, source = get_market_price(ticker)
+        return (price, source, ticker) if price is not None else (None, None, None)
     for suffix in (".TO", ".V"):
         price, source = get_market_price(ticker + suffix)
         if price is not None:
-            return price, source
-    return get_market_price(ticker)
+            return price, source, ticker + suffix
+    price, source = get_market_price(ticker)
+    return (price, source, ticker) if price is not None else (None, None, None)
 
 
 def _is_stale(pubdate: str, now, max_age_days: int) -> bool:
@@ -161,7 +170,7 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
                 store.mark_guid_processed(conn, c["guid"], now)
             continue
         try:
-            price, _source = price_fetcher(c["ticker"])
+            price, _source, yahoo_ticker = price_fetcher(c["ticker"])
         except Exception as e:
             log("news_watchlist", run_id, "price_fetch_error", ticker=c["ticker"], error=str(e))
             continue
@@ -175,13 +184,14 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
                     conn, existing["id"], guid=c["guid"], company=c["company"],
                     category=c["category"], materiality=c["materiality"], summary=c["summary"],
                     source_link=c["link"], flagged_at=today_str, flag_price=price,
-                    created_at=now,
+                    created_at=now, yahoo_ticker=yahoo_ticker,
                 )
             else:
                 store.seed_inbox_item(
                     conn, guid=c["guid"], ticker=c["ticker"], company=c["company"],
                     category=c["category"], materiality=c["materiality"], summary=c["summary"],
                     source_link=c["link"], flagged_at=today_str, flag_price=price, created_at=now,
+                    yahoo_ticker=yahoo_ticker,
                 )
             store.mark_guid_processed(conn, c["guid"], now)
         seeded.append({
@@ -198,7 +208,7 @@ def update_watching_prices(run_id, conn, price_fetcher, dry_run=False) -> list[d
     updated = []
     for item in store.list_by_status(conn, "watching"):
         try:
-            price, _source = price_fetcher(item["ticker"])
+            price, _source, yahoo_ticker = price_fetcher(item["ticker"])
         except Exception as e:
             log("news_watchlist", run_id, "price_fetch_error", ticker=item["ticker"], error=str(e))
             continue
@@ -207,6 +217,14 @@ def update_watching_prices(run_id, conn, price_fetcher, dry_run=False) -> list[d
             continue
         if not dry_run:
             store.append_price(conn, item["id"], today_str, price)
+            # Opportunistic backfill for a row seeded before yahoo_ticker
+            # existed (see news_watchlist/store.py's schema comment) --
+            # this daily price lookup already resolved the right symbol,
+            # so a still-open Watching item's dead Ticker-column link
+            # self-heals on its next update-prices run instead of needing
+            # the one-off backfill script.
+            if yahoo_ticker and not item.get("yahoo_ticker"):
+                store.set_yahoo_ticker(conn, item["id"], yahoo_ticker)
         updated.append({"ticker": item["ticker"], "price": price})
     return updated
 

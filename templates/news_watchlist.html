@@ -156,7 +156,7 @@
           {% for item in inbox %}
           <tr data-row-id="{{ item.id }}">
             <td class="nw-tight">
-              <a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a>
+              <a href="{{ item.quote_link }}" target="_blank" rel="noopener">{{ item.ticker }}</a>
               {% if item.source_link %}
                 &nbsp;<a href="{{ item.source_link }}" target="_blank" rel="noopener" title="Source release">🔗</a>
               {% endif %}
@@ -200,7 +200,7 @@
           {% endif %}
           {% for item in watching %}
           <tr data-row-id="{{ item.id }}">
-            <td><a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a></td>
+            <td><a href="{{ item.quote_link }}" target="_blank" rel="noopener">{{ item.ticker }}</a></td>
             <td>{{ item.company or "—" }}</td>
             <td>{{ item.flagged_at }}</td>
             <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
@@ -434,7 +434,12 @@
 
       const tdTicker = document.createElement("td");
       const link = document.createElement("a");
-      link.href = `https://ca.finance.yahoo.com/quote/${encodeURIComponent(item.ticker)}`;
+      // Server-computed (news_watchlist_dashboard_data.build_quote_link) --
+      // prefers the resolved yahoo_ticker over the raw item.ticker, same
+      // reasoning as the server-rendered Inbox/Watching rows (see that
+      // function's own docstring for why a bare ticker can't just be
+      // dropped straight into a Yahoo Finance quote URL).
+      link.href = item.quote_link;
       link.target = "_blank";
       link.rel = "noopener";
       link.textContent = item.ticker;

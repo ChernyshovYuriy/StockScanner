@@ -53,7 +53,7 @@ def _seed_parsed_release(pr_db_path, guid, ticker, pubdate="Mon, 21 Sep 2026 08:
 def _fake_price(price_map):
     def _fetch(ticker):
         price = price_map.get(ticker)
-        return (price, "daily-close") if price is not None else (None, None)
+        return (price, "daily-close", ticker) if price is not None else (None, None, None)
     return _fetch
 
 
@@ -73,6 +73,25 @@ def test_new_parsed_ticker_is_seeded_into_inbox(tmp_path):
     assert inbox[0]["ticker"] == "OMI.V"
     assert inbox[0]["flag_price"] == 0.12
     assert inbox[0]["flagged_at"] == "2026-09-21"
+
+
+def test_seeded_item_persists_the_resolved_yahoo_ticker(tmp_path):
+    """price_fetcher's third return value (the symbol that actually had
+    data -- see _resolve_market_price()) lands on the new row's
+    yahoo_ticker, not just the bare ticker the parser produced."""
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "AYA")
+    conn = store.connect(tmp_path / "nw.db")
+
+    def price_fetcher(ticker):
+        return (40.24, "daily-close", "AYA.TO")
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", conn=conn, press_release_db_path=pr_db, price_fetcher=price_fetcher)
+
+    inbox = store.list_by_status(conn, "inbox")
+    assert inbox[0]["ticker"] == "AYA"
+    assert inbox[0]["yahoo_ticker"] == "AYA.TO"
 
 
 def test_already_seeded_guid_is_not_reseeded(tmp_path):
@@ -299,6 +318,45 @@ def test_watching_item_gets_daily_price_appended(tmp_path):
     assert history == [{"date": "2026-09-21", "close_price": 195.0}]
 
 
+def test_update_prices_backfills_yahoo_ticker_for_a_pre_existing_watching_item(tmp_path):
+    """A Watching row seeded before yahoo_ticker existed (add_manual never
+    sets it) self-heals its dead Ticker-column link on the next daily
+    price update, using the same symbol this run's price lookup already
+    resolved -- no separate backfill script needed for an item still
+    open in Watching."""
+    conn = store.connect(tmp_path / "nw.db")
+    item_id = store.add_manual(
+        conn, ticker="AYA", note="", flagged_at="2026-09-18", flag_price=38.0,
+        created_at="2026-09-18T17:10:00",
+    )
+    assert store.get_item(conn, item_id)["yahoo_ticker"] is None
+
+    def price_fetcher(ticker):
+        return (40.24, "daily-close", "AYA.TO")
+
+    news_watchlist_service.run_collector(
+        "run1", mode="update-prices", conn=conn, price_fetcher=price_fetcher)
+
+    assert store.get_item(conn, item_id)["yahoo_ticker"] == "AYA.TO"
+
+
+def test_update_prices_does_not_overwrite_an_already_set_yahoo_ticker(tmp_path):
+    conn = store.connect(tmp_path / "nw.db")
+    item_id = store.add_manual(
+        conn, ticker="AYA.TO", note="", flagged_at="2026-09-18", flag_price=38.0,
+        created_at="2026-09-18T17:10:00",
+    )
+    store.set_yahoo_ticker(conn, item_id, "AYA.TO")
+
+    def price_fetcher(ticker):
+        return (40.24, "daily-close", "AYA.V")  # would be wrong if it won
+
+    news_watchlist_service.run_collector(
+        "run1", mode="update-prices", conn=conn, price_fetcher=price_fetcher)
+
+    assert store.get_item(conn, item_id)["yahoo_ticker"] == "AYA.TO"
+
+
 def test_inbox_item_gets_no_price_history_at_all(tmp_path):
     """The review gate: an unconfirmed inbox item must never accumulate a
     price_history row, even after update-prices runs."""
@@ -383,9 +441,9 @@ def test_resolve_market_price_passes_through_an_already_suffixed_ticker(monkeypa
         return (0.85, "daily-close")
 
     monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
-    price, source = news_watchlist_service._resolve_market_price("KTO.V")
+    price, source, yahoo_ticker = news_watchlist_service._resolve_market_price("KTO.V")
 
-    assert (price, source) == (0.85, "daily-close")
+    assert (price, source, yahoo_ticker) == (0.85, "daily-close", "KTO.V")
     assert calls == ["KTO.V"]
 
 
@@ -397,9 +455,9 @@ def test_resolve_market_price_prefers_dot_to_for_a_bare_ticker(monkeypatch):
         return (40.24, "daily-close") if ticker == "AYA.TO" else (None, None)
 
     monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
-    price, source = news_watchlist_service._resolve_market_price("AYA")
+    price, source, yahoo_ticker = news_watchlist_service._resolve_market_price("AYA")
 
-    assert (price, source) == (40.24, "daily-close")
+    assert (price, source, yahoo_ticker) == (40.24, "daily-close", "AYA.TO")
     assert calls == ["AYA.TO"]
 
 
@@ -411,9 +469,9 @@ def test_resolve_market_price_falls_back_to_dot_v_when_dot_to_has_no_data(monkey
         return (3.62, "daily-close") if ticker == "KRY.V" else (None, None)
 
     monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
-    price, source = news_watchlist_service._resolve_market_price("KRY")
+    price, source, yahoo_ticker = news_watchlist_service._resolve_market_price("KRY")
 
-    assert (price, source) == (3.62, "daily-close")
+    assert (price, source, yahoo_ticker) == (3.62, "daily-close", "KRY.V")
     assert calls == ["KRY.TO", "KRY.V"]
 
 
@@ -425,7 +483,7 @@ def test_resolve_market_price_falls_back_to_the_bare_ticker_when_neither_suffix_
         return (38.99, "daily-close") if ticker == "XENE" else (None, None)
 
     monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
-    price, source = news_watchlist_service._resolve_market_price("XENE")
+    price, source, yahoo_ticker = news_watchlist_service._resolve_market_price("XENE")
 
-    assert (price, source) == (38.99, "daily-close")
+    assert (price, source, yahoo_ticker) == (38.99, "daily-close", "XENE")
     assert calls == ["XENE.TO", "XENE.V", "XENE"]

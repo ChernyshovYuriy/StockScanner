@@ -51,8 +51,8 @@ from manual_sell import get_market_price, sell_position
 from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
 from news_watchlist import store as news_watchlist_store
 from news_watchlist_dashboard_data import (
-    build_news_watchlist_state, fetch_ticker_volume, fetch_volumes, format_volume_compact,
-    invalidate_news_watchlist_cache,
+    build_news_watchlist_state, build_quote_link, fetch_ticker_volume, fetch_volumes,
+    format_volume_compact, invalidate_news_watchlist_cache,
 )
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
@@ -571,6 +571,7 @@ def create_app() -> Flask:
             "days_since_flagged": days_since_flagged, "note": item["note"] or "",
             "current_volume": vol["current_volume"] if vol else None,
             "average_volume": vol["average_volume"] if vol else None,
+            "quote_link": build_quote_link(item["ticker"], item["yahoo_ticker"], item["company"]),
         }})
 
     @app.post("/news-watchlist/<int:item_id>/dismiss")

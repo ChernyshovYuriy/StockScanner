@@ -19,6 +19,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
+from urllib.parse import quote
 
 from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS, NEWS_WATCHLIST_DB_PATH
 from market_data import DEFAULT_PROVIDER
@@ -30,7 +31,7 @@ _cache: Dict[str, object] = {"ts": 0.0, "rows": None}
 _ITEM_COLUMNS = (
     "id", "guid", "ticker", "company", "category", "materiality", "summary",
     "source_link", "status", "note", "flagged_at", "flag_price",
-    "status_changed_at", "created_at",
+    "status_changed_at", "created_at", "yahoo_ticker",
 )
 
 # Same trailing window and lookback padding as volume_spike_scanner.py's
@@ -48,6 +49,27 @@ _VOLUME_LOOKBACK_CALENDAR_DAYS = 45
 _volume_cache_lock = threading.Lock()
 _volume_cache: Dict[str, "tuple[float, Dict[str, float]]"] = {}
 _VOLUME_CACHE_TTL_SECONDS = 90
+
+
+def build_quote_link(ticker: str, yahoo_ticker: Optional[str], company: Optional[str]) -> str:
+    """Yahoo Finance link for the Ticker column (templates/news_watchlist.html
+    and dashboard_app.py's /confirm response, which builds the Watching row
+    client-side -- see buildWatchingRow() in the template). Prefers
+    yahoo_ticker, the suffixed symbol news_watchlist_service.py's
+    _resolve_market_price() actually found data under (e.g. "AYA.TO" for
+    the bare parsed ticker "AYA") -- the raw ticker column often has no
+    exchange suffix and either 404s on Yahoo Finance or resolves to an
+    unrelated same-letters security. Falls back to `ticker` itself when it
+    already carries a suffix (e.g. a manually-added item, typed correct by
+    the user -- see news_watchlist/store.py's add_manual()), and as a last
+    resort to a Yahoo Finance name search for the rare row that predates
+    this resolution and hasn't been backfilled yet, so the link always
+    leads somewhere instead of 404ing."""
+    if yahoo_ticker:
+        return f"https://ca.finance.yahoo.com/quote/{quote(yahoo_ticker)}"
+    if "." in ticker:
+        return f"https://ca.finance.yahoo.com/quote/{quote(ticker)}"
+    return f"https://ca.finance.yahoo.com/lookup?s={quote(company or ticker)}"
 
 
 def _pct(flag_price, other_price):
@@ -234,6 +256,7 @@ def _build_news_watchlist_state() -> Dict[str, List[Dict]]:
         item["pct_change"] = _pct(item["flag_price"], latest_price)
         item["days_since_flagged"] = _days_since(item["flagged_at"])
         item["flagged_date"], item["flagged_time"] = _flagged_date_time(item["created_at"])
+        item["quote_link"] = build_quote_link(item["ticker"], item["yahoo_ticker"], item["company"])
         vol = volumes.get(item["ticker"])
         item["current_volume"] = vol["current_volume"] if vol else None
         item["average_volume"] = vol["average_volume"] if vol else None

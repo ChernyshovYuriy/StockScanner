@@ -68,6 +68,63 @@ def test_find_pending_inbox_item_ignores_a_non_inbox_status(tmp_path):
     assert store.find_pending_inbox_item(conn, "A") is None
 
 
+def test_seed_inbox_item_persists_yahoo_ticker(tmp_path):
+    conn = store.connect(tmp_path / "nw.db")
+    item_id = store.seed_inbox_item(
+        conn, guid="g1", ticker="AYA", company="Aya Gold & Silver", category="exploration_drilling",
+        materiality="high", summary="Drilling results announced.", source_link="https://example.com/g1",
+        flagged_at="2026-09-20", flag_price=40.24, created_at="2026-09-20T17:10:00",
+        yahoo_ticker="AYA.TO",
+    )
+    item = store.get_item(conn, item_id)
+    assert item["ticker"] == "AYA"
+    assert item["yahoo_ticker"] == "AYA.TO"
+
+
+def test_seed_inbox_item_yahoo_ticker_defaults_to_none(tmp_path):
+    """Every existing call site (and every pre-561102e row) omits this kwarg
+    -- must not raise, and must read back as None rather than requiring a
+    caller to pass it explicitly."""
+    conn = store.connect(tmp_path / "nw.db")
+    item_id = store.seed_inbox_item(
+        conn, guid="g1", ticker="A", company=None, category=None, materiality=None,
+        summary=None, source_link=None, flagged_at="2026-09-20", flag_price=1.0,
+        created_at="2026-09-20T17:10:00",
+    )
+    assert store.get_item(conn, item_id)["yahoo_ticker"] is None
+
+
+def test_update_inbox_item_refreshes_yahoo_ticker(tmp_path):
+    conn = store.connect(tmp_path / "nw.db")
+    item_id = store.seed_inbox_item(
+        conn, guid="g1", ticker="AYA", company="Old Co", category="old_cat", materiality="medium",
+        summary="Old summary.", source_link="https://example.com/g1",
+        flagged_at="2026-09-18", flag_price=1.0, created_at="2026-09-18T17:10:00",
+        yahoo_ticker="AYA.TO",
+    )
+    store.update_inbox_item(
+        conn, item_id, guid="g2", company="New Co", category="new_cat", materiality="high",
+        summary="New summary.", source_link="https://example.com/g2",
+        flagged_at="2026-09-21", flag_price=2.0, created_at="2026-09-21T09:15:00",
+        yahoo_ticker="AYA.V",
+    )
+    assert store.get_item(conn, item_id)["yahoo_ticker"] == "AYA.V"
+
+
+def test_set_yahoo_ticker_updates_only_that_field(tmp_path):
+    conn = store.connect(tmp_path / "nw.db")
+    item_id = store.seed_inbox_item(
+        conn, guid="g1", ticker="AYA", company=None, category=None, materiality=None,
+        summary=None, source_link=None, flagged_at="2026-09-20", flag_price=1.0,
+        created_at="2026-09-20T17:10:00",
+    )
+    store.set_yahoo_ticker(conn, item_id, "AYA.TO")
+
+    item = store.get_item(conn, item_id)
+    assert item["yahoo_ticker"] == "AYA.TO"
+    assert item["ticker"] == "AYA"
+
+
 def test_update_inbox_item_refreshes_content_and_created_at_but_keeps_id(tmp_path):
     conn = store.connect(tmp_path / "nw.db")
     item_id = store.seed_inbox_item(
