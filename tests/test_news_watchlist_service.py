@@ -362,3 +362,70 @@ def test_dry_run_defaults_to_both_modes_and_writes_nothing(tmp_path, capsys):
     assert store.list_by_status(conn, "inbox") == []
     out = capsys.readouterr().out
     assert "OMI.V" in out
+
+
+# ── _resolve_market_price: bare-ticker suffix disambiguation ─────────────
+#
+# press_release_tracker/llm_parser.py extracts whatever ticker a release's
+# text states, with no Yahoo-Finance-suffix awareness (by design -- see
+# press-release-parser-scope in project memory). A bare symbol like "AYA"
+# commonly collides with an unrelated US-listed security on Yahoo Finance
+# instead of the intended TSX-listed one ("AYA.TO"). These test the
+# disambiguation in isolation, stubbing manual_sell.get_market_price (the
+# module-level name news_watchlist_service imported it under) so no real
+# network call happens.
+
+def test_resolve_market_price_passes_through_an_already_suffixed_ticker(monkeypatch):
+    calls = []
+
+    def _fake(ticker):
+        calls.append(ticker)
+        return (0.85, "daily-close")
+
+    monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
+    price, source = news_watchlist_service._resolve_market_price("KTO.V")
+
+    assert (price, source) == (0.85, "daily-close")
+    assert calls == ["KTO.V"]
+
+
+def test_resolve_market_price_prefers_dot_to_for_a_bare_ticker(monkeypatch):
+    calls = []
+
+    def _fake(ticker):
+        calls.append(ticker)
+        return (40.24, "daily-close") if ticker == "AYA.TO" else (None, None)
+
+    monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
+    price, source = news_watchlist_service._resolve_market_price("AYA")
+
+    assert (price, source) == (40.24, "daily-close")
+    assert calls == ["AYA.TO"]
+
+
+def test_resolve_market_price_falls_back_to_dot_v_when_dot_to_has_no_data(monkeypatch):
+    calls = []
+
+    def _fake(ticker):
+        calls.append(ticker)
+        return (3.62, "daily-close") if ticker == "KRY.V" else (None, None)
+
+    monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
+    price, source = news_watchlist_service._resolve_market_price("KRY")
+
+    assert (price, source) == (3.62, "daily-close")
+    assert calls == ["KRY.TO", "KRY.V"]
+
+
+def test_resolve_market_price_falls_back_to_the_bare_ticker_when_neither_suffix_has_data(monkeypatch):
+    calls = []
+
+    def _fake(ticker):
+        calls.append(ticker)
+        return (38.99, "daily-close") if ticker == "XENE" else (None, None)
+
+    monkeypatch.setattr(news_watchlist_service, "get_market_price", _fake)
+    price, source = news_watchlist_service._resolve_market_price("XENE")
+
+    assert (price, source) == (38.99, "daily-close")
+    assert calls == ["XENE.TO", "XENE.V", "XENE"]

@@ -67,6 +67,30 @@ def _is_trading_day(today: date) -> bool:
     return today.weekday() < 5 and today.isoformat() not in TSX_HOLIDAYS
 
 
+def _resolve_market_price(ticker: str) -> tuple[float, str] | tuple[None, None]:
+    """get_market_price(), but first disambiguates a bare ticker (no
+    exchange suffix) -- press_release_tracker/llm_parser.py extracts
+    whatever symbol the release text states with no Yahoo-Finance-suffix
+    awareness (see its own docstring; that's by design, not a parser
+    bug), and on Yahoo Finance a bare Canadian symbol commonly collides
+    with an unrelated US-listed security of the same letters (e.g. "AYA"
+    resolves to a different company than TSX-listed "AYA.TO"; "ARE" to
+    Alexandria Real Estate instead of TSX-listed Aecon Group). Since this
+    feed is GlobeNewswire's "News from Canada", a bare symbol is tried as
+    TSX main board (.TO) then TSX Venture (.V) first, falling back to the
+    bare symbol only if neither suffixed form has data -- a genuinely
+    non-Canadian name (e.g. "XENE", Nasdaq-only) still resolves
+    correctly. A ticker already carrying a suffix (e.g. "KTO.V", already
+    correct from the parser) is passed through unchanged."""
+    if "." in ticker:
+        return get_market_price(ticker)
+    for suffix in (".TO", ".V"):
+        price, source = get_market_price(ticker + suffix)
+        if price is not None:
+            return price, source
+    return get_market_price(ticker)
+
+
 def _is_stale(pubdate: str, now, max_age_days: int) -> bool:
     """True if pubdate (a seen_items.pubdate value -- the feed's own RFC
     822 <pubDate>, see press_release_tracker/feeds.py) is older than
@@ -194,12 +218,12 @@ def run_collector(run_id, mode="both", dry_run=False, conn=None, press_release_d
 
     `conn` overrides the default store.connect(), `press_release_db_path`
     overrides PRESS_RELEASE_DB_PATH, `price_fetcher` overrides
-    manual_sell.get_market_price -- test-only seams, same injection pattern
+    _resolve_market_price() -- test-only seams, same injection pattern
     triple_screen_tracker_service.run_collector's `provider`/`conn` use.
     """
     conn = conn or store.connect()
     pr_db_path = press_release_db_path or PRESS_RELEASE_DB_PATH
-    price_fetcher = price_fetcher or get_market_price
+    price_fetcher = price_fetcher or _resolve_market_price
 
     if mode in ("seed", "both"):
         seeded = seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=dry_run)
