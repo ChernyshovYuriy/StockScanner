@@ -214,3 +214,85 @@ def test_invalidate_cache_forces_a_fresh_read(tmp_path, monkeypatch):
     nwd.invalidate_news_watchlist_cache()
 
     assert len(nwd.build_news_watchlist_state()["watching"]) == 2
+
+
+# ── _fetch_volumes: bare-ticker suffix fallback ──────────────────────────
+#
+# A bare ticker straight from the press-release LLM parser (no ".TO"/".V"
+# suffix -- see news_watchlist_service._resolve_market_price()'s own
+# docstring for why) sometimes has no Yahoo Finance data at all under
+# that bare symbol (e.g. "AC" -- Air Canada only trades as "AC.TO").
+
+def test_fetch_volumes_falls_back_to_dot_to_when_bare_ticker_has_no_data(monkeypatch):
+    monkeypatch.setattr(nwd, "_fetch_volumes", _REAL_FETCH_VOLUMES)
+    nwd._volume_cache.clear()
+    calls = []
+
+    def fake_download_range(tickers, start, end):
+        calls.append(list(tickers))
+        if tickers == ["AC.TO"]:
+            return {"AC.TO": _fake_volume_df(volume=500_000.0)}, []
+        return {}, list(tickers)
+
+    monkeypatch.setattr(nwd.DEFAULT_PROVIDER, "download_range", fake_download_range)
+
+    result = nwd._fetch_volumes(["AC"])
+
+    assert calls == [["AC"], ["AC.TO"]]
+    assert result == {"AC": {"current_volume": 500_000.0, "average_volume": 500_000.0}}
+
+
+def test_fetch_volumes_falls_back_to_dot_v_when_dot_to_also_has_no_data(monkeypatch):
+    monkeypatch.setattr(nwd, "_fetch_volumes", _REAL_FETCH_VOLUMES)
+    nwd._volume_cache.clear()
+    calls = []
+
+    def fake_download_range(tickers, start, end):
+        calls.append(list(tickers))
+        if tickers == ["KRY.V"]:
+            return {"KRY.V": _fake_volume_df(volume=25_000.0)}, []
+        return {}, list(tickers)
+
+    monkeypatch.setattr(nwd.DEFAULT_PROVIDER, "download_range", fake_download_range)
+
+    result = nwd._fetch_volumes(["KRY"])
+
+    assert calls == [["KRY"], ["KRY.TO"], ["KRY.V"]]
+    assert result == {"KRY": {"current_volume": 25_000.0, "average_volume": 25_000.0}}
+
+
+def test_fetch_volumes_does_not_probe_suffixes_when_bare_ticker_already_has_data(monkeypatch):
+    """The common case (an already-correct bare ticker, e.g. a genuine US
+    name) must stay a single batch call -- suffix-probing every bare
+    ticker unconditionally would multiply the cost of a 100+-row Inbox."""
+    monkeypatch.setattr(nwd, "_fetch_volumes", _REAL_FETCH_VOLUMES)
+    nwd._volume_cache.clear()
+    calls = []
+
+    def fake_download_range(tickers, start, end):
+        calls.append(list(tickers))
+        return {"AAPL": _fake_volume_df()}, []
+
+    monkeypatch.setattr(nwd.DEFAULT_PROVIDER, "download_range", fake_download_range)
+
+    result = nwd._fetch_volumes(["AAPL"])
+
+    assert calls == [["AAPL"]]
+    assert result == {"AAPL": {"current_volume": 1_000_000.0, "average_volume": 1_000_000.0}}
+
+
+def test_fetch_volumes_never_probes_suffixes_for_an_already_suffixed_ticker(monkeypatch):
+    monkeypatch.setattr(nwd, "_fetch_volumes", _REAL_FETCH_VOLUMES)
+    nwd._volume_cache.clear()
+    calls = []
+
+    def fake_download_range(tickers, start, end):
+        calls.append(list(tickers))
+        return {}, list(tickers)
+
+    monkeypatch.setattr(nwd.DEFAULT_PROVIDER, "download_range", fake_download_range)
+
+    result = nwd._fetch_volumes(["KTO.V"])
+
+    assert calls == [["KTO.V"]]
+    assert result == {}

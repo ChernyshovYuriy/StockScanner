@@ -85,7 +85,33 @@ def _fetch_volumes(tickers: List[str]) -> Dict[str, Dict[str, float]]:
         # end is exclusive in yfinance -- +1 day so today's still-filling bar
         # is actually included, same as volume_spike_scanner.py.
         end = date_to_iso_extended(today + timedelta(days=1))
+
         data, _failed = DEFAULT_PROVIDER.download_range(to_fetch, start=start, end=end)
+
+        # A bare ticker (no exchange suffix) straight from the press-release
+        # LLM parser (see news_watchlist_service._resolve_market_price()'s
+        # own docstring for why it's bare) sometimes has no Yahoo Finance
+        # data under that bare symbol at all -- e.g. "AC" (Air Canada) only
+        # trades as "AC.TO". Only probed for tickers that came back
+        # genuinely empty above, so the common case (an already-correct
+        # ticker, bare or suffixed) stays a single batch call -- this
+        # dashboard's ~88-ticker Inbox already takes the better part of a
+        # minute to fetch once (see this function's own docstring); trying
+        # .TO/.V for every bare ticker unconditionally would triple that.
+        missing = [t for t in to_fetch if "." not in t and (t not in data or data[t].empty)]
+        for suffix in (".TO", ".V"):
+            if not missing:
+                break
+            probe = [t + suffix for t in missing]
+            data_p, _failed = DEFAULT_PROVIDER.download_range(probe, start=start, end=end)
+            still_missing = []
+            for t in missing:
+                df = data_p.get(t + suffix)
+                if df is not None and not df.empty:
+                    data[t] = df
+                else:
+                    still_missing.append(t)
+            missing = still_missing
 
         fresh: Dict[str, Dict[str, float]] = {}
         for ticker, df in data.items():
