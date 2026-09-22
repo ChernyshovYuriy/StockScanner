@@ -151,6 +151,7 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
                     conn, existing["id"], guid=c["guid"], company=c["company"],
                     category=c["category"], materiality=c["materiality"], summary=c["summary"],
                     source_link=c["link"], flagged_at=today_str, flag_price=price,
+                    created_at=now,
                 )
             else:
                 store.seed_inbox_item(

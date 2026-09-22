@@ -68,7 +68,7 @@ def test_find_pending_inbox_item_ignores_a_non_inbox_status(tmp_path):
     assert store.find_pending_inbox_item(conn, "A") is None
 
 
-def test_update_inbox_item_refreshes_content_but_keeps_id_and_created_at(tmp_path):
+def test_update_inbox_item_refreshes_content_and_created_at_but_keeps_id(tmp_path):
     conn = store.connect(tmp_path / "nw.db")
     item_id = store.seed_inbox_item(
         conn, guid="g1", ticker="A", company="Old Co", category="old_cat", materiality="medium",
@@ -79,12 +79,12 @@ def test_update_inbox_item_refreshes_content_but_keeps_id_and_created_at(tmp_pat
     store.update_inbox_item(
         conn, item_id, guid="g2", company="New Co", category="new_cat", materiality="high",
         summary="New summary.", source_link="https://example.com/g2",
-        flagged_at="2026-09-21", flag_price=2.0,
+        flagged_at="2026-09-21", flag_price=2.0, created_at="2026-09-21T09:15:00",
     )
 
     item = store.get_item(conn, item_id)
     assert item["id"] == item_id
-    assert item["created_at"] == "2026-09-18T17:10:00"
+    assert item["created_at"] == "2026-09-21T09:15:00"
     assert item["guid"] == "g2"
     assert item["company"] == "New Co"
     assert item["summary"] == "New summary."

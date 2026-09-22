@@ -121,16 +121,21 @@ def find_pending_inbox_item(conn, ticker: str) -> dict | None:
 
 
 def update_inbox_item(conn, item_id: int, *, guid, company, category, materiality,
-                       summary, source_link, flagged_at, flag_price) -> None:
+                       summary, source_link, flagged_at, flag_price, created_at) -> None:
     """Refreshes an existing pending inbox row with a newer press release
     about the same ticker (see find_pending_inbox_item()) -- content and
-    the flag date/price move to this latest catalyst; id/created_at/note
-    are left untouched."""
+    the flag date/price move to this latest catalyst; id/note are left
+    untouched. created_at also moves to this latest catalyst's timestamp
+    -- the dashboard's Inbox "Flagged" column and its sort order are both
+    driven by created_at (see news_watchlist_dashboard_data.py's
+    _flagged_date_time()), so leaving the original seed timestamp in
+    place made a same-day refreshed catalyst display/sort as if it were
+    the old, already-reviewed article it collapsed into."""
     conn.execute(
         "UPDATE watchlist_items SET guid=?, company=?, category=?, materiality=?, "
-        "summary=?, source_link=?, flagged_at=?, flag_price=? WHERE id=?",
+        "summary=?, source_link=?, flagged_at=?, flag_price=?, created_at=? WHERE id=?",
         (guid, company, category, materiality, summary, source_link,
-         flagged_at, flag_price, item_id),
+         flagged_at, flag_price, created_at, item_id),
     )
     conn.commit()
 
