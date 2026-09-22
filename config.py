@@ -340,8 +340,13 @@ PRESS_RELEASE_DB_PATH = DATA_PATH / "press_releases.db"
 # One feed to start (GlobeNewswire's "News from Canada" feed) -- a plain
 # list so a second/third source (e.g. Newsfile Corp, CNW) is just another
 # URL appended here later, no code change needed in press_release_service.py.
+# TMX Newsfile added 2026-09 -- the dominant newswire for TSXV/CSE junior
+# names, a better match for this system's microcap universe than
+# GlobeNewswire's own Canada feed (which skews TSX/large-cap). Verified
+# well-formed RSS 2.0 with the same unnamespaced fields feeds.py parses.
 PRESS_RELEASE_FEEDS = [
     "https://www.globenewswire.com/RssFeed/country/Canada/feedTitle/GlobeNewswire%20-%20News%20from%20Canada",
+    "https://feeds.newsfilecorp.com/global/Last25Stories",
 ]
 
 # Fair-access identification for the RSS fetch (same spirit as
