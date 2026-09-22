@@ -1,8 +1,8 @@
 [Unit]
-Description=Run StockScanner press-release tracker every 5 minutes, all day (news can break pre-market or after hours, so unlike the trading services this isn't restricted to market hours)
+Description=Run StockScanner press-release tracker every minute, all day (news can break pre-market or after hours, so unlike the trading services this isn't restricted to market hours) -- tightened from every 5 minutes 2026-09 to minimize poll-lag on top of publish time; safe at this cadence because the service's own file lock (concurrent_utils.acquire_lock) skips a tick if the previous run is still busy, and LLM cost doesn't scale with poll frequency since store.py dedupes by RSS guid
 
 [Timer]
-OnCalendar=*-*-* *:0/5
+OnCalendar=*-*-* *:0/1
 Persistent=false
 Unit=stockscanner-press-release.service
 
