@@ -14,6 +14,7 @@
     }
     .nw-section { margin: 24px 0; }
     .nw-section h2 { font-size: 15px; margin: 0 0 10px; }
+    .nw-export-btn { margin-left: 10px; font-size: 12px; padding: 3px 10px; vertical-align: middle; }
     .nw-note { color: var(--text-muted); font-size: 12px; margin: 4px 0 10px; }
     /* dashboard.css's base `td { white-space: nowrap }` is right for every
        other column here (tickers, dates, prices) but wrong for this one --
@@ -34,6 +35,13 @@
        (single-line) cells default to baseline-aligning with its FIRST
        line, which looks lopsided -- top-align the whole row instead. */
     .inbox-table td { vertical-align: top; }
+    /* Marks the row last clicked (or whose ticker link was opened) so a
+       100+ row inbox doesn't lose your place after you tab away to read
+       the linked quote/release and come back -- persisted in
+       localStorage per table (see wireRowHighlight), so it survives a
+       page refresh too, not just staying in the same tab. */
+    tr[data-row-id].nw-row-visited > td { background: var(--row-alt, rgba(47,85,212,0.10)); }
+    tr[data-row-id].nw-row-visited > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
     /* The table is width:100%, and with table-layout:auto every column
        without its own width shares the leftover space proportionally --
        so short columns like Ticker/Flagged/Flag Price end up far wider
@@ -104,7 +112,11 @@
   {% endif %}
 
   <div class="nw-section">
-    <h2>Inbox — needs review (<span class="nw-count">{{ inbox|length }}</span>)</h2>
+    <h2>Inbox — needs review (<span class="nw-count">{{ inbox|length }}</span>)
+      {% if inbox %}
+      <button type="button" id="nw-export-inbox-btn" class="refresh-btn nw-export-btn">⬇ Export CSV</button>
+      {% endif %}
+    </h2>
     <p class="nw-note" id="nw-volume-loading" hidden>⏳ Fetching live Volume — a live scan across every inbox
       ticker can take up to a minute on first load; results are cached for a minute or two after that.</p>
     {% if not inbox %}
@@ -124,7 +136,7 @@
         </thead>
         <tbody>
           {% for item in inbox %}
-          <tr>
+          <tr data-row-id="{{ item.id }}">
             <td class="nw-tight">
               <a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a>
               {% if item.source_link %}
@@ -167,7 +179,7 @@
           <tr class="watching-empty-row"><td colspan="11">Nothing confirmed yet — confirm an inbox item above, or add one manually below.</td></tr>
           {% endif %}
           {% for item in watching %}
-          <tr>
+          <tr data-row-id="{{ item.id }}">
             <td><a href="https://ca.finance.yahoo.com/quote/{{ item.ticker }}" target="_blank" rel="noopener">{{ item.ticker }}</a></td>
             <td>{{ item.company or "—" }}</td>
             <td>{{ item.flagged_at }}</td>
@@ -330,6 +342,46 @@
         });
     })();
 
+    // Exports exactly what's currently on screen (including live Volume,
+    // once the async fill above has landed, and whatever sort order the
+    // user has applied) rather than re-querying the server -- the page
+    // already has everything the CSV needs.
+    function csvEscape(value) {
+      const s = String(value == null ? "" : value).trim();
+      return /["\n\r,]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    document.getElementById("nw-export-inbox-btn")?.addEventListener("click", () => {
+      const table = document.querySelector(".inbox-table");
+      if (!table) return;
+      const rows = [["Ticker", "Company", "Category", "Materiality", "Summary", "Flagged At", "Flag Price", "Volume"]];
+      table.querySelectorAll("tbody tr").forEach((tr) => {
+        const cells = tr.children;
+        const flaggedCell = cells[5];
+        rows.push([
+          cells[0].querySelector("a")?.textContent || "",
+          cells[1].textContent,
+          cells[2].textContent,
+          cells[3].textContent,
+          cells[4].textContent,
+          flaggedCell.dataset.sortValue || flaggedCell.textContent,
+          cells[6].textContent,
+          cells[7].textContent,
+        ]);
+      });
+
+      const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `news_watchlist_inbox_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
     function wireNoteForm(form) {
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -358,6 +410,7 @@
     // raw HTML interpolation would be a real injection risk.
     function buildWatchingRow(item) {
       const tr = document.createElement("tr");
+      tr.dataset.rowId = item.id;
 
       const tdTicker = document.createElement("td");
       const link = document.createElement("a");
@@ -486,5 +539,40 @@
     });
 
     document.querySelectorAll(".note-form").forEach(wireNoteForm);
+
+    // Highlights the row last clicked (row body or its ticker link) so
+    // you can find your place again in a long Inbox after tabbing away to
+    // read the linked quote/release. One highlighted row per table,
+    // remembered in localStorage (a private-window/blocked-storage
+    // failure just means no highlight restores -- not fatal) so it
+    // survives a page refresh, not just staying in the same tab.
+    function wireRowHighlight(tbody, storageKey) {
+      if (!tbody) return;
+
+      function setHighlight(row) {
+        tbody.querySelectorAll("tr.nw-row-visited").forEach((r) => r.classList.remove("nw-row-visited"));
+        row.classList.add("nw-row-visited");
+        try { localStorage.setItem(storageKey, row.dataset.rowId); } catch (e) { /* ignore */ }
+      }
+
+      tbody.addEventListener("click", (event) => {
+        if (event.target.closest("[data-nw-action]")) return;
+        const row = event.target.closest("tr[data-row-id]");
+        if (row) setHighlight(row);
+      });
+
+      let savedId;
+      try { savedId = localStorage.getItem(storageKey); } catch (e) { savedId = null; }
+      if (savedId) {
+        const row = tbody.querySelector(`tr[data-row-id="${CSS.escape(savedId)}"]`);
+        if (row) {
+          row.classList.add("nw-row-visited");
+          row.scrollIntoView({ block: "center" });
+        }
+      }
+    }
+
+    wireRowHighlight(document.querySelector(".inbox-table tbody"), "nw-inbox-last-row");
+    wireRowHighlight(document.getElementById("watching-tbody"), "nw-watching-last-row");
   </script>
 {% endblock %}
