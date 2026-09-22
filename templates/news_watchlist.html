@@ -19,7 +19,12 @@
     /* dashboard.css's base `td { white-space: nowrap }` is right for every
        other column here (tickers, dates, prices) but wrong for this one --
        without overriding it, a long summary just overflows on top of the
-       neighboring columns instead of wrapping. */
+       neighboring columns instead of wrapping. Applied to an inner <div>,
+       NOT the <td> itself -- display:-webkit-box directly on a table cell
+       breaks its table-cell participation in some browsers (short row
+       height, background not filling the cell, border sitting mid-cell
+       instead of at the row's actual bottom edge). Same reason .nw-actions
+       below wraps its buttons in a div instead of flexing the <td>. */
     .nw-summary {
       color: var(--text-muted); font-size: 12px; max-width: 320px;
       white-space: normal; overflow-wrap: break-word;
@@ -49,10 +54,12 @@
        column to its content" trick under auto layout; Summary (the one
        column without this class) absorbs all the freed-up space. */
     .nw-tight { width: 1%; }
-    /* align-items defaults to stretch, which -- once the wrapped Summary
-       column makes a row tall -- stretched these buttons to the row's full
-       height and vertically centered their text, making Watch/Dismiss look
-       shifted down compared to the row's other (short, top-aligned) cells. */
+    /* Applied to an inner <div> (see the .nw-summary comment above for why
+       the <td> itself stays a plain table cell). align-items:flex-start
+       keeps the buttons their natural height instead of the flex default
+       (stretch), which would otherwise fill however tall the row's Summary
+       cell makes it and vertically center the button text inside that --
+       looking shifted down compared to the row's other top-aligned cells. */
     .nw-actions { display: flex; gap: 6px; white-space: nowrap; align-items: flex-start; }
     /* dashboard.css defaults every column but the first to text-align:right
        (built for numeric tables like Positions) -- wrong for this mostly-
@@ -157,13 +164,15 @@
             <td class="nw-tight">{{ item.company or "—" }}</td>
             <td class="nw-tight">{{ item.category or "—" }}</td>
             <td class="nw-tight">{{ item.materiality or "—" }}</td>
-            <td class="nw-summary" title="{{ item.summary or '' }}">{{ item.summary or "—" }}</td>
+            <td title="{{ item.summary or '' }}"><div class="nw-summary">{{ item.summary or "—" }}</div></td>
             <td class="nw-tight" title="{{ item.flagged_at }}" data-sort-value="{{ item.created_at }}">{{ item.flagged_date or "—" }}<br>{{ item.flagged_time or "" }}</td>
             <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td class="nw-tight nw-volume" data-ticker="{{ item.ticker }}">…</td>
-            <td class="nw-tight nw-actions">
-              <button class="confirm-btn" type="button" data-nw-action="confirm" data-id="{{ item.id }}">Watch</button>
-              <button class="remove-btn" type="button" data-nw-action="dismiss" data-id="{{ item.id }}">Dismiss</button>
+            <td class="nw-tight">
+              <div class="nw-actions">
+                <button class="confirm-btn" type="button" data-nw-action="confirm" data-id="{{ item.id }}">Watch</button>
+                <button class="remove-btn" type="button" data-nw-action="dismiss" data-id="{{ item.id }}">Dismiss</button>
+              </div>
             </td>
           </tr>
           {% endfor %}
