@@ -135,7 +135,7 @@
             <td class="nw-tight">{{ item.category or "—" }}</td>
             <td class="nw-tight">{{ item.materiality or "—" }}</td>
             <td class="nw-summary" title="{{ item.summary or '' }}">{{ item.summary or "—" }}</td>
-            <td class="nw-tight" title="{{ item.flagged_at }}" data-sort-value="{{ item.created_at }}">{{ item.days_since_flagged }}d</td>
+            <td class="nw-tight" title="{{ item.flagged_at }}" data-sort-value="{{ item.created_at }}">{{ item.flagged_date or "—" }}<br>{{ item.flagged_time or "" }}</td>
             <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td class="nw-tight nw-volume" data-ticker="{{ item.ticker }}">…</td>
             <td class="nw-tight nw-actions">

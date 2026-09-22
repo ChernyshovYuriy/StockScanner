@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS, NEWS_WATCHLIST_DB_PATH
@@ -153,6 +153,17 @@ def _days_since(flagged_at_str):
         return None
 
 
+def _flagged_date_time(created_at_str):
+    """Inbox's Flagged column shows created_at's date and HH-MM time on two
+    lines instead of days_since_flagged -- almost every item is flagged the
+    same day it's seeded, so "0d" carried no information."""
+    try:
+        dt = datetime.fromisoformat(created_at_str)
+    except (TypeError, ValueError):
+        return None, None
+    return dt.date().isoformat(), dt.strftime("%H-%M")
+
+
 def _read_items() -> list[dict]:
     """Every watchlist_items row + its price history. [] if the DB doesn't
     exist yet (no scheduled run has happened) -- same "not yet available"
@@ -196,6 +207,7 @@ def _build_news_watchlist_state() -> Dict[str, List[Dict]]:
         item["latest_price"] = latest_price
         item["pct_change"] = _pct(item["flag_price"], latest_price)
         item["days_since_flagged"] = _days_since(item["flagged_at"])
+        item["flagged_date"], item["flagged_time"] = _flagged_date_time(item["created_at"])
         vol = volumes.get(item["ticker"])
         item["current_volume"] = vol["current_volume"] if vol else None
         item["average_volume"] = vol["average_volume"] if vol else None
