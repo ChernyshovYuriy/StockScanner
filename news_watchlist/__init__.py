@@ -23,8 +23,12 @@ the candidate itself. So this package automates the bookkeeping only:
                 items get a daily price-history row appended -- price
                 tracking is gated on a human decision, not automatic for
                 everything the feed produces.
-  dismissed  -- explicitly rejected (from either state above). Kept, not
-                deleted, so the record survives.
+  dismissed  -- explicitly rejected (from either state above). Permanently
+                deleted, not kept -- no dismissed list (the inbox volume
+                made an ever-growing kept list unmanageable; the guid is
+                still remembered separately -- see store.py's
+                seeded_release_guids -- so a deleted item's own press
+                release is never re-seeded).
 
 The triage step (is this one actually worth following) stays a manual,
 one-click action -- the same judgment call the user already makes today,

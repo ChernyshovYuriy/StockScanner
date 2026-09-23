@@ -261,33 +261,6 @@
     </form>
   </div>
 
-  <div class="nw-section">
-    <details class="dismissed-details">
-      <summary>Dismissed ({{ dismissed|length }})</summary>
-      {% if not dismissed %}
-        <p>Nothing dismissed yet.</p>
-      {% else %}
-      <div class="table-wrap">
-        <table class="sortable">
-          <thead>
-            <tr><th>Ticker</th><th>Flagged</th><th>Flag Price</th><th>Note</th></tr>
-          </thead>
-          <tbody>
-            {% for item in dismissed %}
-            <tr>
-              <td>{{ item.ticker }}</td>
-              <td>{{ item.flagged_at }}</td>
-              <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
-              <td>{{ item.note or "—" }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% endif %}
-    </details>
-  </div>
-
   <script>
     // Confirm/Dismiss/Note post via fetch and update the DOM in place,
     // instead of the full-page POST+redirect every other write action in

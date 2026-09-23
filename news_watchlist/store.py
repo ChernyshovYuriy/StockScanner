@@ -233,6 +233,16 @@ def set_status(conn, item_id: int, status: str, changed_at: str) -> None:
     conn.commit()
 
 
+def delete_item(conn, item_id: int) -> None:
+    """Permanently removes an item and its price history -- used for
+    dismiss, which is a hard delete rather than a status change (no
+    'dismissed' list is kept; see seeded_guids()'s own docstring for why
+    this doesn't cause the underlying press release to be re-seeded)."""
+    conn.execute("DELETE FROM price_history WHERE item_id=?", (item_id,))
+    conn.execute("DELETE FROM watchlist_items WHERE id=?", (item_id,))
+    conn.commit()
+
+
 def set_note(conn, item_id: int, note: str) -> None:
     conn.execute("UPDATE watchlist_items SET note=? WHERE id=?", (note, item_id))
     conn.commit()

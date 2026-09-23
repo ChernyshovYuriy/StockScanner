@@ -521,11 +521,11 @@ def create_app() -> Flask:
             state = _read_with_retry(build_news_watchlist_state)
             error = request.args.get("error")
         except (sqlite3.Error, OSError):
-            state = {"inbox": [], "watching": [], "dismissed": []}
+            state = {"inbox": [], "watching": []}
             error = "Database temporarily unavailable — retrying on next refresh."
         return render_template(
             "news_watchlist.html",
-            inbox=state["inbox"], watching=state["watching"], dismissed=state["dismissed"],
+            inbox=state["inbox"], watching=state["watching"],
             error=error,
         )
 
@@ -576,10 +576,12 @@ def create_app() -> Flask:
 
     @app.post("/news-watchlist/<int:item_id>/dismiss")
     def news_watchlist_dismiss(item_id: int):
-        """JSON, not redirect -- see news_watchlist_confirm's docstring."""
+        """JSON, not redirect -- see news_watchlist_confirm's docstring.
+        Dismiss is a permanent delete, not a status change -- no dismissed
+        list is kept (see news_watchlist_store.delete_item's docstring)."""
         conn = news_watchlist_store.connect()
         try:
-            news_watchlist_store.set_status(conn, item_id, "dismissed", market_now().isoformat())
+            news_watchlist_store.delete_item(conn, item_id)
         finally:
             conn.close()
         invalidate_news_watchlist_cache()

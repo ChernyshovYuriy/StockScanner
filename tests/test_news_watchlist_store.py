@@ -216,14 +216,33 @@ def test_price_history_for_is_ordered_oldest_first(tmp_path):
     assert dates == ["2026-09-19", "2026-09-20"]
 
 
-def test_dismissed_item_is_kept_not_deleted(tmp_path):
+def test_delete_item_removes_row_and_price_history(tmp_path):
     conn = store.connect(tmp_path / "nw.db")
     item_id = store.seed_inbox_item(
         conn, guid="g1", ticker="A", company=None, category=None, materiality=None,
         summary=None, source_link=None, flagged_at="2026-09-20", flag_price=1.0,
         created_at="2026-09-20T17:10:00",
     )
-    store.set_status(conn, item_id, "dismissed", "2026-09-21T09:00:00")
+    store.append_price(conn, item_id, "2026-09-21", 1.1)
 
-    dismissed = store.list_by_status(conn, "dismissed")
-    assert len(dismissed) == 1 and dismissed[0]["id"] == item_id
+    store.delete_item(conn, item_id)
+
+    assert store.get_item(conn, item_id) is None
+    assert store.price_history_for(conn, item_id) == []
+
+
+def test_delete_item_does_not_undo_guid_seeding(tmp_path):
+    """Deleting a dismissed item must not let its press release re-seed --
+    seeded_release_guids is a separate permanent log (see store.py's own
+    docstring), so this must stay true after delete_item too."""
+    conn = store.connect(tmp_path / "nw.db")
+    item_id = store.seed_inbox_item(
+        conn, guid="g1", ticker="A", company=None, category=None, materiality=None,
+        summary=None, source_link=None, flagged_at="2026-09-20", flag_price=1.0,
+        created_at="2026-09-20T17:10:00",
+    )
+    store.mark_guid_processed(conn, "g1", "2026-09-20T17:10:00")
+
+    store.delete_item(conn, item_id)
+
+    assert "g1" in store.seeded_guids(conn)
