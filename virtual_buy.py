@@ -95,6 +95,21 @@ def fetch_latest_price(ticker: str) -> Optional[float]:
     return DEFAULT_PROVIDER.get_quote(ticker)
 
 
+def _skip_unprocessed(intent_ids: list[int], reason: str, dry_run: bool) -> int:
+    """Mark every intent this run loaded but won't act on as SKIPPED.
+
+    An intent left PENDING is silently DELETEd by the next pipeline run's
+    db.save_intents(), erasing the only record that it ever existed (seen
+    live 2026-09: a full core book left its intents PENDING, and the macro
+    sleeve's read-only buy of one of them became untraceable). Every exit
+    path past the intent read must call this for its leftovers.
+    """
+    if not dry_run:
+        for intent_id in intent_ids:
+            mark_intent_skipped(intent_id, reason)
+    return len(intent_ids)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE BUY LOGIC
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +143,11 @@ def run_virtual_buy(
         print(f"{Fore.YELLOW}No pending intents in queue — nothing to buy.{Style.RESET_ALL}")
         return
 
+    skipped_count = 0
     if top_n is not None and top_n > 0:
+        skipped_count += _skip_unprocessed(
+            [int(i) for i in intents_df["id"].iloc[top_n:]], "beyond_top_n", dry_run
+        )
         intents_df = intents_df.head(top_n).copy()
 
     pending_tickers = intents_df[SIGNAL_COL_TICKER].tolist()
@@ -139,7 +158,6 @@ def run_virtual_buy(
     duplicate_seen: set[str] = set()
     run_seen: set[str] = set()
     actionable: list[dict] = []
-    skipped_count = 0
 
     for _, row in intents_df.iterrows():
         ticker = str(row[SIGNAL_COL_TICKER]).strip().upper()
@@ -188,6 +206,7 @@ def run_virtual_buy(
     total_funds = get_cash()
     if total_funds <= 0:
         print(f"{Fore.YELLOW}Available funds is ${total_funds:,.2f} — nothing to buy.{Style.RESET_ALL}")
+        _skip_unprocessed([item["intent_id"] for item in actionable], "no_funds", dry_run)
         return
 
     print(f"  Total funds  : ${total_funds:,.2f}")
@@ -203,6 +222,7 @@ def run_virtual_buy(
             f"{Fore.YELLOW}Portfolio full — {current_position_count} of "
             f"{MAX_POSITIONS} positions occupied. Nothing to buy.{Style.RESET_ALL}"
         )
+        _skip_unprocessed([item["intent_id"] for item in actionable], "portfolio_full", dry_run)
         return
 
     # Sector concentration cap — skip (not defer) a candidate whose sector
@@ -212,7 +232,8 @@ def run_virtual_buy(
     # forward validated 2026-08 (no return cost, significant max-drawdown
     # reduction) — prevents correlated same-sector clusters (e.g. a bank
     # earnings week) from entering the book together. A candidate beyond
-    # remaining_slots is left untouched (stays pending), same as before.
+    # remaining_slots is skipped as "no_slot_left" — leaving it pending would
+    # get it deleted by the next pipeline run with no history at all.
     sector_counts: dict[str, int] = {}
     if MAX_POSITIONS_PER_SECTOR is not None:
         for t in owned_tickers:
@@ -220,8 +241,11 @@ def run_virtual_buy(
             sector_counts[sec] = sector_counts.get(sec, 0) + 1
 
     filtered_actionable: list[dict] = []
-    for item in actionable:
+    for idx, item in enumerate(actionable):
         if len(filtered_actionable) >= remaining_slots:
+            skipped_count += _skip_unprocessed(
+                [rest["intent_id"] for rest in actionable[idx:]], "no_slot_left", dry_run
+            )
             break
         if MAX_POSITIONS_PER_SECTOR is not None:
             sec = get_sector(item["ticker"])

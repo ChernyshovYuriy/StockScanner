@@ -71,6 +71,17 @@ def fetch_latest_price(ticker: str) -> Optional[float]:
     return DEFAULT_PROVIDER.get_quote(ticker)
 
 
+def _skip_unprocessed(intent_ids: list[int], reason: str, dry_run: bool) -> int:
+    """Same rule as virtual_buy._skip_unprocessed — see its docstring: an
+    intent left PENDING is deleted by the next pipeline run's save_intents()
+    with no history, so every exit path past the intent read marks its
+    leftovers SKIPPED with a reason instead."""
+    if not dry_run:
+        for intent_id in intent_ids:
+            mark_intent_skipped(intent_id, reason)
+    return len(intent_ids)
+
+
 def run_momentum_buy(top_n: Optional[int], dry_run: bool, run_id: Optional[str] = None) -> None:
     service = "momentum_buy"
     run_id = run_id or uuid.uuid4().hex
@@ -90,7 +101,11 @@ def run_momentum_buy(top_n: Optional[int], dry_run: bool, run_id: Optional[str] 
         print(f"{Fore.YELLOW}No pending intents in queue — nothing to buy.{Style.RESET_ALL}")
         return
 
+    skipped_count = 0
     if top_n is not None and top_n > 0:
+        skipped_count += _skip_unprocessed(
+            [int(i) for i in intents_df["id"].iloc[top_n:]], "beyond_top_n", dry_run
+        )
         intents_df = intents_df.head(top_n).copy()
 
     pending_tickers = intents_df[SIGNAL_COL_TICKER].tolist()
@@ -101,7 +116,6 @@ def run_momentum_buy(top_n: Optional[int], dry_run: bool, run_id: Optional[str] 
     duplicate_seen: set[str] = set()
     run_seen: set[str] = set()
     actionable: list[dict] = []
-    skipped_count = 0
 
     for _, row in intents_df.iterrows():
         ticker = str(row[SIGNAL_COL_TICKER]).strip().upper()
@@ -145,6 +159,7 @@ def run_momentum_buy(top_n: Optional[int], dry_run: bool, run_id: Optional[str] 
     total_funds = get_cash()
     if total_funds <= 0:
         print(f"{Fore.YELLOW}Available funds is ${total_funds:,.2f} — nothing to buy.{Style.RESET_ALL}")
+        _skip_unprocessed([item["intent_id"] for item in actionable], "no_funds", dry_run)
         return
 
     print(f"  Total funds  : ${total_funds:,.2f}")
@@ -160,8 +175,12 @@ def run_momentum_buy(top_n: Optional[int], dry_run: bool, run_id: Optional[str] 
             f"{Fore.YELLOW}Portfolio full — {current_position_count} of "
             f"{MOMENTUM_MAX_POSITIONS} positions occupied. Nothing to buy.{Style.RESET_ALL}"
         )
+        _skip_unprocessed([item["intent_id"] for item in actionable], "portfolio_full", dry_run)
         return
 
+    skipped_count += _skip_unprocessed(
+        [item["intent_id"] for item in actionable[remaining_slots:]], "no_slot_left", dry_run
+    )
     actionable = actionable[:remaining_slots]
 
     # Divide cash by REMAINING slots, not MOMENTUM_MAX_POSITIONS — same fix
