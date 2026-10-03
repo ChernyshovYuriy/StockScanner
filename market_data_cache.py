@@ -35,6 +35,7 @@ import duckdb
 import pandas as pd
 
 from market_data import LiveDataProvider
+from time_utils import last_trading_day_on_or_before, market_today
 
 CACHE_DB_PATH = "data/market_cache.db"
 
@@ -46,13 +47,35 @@ _SLEEP_SECONDS = 0.5
 # (splits/dividends applied a day or two late) after they first appear.
 _TAIL_OVERLAP_DAYS = 5
 
-# `start`/`end` are calendar dates that may land on a weekend or market
-# holiday, so the cached min/max trading date is legitimately a few days
-# inside the requested range even when the cache is fully up to date. Only
-# treat a ticker as needing a fetch once the gap exceeds this tolerance —
+# `start` is a calendar date that may land on a weekend or market holiday,
+# so the cached min trading date is legitimately a few days inside the
+# requested range even when the cache is fully up to date. Only treat a
+# ticker as needing a backfill once the gap exceeds this tolerance —
 # otherwise every call with the same (start, end) would spuriously re-fetch.
-_END_COVERAGE_TOLERANCE_DAYS = 5
+#
+# The END side deliberately has NO calendar tolerance (removed 2026-10): a
+# 5-day tolerance meant a daily caller's cache only advanced in multi-day
+# jumps, so a last-bar-only consumer (kangaroo_pipeline.py's detector) never
+# evaluated the skipped days at all — a real Kangaroo Tail on DOL.TO
+# 2026-09-16 was missed this way — and the Scanner Board showed prices up to
+# 5 trading days old. The end side is now checked against the actual last
+# TSX trading day instead; see _expected_last_bar().
 _START_COVERAGE_TOLERANCE_DAYS = 5
+
+
+def _expected_last_bar(end_ts: pd.Timestamp) -> pd.Timestamp:
+    """The newest daily bar a cache covering [.., end] must contain: the last
+    TSX trading day on or before `end`, capped at today (a future `end`
+    can't have bars yet)."""
+    today = market_today().date()
+    return pd.Timestamp(last_trading_day_on_or_before(min(end_ts.date(), today)))
+
+
+def _exclusive_end(hi: pd.Timestamp) -> str:
+    """yfinance treats `end` as EXCLUSIVE — passing the requested end date
+    as-is silently drops that day's bar. Every download asks for one day
+    past it so the requested end is actually included."""
+    return (hi + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -148,6 +171,11 @@ def sync_tickers(
         conn = _connect()
     try:
         start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+        expected_hi = _expected_last_bar(end_ts)
+        # Today's bar may still be forming (or get its closing volume
+        # revised), so when it is the expected last bar it is always
+        # re-fetched rather than trusted from an earlier same-day sync.
+        refresh_today = expected_hi.date() == market_today().date()
         to_fetch: Dict[str, Tuple[pd.Timestamp, pd.Timestamp]] = {}
 
         for ticker in tickers:
@@ -162,7 +190,7 @@ def sync_tickers(
 
             cached_lo, cached_hi = cached
             needs_backfill = (cached_lo - start_ts).days > _START_COVERAGE_TOLERANCE_DAYS
-            needs_tail = (end_ts - cached_hi).days > _END_COVERAGE_TOLERANCE_DAYS
+            needs_tail = cached_hi < expected_hi or refresh_today
             lo = start_ts if needs_backfill else None
             hi = end_ts if needs_tail else None
             if lo is None and hi is None:
@@ -187,7 +215,7 @@ def sync_tickers(
         # tail top-up).
         groups: Dict[Tuple[str, str], List[str]] = {}
         for ticker, (lo, hi) in to_fetch.items():
-            key = (lo.strftime("%Y-%m-%d"), hi.strftime("%Y-%m-%d"))
+            key = (lo.strftime("%Y-%m-%d"), _exclusive_end(hi))
             groups.setdefault(key, []).append(ticker)
 
         # One transaction for the whole sync rather than one per ticker —

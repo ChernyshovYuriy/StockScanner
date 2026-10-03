@@ -132,6 +132,17 @@ def previous_trading_day(day: "date_cls") -> "date_cls":
     return d
 
 
+def last_trading_day_on_or_before(day: "date_cls") -> "date_cls":
+    """
+    Return `day` itself if it is a TSX trading day, otherwise the last trading
+    day before it (skips weekends and TSX_HOLIDAYS). Used by
+    market_data_cache.py to decide which daily bar the cache must end on.
+    """
+    if day.weekday() < 5 and day.strftime(ISO_DATE_EXTENDED) not in TSX_HOLIDAYS:
+        return day
+    return previous_trading_day(day)
+
+
 def date_to_iso_basic(date: datetime) -> str:
     return date.strftime(ISO_DATE_BASIC)
 
