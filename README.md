@@ -32,7 +32,6 @@ independent virtual accounts, never merged):
 
 | Service | Question it answers | DB |
 |---|---|---|
-| **Triple Screen tracker** (`triple_screen_tracker_service.py`) | After an Elder Triple Screen BUY signal, how does price behave until it first closes below entry? | `data/triple_screen_tracker.db` |
 | **Ticker Indicator Board** (`scanner_pipeline.py`) | One row per ticker, one column per Elder indicator — a read-only screen, deliberately no composite score | `data/scanner_board.db` |
 | **Volume spike scanner** (`volume_spike_scanner.py`) | Which tickers are trading above their own 20-day average volume, on rising price — on-demand only, no schedule | *(none — live scan)* |
 
@@ -58,7 +57,6 @@ actually trades. State: `data/conviction_*.json`.
 | `/momentum` | Momentum sleeve | read-only |
 | `/macro` | Macro sleeve | read-only |
 | `/kangaroo` | Kangaroo Tail sleeve | read-only |
-| `/triple-screen` | Triple Screen tracker | read-only |
 | `/scanner` | Ticker Indicator Board | read-only |
 | `/volume-spikes` | Volume spike scanner | read-only (live scan) |
 | `/demand` | Demand signals | read-only |
@@ -152,7 +150,7 @@ sudo systemctl enable --now stockscanner-dashboard.service    # always-on, not t
 Repeat `enable --now` for whichever other sleeves/collectors you want
 running (`stockscanner-momentum-*`, `stockscanner-macro-*`,
 `stockscanner-kangaroo-*`, `stockscanner-edgar.timer`,
-`stockscanner-demand-signals.timer`, `stockscanner-triple-screen-tracker.timer`,
+`stockscanner-demand-signals.timer`,
 `stockscanner-scanner-pipeline.timer`, `stockscanner-press-release.timer`,
 `stockscanner-news-watchlist.timer`, `stockscanner-news-watchlist-seed.timer`).
 
@@ -255,7 +253,7 @@ pytest -v -m characterization  # golden-value business logic locks
 ├── kangaroo_pipeline.py / kangaroo_buy.py / kangaroo_monitor.py
 ├── edgar_service.py            edgar/
 ├── demand_signals_service.py   demand_signals/
-├── triple_screen_tracker_service.py   triple_screen_tracker/   research/triple_screen/
+├── research/triple_screen/      (Elder Triple Screen reference implementation)
 ├── scanner_pipeline.py         scanner_board/
 ├── volume_spike_scanner.py
 ├── press_release_service.py    press_release_tracker/

@@ -1,5 +1,5 @@
 [Unit]
-Description=Run StockScanner News Watchlist's daily price update at 17:10 local time Mon-Fri (after triple-screen-tracker's 17:00, before scanner-pipeline's 17:15)
+Description=Run StockScanner News Watchlist's daily price update at 17:10 local time Mon-Fri (after main's 16:30, before scanner-pipeline's 17:15)
 
 [Timer]
 OnCalendar=Mon..Fri 17:10

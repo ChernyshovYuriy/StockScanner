@@ -59,15 +59,6 @@ journalctl -u stockscanner-macro-monitor.service -n 100 --no-pager
 # 18:30 -> 21:30 fix), daemon-reload alone won't recompute an already-armed
 # timer's next fire — restart it explicitly:
 sudo systemctl restart stockscanner-edgar.timer
-# Triple Screen tracker — 7th service, daily paper price-tracking experiment
-# built on research/triple_screen (see triple_screen_tracker/__init__.py and
-# config.py TRIPLE_SCREEN_TRACKER_*). Own SQLite DB, no capital/share sizing.
-# Runs at 17:00, after main.py's 16:30 pipeline and position_monitor.py's
-# 15:50 run — no file/DB collision, own DB.
-sudo systemctl enable --now stockscanner-triple-screen-tracker.timer
-sudo systemctl start stockscanner-triple-screen-tracker.service
-journalctl -u stockscanner-triple-screen-tracker.service -n 100 --no-pager
-
 # Kangaroo Tail sleeve — 8th, separate DB/capital, see config.py KANGAROO_*.
 # Breakout-entry, defined-risk paper account (research/kangaroo_tail/;
 # Phase 2 walk-forward findings in KANGAROO_TAIL_VERIFICATION_FINDINGS.md).
@@ -89,8 +80,8 @@ journalctl -u stockscanner-kangaroo-monitor.service -n 100 --no-pager
 # Scanner Board — 9th service, a read-only research board built on Elder's
 # "The New Trading for a Living" (see scanner_board/PLAN.md). No capital or
 # positions at all, unlike every sleeve above -- one snapshot row per ticker
-# per run, own SQLite DB (data/scanner_board.db). Runs at 17:15, after the
-# Triple Screen tracker's 17:00 run — no file/DB collision, own DB. No buy/
+# per run, own SQLite DB (data/scanner_board.db). Runs at 17:15, after
+# news-watchlist's 17:10 run — no file/DB collision, own DB. No buy/
 # monitor units (this isn't a trading sleeve): only the one pipeline.
 sudo systemctl enable --now stockscanner-scanner-pipeline.timer
 sudo systemctl start stockscanner-scanner-pipeline.service
@@ -118,8 +109,7 @@ journalctl -u stockscanner-press-release.service -n 100 --no-pager
 #     if it finds any (subject "News Watchlist", distinct from
 #     press-release's own "Stock News Results")
 #   stockscanner-news-watchlist.timer          — once daily at 17:10
-#     (after triple-screen-tracker's 17:00, before scanner-pipeline's
-#     17:15); appends today's price to every human-confirmed "watching"
+#     (after main's 16:30, before scanner-pipeline's 17:15); appends today's price to every human-confirmed "watching"
 #     item — no alert, pure bookkeeping
 sudo systemctl enable --now stockscanner-news-watchlist-seed.timer
 sudo systemctl enable --now stockscanner-news-watchlist.timer

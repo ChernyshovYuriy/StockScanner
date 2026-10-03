@@ -368,3 +368,47 @@ def test_scanner_page_end_to_end_with_a_real_computed_row(client, monkeypatch, t
     resp = client.get("/scanner")
     assert resp.status_code == 200
     assert "REAL.TO" in resp.data.decode()
+
+
+def test_macro_page_explains_strategy_with_live_config_values(client, monkeypatch):
+    from config import MACRO_MAX_POSITIONS, MACRO_RISK_PER_TRADE_PCT
+    monkeypatch.setattr("dashboard_app.build_macro_positions", lambda: [])
+    monkeypatch.setattr("dashboard_app.get_macro_cash", lambda: 10_000.0)
+    monkeypatch.setattr("dashboard_app.get_macro_transactions", lambda: get_transactions())
+    monkeypatch.setattr(
+        "dashboard_app.get_current_regime",
+        lambda: {"label": "neutral", "composite": 0, "votes": {}, "detail": {}},
+    )
+
+    html = client.get("/macro").data.decode()
+
+    assert "What this strategy does" in html
+    assert f"at most {MACRO_MAX_POSITIONS} positions" in html
+    assert f"risking {MACRO_RISK_PER_TRADE_PCT:g}% of the account" in html
+    assert "Triple Screen</a>" not in html  # tracker tab removed 2026-10
+
+
+def test_kangaroo_page_explains_strategy_with_live_config_values(client, monkeypatch):
+    from config import (
+        KANGAROO_MAX_HOLD_DAYS, KANGAROO_MAX_POSITIONS, KANGAROO_RISK_PER_TRADE_PCT, KANGAROO_RR_TARGET,
+    )
+    monkeypatch.setattr("dashboard_app.build_kangaroo_positions", lambda: [])
+    monkeypatch.setattr("dashboard_app.get_kangaroo_cash", lambda: 10_000.0)
+    monkeypatch.setattr("dashboard_app.get_kangaroo_transactions", lambda: get_transactions())
+    monkeypatch.setattr("dashboard_app.get_kangaroo_pending_intents", lambda: None)
+
+    resp = client.get("/kangaroo")
+    html = resp.data.decode()
+
+    assert resp.status_code == 200
+    assert "What this strategy does" in html
+    assert f"within\n      {KANGAROO_MAX_HOLD_DAYS} trading days" in html
+    assert f"{KANGAROO_RR_TARGET:g}× that risk" in html
+    assert f"Up to {KANGAROO_MAX_POSITIONS} positions" in html
+    assert f"{KANGAROO_RISK_PER_TRADE_PCT:g}% of the account" in html
+
+
+def test_triple_screen_tracker_page_is_gone(client):
+    """The Triple Screen tracker service was removed 2026-10; its tab and
+    route must not come back with a dangling DB/module behind them."""
+    assert client.get("/triple-screen").status_code == 404

@@ -10,12 +10,35 @@
       background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe;
       vertical-align: middle;
     }
+    .strategy-about {
+      margin: 4px 0 12px; padding: 10px 14px; max-width: 900px;
+      border-left: 3px solid #ddd6fe; background: var(--card-bg);
+      font-size: 13px; line-height: 1.5; color: var(--text);
+    }
+    .strategy-about p { margin: 0 0 6px; }
+    .strategy-about p:last-child { margin-bottom: 0; }
+    .strategy-about .caveat { color: var(--text-muted); font-size: 12px; }
   </style>
 {% endblock %}
 {% block content %}
   <div class="header-row">
     <h1 class="kangaroo-accent">Kangaroo Tail Sleeve <span class="kangaroo-badge">separate account · breakout entry</span></h1>
     <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <div class="strategy-about">
+    <p><strong>What this strategy does.</strong> It looks for a <em>Kangaroo Tail</em>: a daily
+      candle where price dropped sharply during the day on heavy volume, leaving a long lower wick,
+      but then closed back in the upper half of its range with a small body. Sellers tried to push
+      the stock down and buyers rejected it.</p>
+    <p>It does not buy on the tail day. It sets a pending breakout order at the tail's high
+      and buys only if price later trades through it (checked at 3:45 PM), within
+      {{ max_hold_days }} trading days or the setup expires. Stop at the tail's low; target
+      {{ "%g"|format(rr_target) }}× that risk above the entry; otherwise sold after
+      {{ max_hold_days }} trading days. Up to {{ max_positions }} positions, risking
+      {{ "%g"|format(risk_pct) }}% of the account on each.</p>
+    <p class="caveat">In a 4-year walk-forward backtest this breakout entry showed a modest edge
+      (56.6% winners, average +0.25R, p=0.033, 143 trades); buying at the tail day's close showed none.</p>
   </div>
 
   {% if error %}

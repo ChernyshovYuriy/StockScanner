@@ -23,12 +23,36 @@
     .regime-risk_off { color: #c0152f; }
     .regime-unknown { color: #5a6080; }
     .regime-votes { font-size: 11px; color: #888; margin-left: 8px; }
+    .strategy-about {
+      margin: 4px 0 12px; padding: 10px 14px; max-width: 900px;
+      border-left: 3px solid #bfdbfe; background: var(--card-bg);
+      font-size: 13px; line-height: 1.5; color: var(--text);
+    }
+    .strategy-about p { margin: 0 0 6px; }
+    .strategy-about p:last-child { margin-bottom: 0; }
+    .strategy-about .caveat { color: var(--text-muted); font-size: 12px; }
   </style>
 {% endblock %}
 {% block content %}
   <div class="header-row">
     <h1 class="macro-accent">Macro Conviction Sleeve <span class="macro-badge">separate account</span></h1>
     <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <div class="strategy-about">
+    <p><strong>What this strategy does.</strong> Loosely inspired by Stanley Druckenmiller:
+      read the economic backdrop first, then make a few large bets only when it is favourable.
+      Three US Federal Reserve (FRED) series each vote +1 / 0 / −1 on their recent trend:
+      the 10-year minus 2-year yield gap (widening is bullish), high-yield bond spreads
+      (narrowing is bullish) and the Fed's balance sheet (growing means more money in the system,
+      bullish). The votes add up to <strong>RISK ON</strong>, <strong>NEUTRAL</strong> or
+      <strong>RISK OFF</strong>.</p>
+    <p>It buys only when RISK ON. It has no screener of its own: it takes the core sleeve's
+      buy candidates (best reward-to-risk first), holding at most {{ max_positions }} positions
+      and risking {{ "%g"|format(risk_pct) }}% of the account on each. Exits use the core sleeve's
+      stop, giveback and time-stop rules, and if the reading turns RISK OFF it sells
+      everything to cash. Long-only, never short.</p>
+    <p class="caveat">The regime settings are untested starting points; this sleeve has no backtest yet.</p>
   </div>
 
   {% if error %}

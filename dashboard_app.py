@@ -29,7 +29,16 @@ import duckdb
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from concurrent_utils import acquire_lock
-from config import DASHBOARD_HOST, DASHBOARD_PORT
+from config import (
+    DASHBOARD_HOST,
+    DASHBOARD_PORT,
+    KANGAROO_MAX_HOLD_DAYS,
+    KANGAROO_MAX_POSITIONS,
+    KANGAROO_RISK_PER_TRADE_PCT,
+    KANGAROO_RR_TARGET,
+    MACRO_MAX_POSITIONS,
+    MACRO_RISK_PER_TRADE_PCT,
+)
 from conviction_dashboard_data import build_conviction_view
 from conviction_watchlist import quality_filter as conviction_quality_filter
 from conviction_watchlist.entry_screener import refresh_and_save as conviction_refresh_candidates
@@ -57,7 +66,6 @@ from news_watchlist_dashboard_data import (
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
 from time_utils import market_now, market_today_str
-from triple_screen_tracker_dashboard_data import build_triple_screen_tracker_state
 from volume_spike_scanner import scan_volume_spikes
 
 _ERROR_STATUS = {
@@ -261,6 +269,10 @@ def create_app() -> Flask:
             total_return=total_return,
             total_return_pct=total_return_pct,
             error=error,
+            rr_target=KANGAROO_RR_TARGET,
+            max_hold_days=KANGAROO_MAX_HOLD_DAYS,
+            risk_pct=KANGAROO_RISK_PER_TRADE_PCT,
+            max_positions=KANGAROO_MAX_POSITIONS,
         )
 
     @app.get("/macro")
@@ -321,6 +333,8 @@ def create_app() -> Flask:
             total_return_pct=total_return_pct,
             regime=regime,
             error=error,
+            risk_pct=MACRO_RISK_PER_TRADE_PCT,
+            max_positions=MACRO_MAX_POSITIONS,
         )
 
     @app.get("/demand")
@@ -340,30 +354,12 @@ def create_app() -> Flask:
         summaries = summarize_all(rows)
         return render_template("demand_signals.html", rows=rows, summaries=summaries, error=error)
 
-    @app.get("/triple-screen")
-    def triple_screen():
-        """Read-only view of triple_screen_tracker.db (see
-        triple_screen_tracker/__init__.py). No action here, same as /demand:
-        this is a display layer over what triple_screen_tracker_service.py
-        has already populated, never a trigger for a fetch or a trade."""
-        try:
-            state = _read_with_retry(build_triple_screen_tracker_state)
-            error = None
-        except (sqlite3.Error, OSError):
-            state = {"open": [], "closed": []}
-            error = "Database temporarily unavailable — retrying on next refresh."
-
-        return render_template(
-            "triple_screen_tracker.html",
-            open_rows=state["open"], closed_rows=state["closed"], error=error,
-        )
-
     @app.get("/scanner")
     def scanner():
         """Read-only view of the Ticker Indicator Board (see
         scanner_board/PLAN.md): a display layer over whatever
         scanner_pipeline.py has last computed -- no buy/sell/capital
-        action, same as /triple-screen. The one action available is the
+        action, same as /demand. The one action available is the
         "Fetch Fresh Data" button below, which runs that same pipeline
         on demand (see /scanner/refresh) rather than waiting for its
         17:15 ET scheduled run."""
