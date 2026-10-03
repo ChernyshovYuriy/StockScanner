@@ -1,7 +1,15 @@
 """
 volume_spike_same_day_backtest.py
 ===================================
-The validated finding, after volume_spike_intraday_backtest.py's own
+RE-JUDGED 2026-10: the RESULT below is a LOOKAHEAD ARTIFACT, not an edge.
+An event is chosen from the FULL day's bar, and the rule requires
+close > yesterday's close, so every "trade" is on a day already known
+to close up -- the midday-to-close gain is baked into the selection. The
+"honest caveat" further down understated this: it's not mild, it is the
+whole effect. Real-time partial-day checkpoints (no knowledge of the
+close) showed no edge. Kept for the record; do not build on it.
+
+Originally written up as the validated finding, after volume_spike_intraday_backtest.py's own
 checkpoint sweep was retracted (broken hourly-volume data -- see that
 script's docstring) and volume_spike_daily_backtest.py showed that
 buying a confirmed spike at its CLOSE and holding forward is negative
@@ -35,7 +43,8 @@ INTRADAY_PERIOD hourly-bar ceiling): 16/16 folds positive, t=18.34,
 p~0.0000. Win rate 63.1% (15,302 events) vs. 46.3% baseline (57,981
 ticker-days), mean return +0.27%/trade vs. -0.04%/trade -- a +0.32pp
 edge, consistent in both halves of the window (+0.32pp / +0.32pp). This
-is the strongest, cleanest result in this whole line of research.
+was read as the strongest result in this line of research (see the
+RE-JUDGED note at the top).
 
 Economic read: a volume spike's own price move tends to continue THROUGH
 the day it happens (real intraday follow-through) but is largely spent
