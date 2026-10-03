@@ -385,6 +385,20 @@ class LiveDataProvider(MarketDataProvider):
         return yf.Ticker(ticker).info
 
     # ------------------------------------------------------------------
+    # get_earnings_dates() — past/upcoming earnings reports with EPS
+    # estimate, reported EPS and surprise
+    # ------------------------------------------------------------------
+    def get_earnings_dates(self, ticker: str, limit: int = 40) -> Optional[pd.DataFrame]:
+        """Return yfinance's earnings-dates table for ticker (tz-aware
+        report timestamp index; 'EPS Estimate', 'Reported EPS',
+        'Surprise(%)' columns), or None when Yahoo has none (common for
+        TSXV/CSE names). Raises on failure like get_info(); callers own
+        their own try/except.
+
+        Live-only: never called by the backtester."""
+        return yf.Ticker(ticker).get_earnings_dates(limit=limit)
+
+    # ------------------------------------------------------------------
     # download_bars() — generic single-ticker period/interval fetch
     # ------------------------------------------------------------------
     def download_bars(self, ticker: str, period: str, interval: str) -> pd.DataFrame:
