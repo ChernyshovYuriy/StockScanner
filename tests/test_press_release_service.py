@@ -1,12 +1,20 @@
 """Offline integration tests for press_release_service.run_collector (no
 network -- feeds.fetch_feed_items / llm_parser.parse_release / send_text_email
-are always monkeypatched; a real call to any of them would be a test bug)."""
+are always monkeypatched; a real call to any of them would be a test bug).
+analyst.analyze_release is stubbed to None for every test by the autouse
+fixture below, unless a test overrides it."""
 
+import pytest
 import requests
 
 import press_release_service
 from press_release_tracker import store
 from press_release_tracker.feeds import FeedItem
+
+
+@pytest.fixture(autouse=True)
+def _offline_analyst(monkeypatch):
+    monkeypatch.setattr(press_release_service.analyst, "analyze_release", lambda *a, **k: None)
 
 
 def _item(guid, feed_url="https://feed-a", **overrides):
@@ -232,3 +240,33 @@ def test_dry_run_previews_batch_lane_even_when_the_real_window_is_not_due(tmp_pa
     out = capsys.readouterr().out
     assert "hourly digest" in out
     assert "BBB" in out
+
+
+def test_run_collector_analyses_important_item_and_emails_it(tmp_path, monkeypatch):
+    conn = store.connect(tmp_path / "pr.db")
+    monkeypatch.setattr(press_release_service, "PRESS_RELEASE_FEEDS", ["https://feed-a"])
+    monkeypatch.setattr(press_release_service.feeds, "fetch_feed_items",
+                         lambda url: [_item("g1", link="https://www.globenewswire.com/news-release/2026/10/01/1/0/en/x.html"),
+                                      _item("g2")])
+    monkeypatch.setattr(press_release_service.llm_parser, "parse_release",
+                         lambda title, desc, cats: {"ticker": "YARR.V", "company": "Pirate Gold",
+                                                     "category": "financing" if "g1" in title else "personnel",
+                                                     "materiality": "medium", "summary": "s"})
+    seen = []
+
+    def fake_analyze(ticker, company, title, link):
+        seen.append(ticker)
+        return {"verdict": "bearish", "trend": "unclear", "confidence": "medium",
+                "verdict_reason": "heavy dilution", "dilution": {"level": "significant", "detail": "15%"},
+                "body_chars": 100}
+
+    monkeypatch.setattr(press_release_service.analyst, "analyze_release", fake_analyze)
+    calls = _no_email(monkeypatch)
+
+    press_release_service.run_collector("run1", conn=conn)
+
+    assert seen == ["YARR.V"]  # g2 (personnel, medium) is not analysed
+    row = conn.execute("SELECT guid, verdict, dilution_level FROM release_analysis").fetchall()
+    assert row == [("g1", "bearish", "significant")]
+    assert "ANALYST: BEARISH" in calls[0][1]
+    assert "dilution (significant): 15%" in calls[0][1]

@@ -32,7 +32,10 @@ split-schedule-single-script precedent as position_monitor.py's
                          item's price history. Inbox items get NO price
                          tracking until a human confirms them from the
                          dashboard -- see news_watchlist/__init__.py for why
-                         that gate exists.
+                         that gate exists. Also scores the forward returns
+                         of EVERY parsed release with a ticker
+                         (news_watchlist/outcomes.py) -- an automatic
+                         measurement, independent of the triage gate.
 
   --mode both (default)  Runs both steps once, in order -- convenient for
                          manual testing / --dry-run; not what either
@@ -57,10 +60,16 @@ from concurrent_utils import acquire_lock
 from config import NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS, PRESS_RELEASE_DB_PATH
 from log_utils import log
 from manual_sell import get_market_price
+from market_data import DEFAULT_PROVIDER
 from send_report import send_text_email
 from time_utils import TSX_HOLIDAYS, market_now, market_today_str
 
-from news_watchlist import digest, store
+from news_watchlist import digest, outcomes, store
+
+# A release whose ticker resolves to no Yahoo symbol at all is retried
+# this many days after publication (a transient download failure
+# shouldn't drop it forever), then settled as 'no_data'.
+OUTCOME_NO_DATA_GRACE_DAYS = 14
 
 
 def _is_trading_day(today: date) -> bool:
@@ -229,19 +238,117 @@ def update_watching_prices(run_id, conn, price_fetcher, dry_run=False) -> list[d
     return updated
 
 
+def _read_release_events(pr_db_path) -> list[dict]:
+    """Every parsed_releases row with a ticker, with its pubdate and (when
+    analyst.py read it) the analyst verdict/dilution level -- [] if
+    press_releases.db or its tables don't exist yet, same convention as
+    _read_parsed_candidates()."""
+    try:
+        conn = sqlite3.connect(f"file:{pr_db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT p.guid, p.ticker, p.company, p.category, p.materiality, s.pubdate, "
+            "       a.verdict, a.dilution_level "
+            "FROM parsed_releases p JOIN seen_items s ON s.guid = p.guid "
+            "LEFT JOIN release_analysis a ON a.guid = p.guid "
+            "WHERE p.ticker IS NOT NULL AND p.ticker != ''"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+    cols = ["guid", "ticker", "company", "category", "materiality", "pubdate",
+            "verdict", "dilution_level"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def _download_bars(symbols: list[str], start: str, end: str) -> dict:
+    data, _failed = DEFAULT_PROVIDER.download_range(symbols, start=start, end=end)
+    return data
+
+
+def score_release_outcomes(run_id, conn, pr_db_path, bar_fetcher, dry_run=False) -> list[dict]:
+    """Compute/refresh release_outcomes for every not-yet-settled release
+    (see news_watchlist/outcomes.py). One batched bar download per run
+    covering every candidate symbol plus the XIU.TO benchmark. Returns the
+    rows written (or that would be, under dry_run)."""
+    today = market_now().date()
+    now = market_now().isoformat()
+    settled = store.final_outcome_guids(conn)
+    known_symbols = store.outcome_symbols(conn)
+
+    events = []
+    for e in _read_release_events(pr_db_path):
+        if e["guid"] in settled:
+            continue
+        published = outcomes.parse_published(e["pubdate"])
+        if published is None:
+            continue
+        e["published"] = published
+        e["candidates"] = ([known_symbols[e["guid"]]] if e["guid"] in known_symbols
+                           else outcomes.symbol_candidates(e["ticker"]))
+        events.append(e)
+    if not events:
+        return []
+
+    symbols = sorted({s for e in events for s in e["candidates"]} | {outcomes.BENCHMARK})
+    start = (min(e["published"] for e in events).date() - timedelta(days=10)).isoformat()
+    end = (today + timedelta(days=1)).isoformat()
+    bars = bar_fetcher(symbols, start, end)
+    bench = bars.get(outcomes.BENCHMARK)
+    if bench is None or bench.empty:
+        log("news_watchlist", run_id, "outcome_benchmark_unavailable")
+        return []
+
+    written = []
+    for e in events:
+        pub_day = e["published"].date()
+        # First candidate with any history from before publication -- a
+        # symbol that only starts trading afterwards isn't this company.
+        symbol = next((s for s in e["candidates"]
+                       if s in bars and (bars[s].index.date <= pub_day).any()), None)
+        row = {
+            "guid": e["guid"], "ticker": e["ticker"], "yahoo_ticker": symbol,
+            "company": e["company"], "category": e["category"],
+            "materiality": e["materiality"], "verdict": e["verdict"],
+            "dilution_level": e["dilution_level"],
+            "published_at": e["published"].isoformat(), "updated_at": now,
+        }
+        if symbol is None:
+            if (today - pub_day).days <= OUTCOME_NO_DATA_GRACE_DAYS:
+                continue
+            row["status"] = "no_data"
+        else:
+            result = outcomes.compute_outcome(bars[symbol], bench, e["published"], today)
+            if result is not None:
+                complete = result.pop("complete")
+                row.update(result)
+                row["status"] = "complete" if complete else "pending"
+            else:
+                row["status"] = "pending"
+        if not dry_run:
+            store.upsert_outcome(conn, row)
+        written.append(row)
+    return written
+
+
 def run_collector(run_id, mode="both", dry_run=False, conn=None, press_release_db_path=None,
-                   price_fetcher=None):
+                   price_fetcher=None, bar_fetcher=None):
     """Dispatches to seed_inbox()/update_watching_prices() per `mode` (see
     module docstring), then handles the seed step's immediate-alert email.
 
     `conn` overrides the default store.connect(), `press_release_db_path`
     overrides PRESS_RELEASE_DB_PATH, `price_fetcher` overrides
-    _resolve_market_price() -- test-only seams, same injection pattern
+    _resolve_market_price(), `bar_fetcher` overrides _download_bars() --
+    test-only seams, same injection pattern
     triple_screen_tracker_service.run_collector's `provider`/`conn` use.
     """
     conn = conn or store.connect()
     pr_db_path = press_release_db_path or PRESS_RELEASE_DB_PATH
     price_fetcher = price_fetcher or _resolve_market_price
+    bar_fetcher = bar_fetcher or _download_bars
 
     if mode in ("seed", "both"):
         seeded = seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=dry_run)
@@ -263,6 +370,11 @@ def run_collector(run_id, mode="both", dry_run=False, conn=None, press_release_d
             log("news_watchlist", run_id, "updated", count=len(updated))
             if dry_run:
                 print(f"Would update {len(updated)} watching item(s): {[u['ticker'] for u in updated]}")
+            scored = score_release_outcomes(run_id, conn, pr_db_path, bar_fetcher, dry_run=dry_run)
+            log("news_watchlist", run_id, "outcomes_scored", count=len(scored),
+                complete=sum(r["status"] == "complete" for r in scored))
+            if dry_run:
+                print(f"Would score {len(scored)} release outcome(s)")
         else:
             log("news_watchlist", run_id, "not_a_trading_day", date=today.isoformat())
 

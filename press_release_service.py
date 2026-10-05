@@ -11,7 +11,10 @@ later with no code change, just appending another URL to that list),
 dedupes new items by guid (press_release_tracker/store.py), and parses
 each new item with an LLM (press_release_tracker/llm_parser.py --
 OPENAI_API_KEY optional; unconfigured means the raw RSS title/link still
-go out, un-classified).
+go out, un-classified). An important item (see
+press_release_tracker/analyst.py's should_analyze()) also gets an analyst
+read of its FULL article -- figures, trend, cash, dilution, red flags,
+verdict -- carried in the email and shown on /news-watchlist.
 
 Two delivery lanes, split on the LLM's own materiality read:
   - "high"  -- emailed immediately, every run that finds one, no batching.
@@ -52,7 +55,7 @@ from log_utils import log
 from send_report import send_text_email
 from time_utils import market_now
 
-from press_release_tracker import digest, feeds, llm_parser, store
+from press_release_tracker import analyst, digest, feeds, llm_parser, store
 
 BATCH_INTERVAL = timedelta(minutes=PRESS_RELEASE_BATCH_INTERVAL_MINUTES)
 
@@ -92,11 +95,22 @@ def run_collector(run_id, dry_run=False, conn=None):
         parsed = llm_parser.parse_release(item.title, item.description, item.categories)
         if parsed and not dry_run:
             store.save_parsed(conn, item.guid, parsed, llm_parser.MODEL, now)
+        # Analyst read of the full article (see analyst.py) -- before the
+        # email below, so even the immediate "high" lane carries it.
+        analysis = None
+        if analyst.should_analyze(parsed, item.link):
+            analysis = analyst.analyze_release(parsed["ticker"], parsed.get("company"),
+                                               item.title, item.link)
+            log("press_release", run_id, "analysis" if analysis else "analysis_failed",
+                ticker=parsed["ticker"], verdict=(analysis or {}).get("verdict"))
+            if analysis and not dry_run:
+                store.save_analysis(conn, item.guid, parsed["ticker"], analysis, analyst.MODEL, now)
         dry_run_rows.append({
             "guid": item.guid, "feed_url": item.feed_url, "title": item.title,
             "link": item.link, "pubdate": item.pubdate,
             **(parsed or {"ticker": None, "company": None, "category": None,
                            "materiality": None, "summary": None}),
+            "analysis": analysis,
         })
 
     rows = dry_run_rows if dry_run else store.unemailed(conn)

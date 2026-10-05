@@ -35,6 +35,15 @@ def _no_real_email(monkeypatch):
     return calls
 
 
+@pytest.fixture(autouse=True)
+def _no_real_bar_download(monkeypatch):
+    """update-prices also scores release outcomes (score_release_outcomes),
+    whose default bar fetcher hits Yahoo -- stub it out with "no data", so
+    no test here touches the network. Outcome scoring itself is tested in
+    test_news_watchlist_outcomes.py."""
+    monkeypatch.setattr(news_watchlist_service, "_download_bars", lambda symbols, start, end: {})
+
+
 def _seed_parsed_release(pr_db_path, guid, ticker, pubdate="Mon, 21 Sep 2026 08:36:00 GMT", **overrides):
     conn = pr_store.connect(pr_db_path)
     item = FeedItem(

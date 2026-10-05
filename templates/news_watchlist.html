@@ -86,6 +86,15 @@
     /* Volume column: only the "so-far today" number is colored (average is
        the reference line, not itself bullish/bearish) -- same --buy/--sell
        vars the Confirm/Dismiss buttons already use on this page. */
+    /* Analyst read (press_release_tracker/analyst.py) -- a collapsed
+       <details> under the summary; the verdict chip shows without opening. */
+    details.nw-analysis { margin-top: 4px; font-size: 12px; max-width: 520px; white-space: normal; }
+    details.nw-analysis summary { cursor: pointer; color: var(--text-muted); }
+    details.nw-analysis ul { margin: 4px 0; padding-left: 18px; }
+    details.nw-analysis p { margin: 4px 0; }
+    .nw-verdict { font-weight: 700; text-transform: uppercase; }
+    .nw-verdict-bullish { color: var(--buy, #15803d); }
+    .nw-verdict-bearish { color: var(--sell); }
     .vol-above { color: var(--buy, #15803d); font-weight: 600; }
     .vol-below { color: var(--sell); font-weight: 600; }
 
@@ -113,6 +122,23 @@
     }
   </style>
 {% endblock %}
+{% macro analysis_block(a) %}
+  {% if a %}
+  <details class="nw-analysis">
+    <summary>📊 <span class="nw-verdict nw-verdict-{{ a.verdict }}">{{ a.verdict or "?" }}</span>
+      · trend {{ a.trend or "?" }}{% if a.dilution and a.dilution.level not in (none, "none") %} · dilution {{ a.dilution.level }}{% endif %}</summary>
+    {% if a.verdict_reason %}<p>{{ a.verdict_reason }}</p>{% endif %}
+    {% if a.what_is_new %}<p><b>New:</b> {{ a.what_is_new }}</p>{% endif %}
+    {% if a.key_figures %}<ul>{% for f in a.key_figures %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+    {% if a.valuation %}<p><b>Valuation:</b> {{ a.valuation }}</p>{% endif %}
+    {% if a.cash_position %}<p><b>Cash:</b> {{ a.cash_position }}</p>{% endif %}
+    {% if a.dilution and a.dilution.detail %}<p><b>Dilution:</b> {{ a.dilution.detail }}</p>{% endif %}
+    {% if a.red_flags %}<p><b>Red flags:</b> {{ a.red_flags|join("; ") }}</p>{% endif %}
+    {% if a.positives %}<p><b>Positives:</b> {{ a.positives|join("; ") }}</p>{% endif %}
+    <p class="nw-note">Confidence {{ a.confidence or "?" }} · LLM read of the full release — unvalidated, check the source.</p>
+  </details>
+  {% endif %}
+{% endmacro %}
 {% block content %}
   <div class="header-row">
     <h1 class="nw-accent">News Watchlist <span class="nw-badge">follow-through tracker</span></h1>
@@ -164,7 +190,7 @@
             <td class="nw-tight">{{ item.company or "—" }}</td>
             <td class="nw-tight">{{ item.category or "—" }}</td>
             <td class="nw-tight">{{ item.materiality or "—" }}</td>
-            <td title="{{ item.summary or '' }}"><div class="nw-summary">{{ item.summary or "—" }}</div></td>
+            <td><div class="nw-summary" title="{{ item.summary or '' }}">{{ item.summary or "—" }}</div>{{ analysis_block(item.analysis) }}</td>
             <td class="nw-tight" title="{{ item.flagged_at }}" data-sort-value="{{ item.created_at }}">{{ item.flagged_date or "—" }}<br>{{ item.flagged_time or "" }}</td>
             <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td class="nw-tight nw-volume" data-ticker="{{ item.ticker }}">…</td>
@@ -201,7 +227,7 @@
           {% for item in watching %}
           <tr data-row-id="{{ item.id }}">
             <td><a href="{{ item.quote_link }}" target="_blank" rel="noopener">{{ item.ticker }}</a></td>
-            <td>{{ item.company or "—" }}</td>
+            <td>{{ item.company or "—" }}{{ analysis_block(item.analysis) }}</td>
             <td>{{ item.flagged_at }}</td>
             <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td>{{ "$%.2f"|format(item.latest_price) if item.latest_price is not none else "—" }}</td>

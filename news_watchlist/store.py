@@ -68,7 +68,42 @@ CREATE TABLE IF NOT EXISTS seeded_release_guids (
 );
 INSERT OR IGNORE INTO seeded_release_guids (guid, processed_at)
     SELECT guid, created_at FROM watchlist_items WHERE guid IS NOT NULL;
+CREATE TABLE IF NOT EXISTS release_outcomes (
+    guid TEXT PRIMARY KEY,
+    ticker TEXT NOT NULL,
+    yahoo_ticker TEXT,
+    company TEXT,
+    category TEXT,
+    materiality TEXT,
+    verdict TEXT,
+    dilution_level TEXT,
+    published_at TEXT,
+    entry_date TEXT,
+    prior_close REAL,
+    entry_open REAL,
+    ret_1d REAL, bench_ret_1d REAL,
+    ret_5d REAL, bench_ret_5d REAL,
+    ret_20d REAL, bench_ret_20d REAL,
+    ret_60d REAL, bench_ret_60d REAL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
+
+# release_outcomes (added 2026-10) -- forward returns for EVERY parsed
+# press release with a ticker, not just watching items; see
+# news_watchlist/outcomes.py. Keyed on the press-release guid, independent
+# of watchlist_items (dismissing an item doesn't drop its outcome).
+# status: 'pending' (recomputed every run), 'complete' (all horizons in,
+# never touched again), 'no_data' (no Yahoo symbol found after
+# OUTCOME_NO_DATA_GRACE_DAYS -- also final).
+_OUTCOME_COLUMNS = (
+    "guid", "ticker", "yahoo_ticker", "company", "category", "materiality",
+    "verdict", "dilution_level", "published_at", "entry_date", "prior_close",
+    "entry_open", "ret_1d", "bench_ret_1d", "ret_5d", "bench_ret_5d",
+    "ret_20d", "bench_ret_20d", "ret_60d", "bench_ret_60d", "status",
+    "updated_at",
+)
 
 _ITEM_COLUMNS = (
     "id", "guid", "ticker", "company", "category", "materiality", "summary",
@@ -275,3 +310,38 @@ def price_history_for(conn, item_id: int) -> list[dict]:
         (item_id,),
     ).fetchall()
     return [{"date": r[0], "close_price": r[1]} for r in rows]
+
+
+def final_outcome_guids(conn) -> set:
+    """Guids whose outcome is settled ('complete' or 'no_data') --
+    news_watchlist_service.score_release_outcomes() skips these."""
+    return {r[0] for r in conn.execute(
+        "SELECT guid FROM release_outcomes WHERE status IN ('complete','no_data')")}
+
+
+def outcome_symbols(conn) -> dict:
+    """{guid: yahoo_ticker} for every row whose symbol is already resolved
+    -- lets a pending row skip re-trying the other suffix candidates."""
+    return {r[0]: r[1] for r in conn.execute(
+        "SELECT guid, yahoo_ticker FROM release_outcomes WHERE yahoo_ticker IS NOT NULL")}
+
+
+def upsert_outcome(conn, row: dict) -> None:
+    """Insert or overwrite one release_outcomes row. Missing keys are
+    stored as NULL."""
+    conn.execute(
+        f"INSERT OR REPLACE INTO release_outcomes({','.join(_OUTCOME_COLUMNS)}) "
+        f"VALUES({','.join('?' * len(_OUTCOME_COLUMNS))})",
+        tuple(row.get(c) for c in _OUTCOME_COLUMNS),
+    )
+    conn.commit()
+
+
+def list_scored_outcomes(conn) -> list[dict]:
+    """Every outcome row with an entry (i.e. at least the entry session has
+    happened), pending or complete -- the report's input."""
+    rows = conn.execute(
+        f"SELECT {','.join(_OUTCOME_COLUMNS)} FROM release_outcomes "
+        "WHERE entry_date IS NOT NULL ORDER BY entry_date"
+    ).fetchall()
+    return [dict(zip(_OUTCOME_COLUMNS, r)) for r in rows]

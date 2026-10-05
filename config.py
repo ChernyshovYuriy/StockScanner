@@ -371,6 +371,18 @@ PRESS_RELEASE_LLM_MAX_DESCRIPTION_CHARS = 2000
 # minutes (the timer's own poll interval) for routine releases.
 PRESS_RELEASE_BATCH_INTERVAL_MINUTES = 60
 
+# Analyst read (press_release_tracker/analyst.py, added 2026-10): the FULL
+# article of an important release (a ticker, an English page, and one of
+# these categories or materiality 'high') goes to a stronger model than the
+# classifier above -- reading figures, tables and dilution terms is a
+# harder task than classifying a teaser. ~30-60 items a day; verify
+# current pricing before relying on a cost estimate.
+PRESS_RELEASE_ANALYSIS_MODEL = "gpt-5-mini"
+PRESS_RELEASE_ANALYSIS_CATEGORIES = ("earnings", "financing", "ma_acquisition", "contract_award")
+# Caps tokens per analysis; a full results release with its statement
+# tables is typically 10-25k characters.
+PRESS_RELEASE_ANALYSIS_MAX_BODY_CHARS = 24000
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # News watchlist — 11th service, a follow-through tracker for

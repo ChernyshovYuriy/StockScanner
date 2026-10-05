@@ -412,3 +412,31 @@ def test_triple_screen_tracker_page_is_gone(client):
     """The Triple Screen tracker service was removed 2026-10; its tab and
     route must not come back with a dangling DB/module behind them."""
     assert client.get("/triple-screen").status_code == 404
+
+
+def test_news_watchlist_page_renders_the_analyst_read(client, monkeypatch):
+    """The analyst block (templates/news_watchlist.html's analysis_block
+    macro) renders for both an Inbox and a Watching row, and is absent for
+    an item with no analysis."""
+    analysis = {"verdict": "bearish", "trend": "deteriorating", "confidence": "high",
+                "verdict_reason": "Raise priced 30% below market.",
+                "key_figures": ["Revenue $1.2M vs $0.8M"],
+                "dilution": {"level": "significant", "detail": "+25% of shares"},
+                "red_flags": ["going concern"], "positives": []}
+    base = dict(company="Acme", category="financing", materiality="high", summary="s",
+                source_link=None, flagged_at="2026-10-03", flag_price=0.5, latest_price=0.5,
+                pct_change=0.0, days_since_flagged=0, flagged_date="2026-10-03",
+                flagged_time="09-00", quote_link="https://x", created_at="2026-10-03T09:00:00",
+                current_volume=None, average_volume=None, price_history=[], note=None)
+    state = {"inbox": [dict(base, id=1, ticker="ACME.V", status="inbox", analysis=analysis),
+                       dict(base, id=2, ticker="PLAIN.V", status="inbox", analysis=None)],
+             "watching": [dict(base, id=3, ticker="WAT.V", status="watching", analysis=analysis)],
+             "dismissed": []}
+    monkeypatch.setattr("dashboard_app.build_news_watchlist_state", lambda: state)
+    resp = client.get("/news-watchlist")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert html.count('class="nw-analysis"') == 2
+    assert "nw-verdict-bearish" in html
+    assert "Raise priced 30% below market." in html
+    assert "+25% of shares" in html and "going concern" in html

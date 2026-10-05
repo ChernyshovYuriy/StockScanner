@@ -335,3 +335,35 @@ def test_fetch_volumes_never_probes_suffixes_for_an_already_suffixed_ticker(monk
 
     assert calls == [["KTO.V"]]
     assert result == {}
+
+
+def test_items_carry_the_analyst_read_from_press_releases_db(tmp_path, monkeypatch):
+    from press_release_tracker import store as pr_store
+
+    db_path = tmp_path / "nw.db"
+    conn = store.connect(db_path)
+    store.seed_inbox_item(
+        conn, guid="g1", ticker="ACME.V", company=None, category="financing", materiality="high",
+        summary=None, source_link=None, flagged_at="2026-10-03", flag_price=0.5,
+        created_at="2026-10-03T09:00:00",
+    )
+    store.seed_inbox_item(
+        conn, guid="g2", ticker="BETA.V", company=None, category="personnel", materiality="low",
+        summary=None, source_link=None, flagged_at="2026-10-03", flag_price=0.5,
+        created_at="2026-10-03T09:01:00",
+    )
+    pr_db = tmp_path / "pr.db"
+    pr_conn = pr_store.connect(pr_db)
+    pr_store.save_analysis(pr_conn, "g1", "ACME.V", {"verdict": "bearish", "body_chars": 10},
+                           "gpt-5-mini", "2026-10-03T09:00:30")
+    monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", db_path)
+    monkeypatch.setattr(nwd, "PRESS_RELEASE_DB_PATH", pr_db)
+
+    by_ticker = {r["ticker"]: r for r in nwd._build_news_watchlist_state()["inbox"]}
+    assert by_ticker["ACME.V"]["analysis"]["verdict"] == "bearish"
+    assert by_ticker["BETA.V"]["analysis"] is None
+
+
+def test_analyses_empty_when_press_release_db_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(nwd, "PRESS_RELEASE_DB_PATH", tmp_path / "missing.db")
+    assert nwd._read_analyses(["g1"]) == {}

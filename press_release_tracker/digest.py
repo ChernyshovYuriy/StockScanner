@@ -12,6 +12,8 @@ every email this sleeve sends can be filtered on one string.
 """
 from __future__ import annotations
 
+from press_release_tracker.analyst import format_analysis
+
 # Fixed, unique across every email this sleeve sends (immediate AND
 # batched) so it can be filtered/searched on in an email client -- the
 # user's own explicit ask, not just a cosmetic subject line.
@@ -22,7 +24,8 @@ def build_digest(rows: list[dict], kind: str = "batch") -> tuple[str, str]:
     """rows: dicts with guid/feed_url/title/link/pubdate/ticker/company/
     category/materiality/summary (the LLM fields are None when
     OPENAI_API_KEY isn't configured or the parse failed -- the raw
-    title/link still go out either way).
+    title/link still go out either way), plus an optional "analysis"
+    dict (analyst.py's full-article read, None for most items).
 
     kind: "high" (the immediate lane) or "batch" (the hourly rollup) --
     controls only the subject wording; the body format is identical
@@ -43,6 +46,8 @@ def build_digest(rows: list[dict], kind: str = "batch") -> tuple[str, str]:
             lines.append(f"  category: {r['category']}  materiality: {r.get('materiality')}")
         if r.get("summary"):
             lines.append(f"  {r['summary']}")
+        if r.get("analysis"):
+            lines.extend(format_analysis(r["analysis"]))
         lines.append(f"  {r['link']}")
         lines.append(f"  published: {r['pubdate']}")
         lines.append("")
