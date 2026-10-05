@@ -14,6 +14,11 @@ exchange-qualified tickers ("TSX Venture Exchange:ABC"), so the Yahoo
 symbol comes straight from the exchange instead of the live path's
 .TO/.V guessing.
 
+A few months' sitemaps (2024-03, 2026-05..07 when this was built) are
+bare URL lists with no news metadata -- no tickers, title or time -- so
+they contribute nothing; finding their Canadian releases would mean
+fetching every page of the month. step_list() reports them.
+
 Everything lives in its OWN DB (config.PRESS_RELEASE_ARCHIVE_DB_PATH),
 never read by a live service: press_release_tracker/store.py's tables
 (seen_items/parsed_releases/financing_terms) plus news_watchlist/store.py's
@@ -237,9 +242,11 @@ def _fetch_sitemap(month: str, refresh: bool) -> str:
 def step_list(conn, first=FIRST_MONTH, last=LAST_MONTH) -> None:
     now = datetime.now(timezone.utc).isoformat()
     for month in months(first, last):
-        entries = parse_sitemap(_fetch_sitemap(month, refresh=(month == last)))
+        xml_text = _fetch_sitemap(month, refresh=(month == last))
+        entries = parse_sitemap(xml_text)
         added = import_entries(conn, entries, now)
-        print(f"{month}: {len(entries)} Canadian-listed, {added} new")
+        note = "" if "<news:news" in xml_text else "  (no news metadata in this sitemap -- skipped)"
+        print(f"{month}: {len(entries)} Canadian-listed, {added} new{note}")
 
 
 def _unclassified(conn) -> list[tuple]:

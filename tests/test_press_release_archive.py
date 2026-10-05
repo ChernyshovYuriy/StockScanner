@@ -163,3 +163,9 @@ def test_score_uses_archive_candidates_and_reports_survivorship(tmp_path, monkey
     assert row["status"] == "complete"
     assert archive.survivorship(conn) == {"financing_releases": 1, "scored": 1, "no_yahoo_data": 0}
     assert "Financing releases: 1, scored: 1" in archive.step_report(db_path=db)
+
+
+def test_bare_url_sitemap_yields_nothing():
+    bare = ('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url>'
+            '<loc>/news-release/2026/06/30/1/0/en/x.html</loc></url></urlset>')
+    assert archive.parse_sitemap(bare) == []
