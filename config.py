@@ -382,6 +382,12 @@ PRESS_RELEASE_ANALYSIS_CATEGORIES = ("earnings", "financing", "ma_acquisition", 
 # Caps tokens per analysis; a full results release with its statement
 # tables is typically 10-25k characters.
 PRESS_RELEASE_ANALYSIS_MAX_BODY_CHARS = 24000
+# Historical backfill (press_release_tracker/archive.py): GlobeNewswire's
+# monthly English sitemaps, Canadian-listed releases only, in their OWN
+# DB -- never read by the live services, so 3-year-old releases can't
+# leak into the News Watchlist inbox or mix with live outcome numbers.
+PRESS_RELEASE_ARCHIVE_DB_PATH = DATA_PATH / "press_release_archive.db"
+PRESS_RELEASE_ARCHIVE_CACHE_PATH = CACHE_PATH / "press_release_archive"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

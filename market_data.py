@@ -399,6 +399,20 @@ class LiveDataProvider(MarketDataProvider):
         return yf.Ticker(ticker).get_earnings_dates(limit=limit)
 
     # ------------------------------------------------------------------
+    # get_shares_history() — shares outstanding over time
+    # ------------------------------------------------------------------
+    def get_shares_history(self, ticker: str, start: str, end: str) -> Optional[pd.Series]:
+        """Return yfinance's shares-outstanding history for ticker over
+        [start, end] (a Series indexed by timestamp), or None when Yahoo
+        has none. Used by press_release_tracker/archive.py to measure a
+        past financing's dilution against the share count AT THE TIME
+        rather than today's. Raises on failure like get_info(); callers
+        own their own try/except.
+
+        Live-only: never called by the backtester."""
+        return yf.Ticker(ticker).get_shares_full(start=start, end=end)
+
+    # ------------------------------------------------------------------
     # download_bars() — generic single-ticker period/interval fetch
     # ------------------------------------------------------------------
     def download_bars(self, ticker: str, period: str, interval: str) -> pd.DataFrame:

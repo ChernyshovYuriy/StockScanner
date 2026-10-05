@@ -269,11 +269,16 @@ def _download_bars(symbols: list[str], start: str, end: str) -> dict:
     return data
 
 
-def score_release_outcomes(run_id, conn, pr_db_path, bar_fetcher, dry_run=False) -> list[dict]:
+def score_release_outcomes(run_id, conn, pr_db_path, bar_fetcher, dry_run=False,
+                           candidates_fn=None) -> list[dict]:
     """Compute/refresh release_outcomes for every not-yet-settled release
     (see news_watchlist/outcomes.py). One batched bar download per run
     covering every candidate symbol plus the XIU.TO benchmark. Returns the
-    rows written (or that would be, under dry_run)."""
+    rows written (or that would be, under dry_run).
+
+    candidates_fn(event) -> [yahoo symbols] overrides the default
+    outcomes.symbol_candidates(ticker) -- press_release_tracker/archive.py
+    passes its own, built from the sitemap's exchange-qualified tickers."""
     today = market_now().date()
     now = market_now().isoformat()
     settled = store.final_outcome_guids(conn)
@@ -287,8 +292,12 @@ def score_release_outcomes(run_id, conn, pr_db_path, bar_fetcher, dry_run=False)
         if published is None:
             continue
         e["published"] = published
-        e["candidates"] = ([known_symbols[e["guid"]]] if e["guid"] in known_symbols
-                           else outcomes.symbol_candidates(e["ticker"]))
+        if e["guid"] in known_symbols:
+            e["candidates"] = [known_symbols[e["guid"]]]
+        elif candidates_fn is not None:
+            e["candidates"] = candidates_fn(e)
+        else:
+            e["candidates"] = outcomes.symbol_candidates(e["ticker"])
         events.append(e)
     if not events:
         return []
