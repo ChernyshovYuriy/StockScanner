@@ -55,7 +55,7 @@ from log_utils import log
 from send_report import send_text_email
 from time_utils import market_now
 
-from press_release_tracker import analyst, digest, feeds, llm_parser, store
+from press_release_tracker import analyst, article, digest, feeds, financing, llm_parser, store
 
 BATCH_INTERVAL = timedelta(minutes=PRESS_RELEASE_BATCH_INTERVAL_MINUTES)
 
@@ -98,13 +98,27 @@ def run_collector(run_id, dry_run=False, conn=None):
         # Analyst read of the full article (see analyst.py) -- before the
         # email below, so even the immediate "high" lane carries it.
         analysis = None
+        body = None
         if analyst.should_analyze(parsed, item.link):
+            body = article.fetch_article_text(item.link)
             analysis = analyst.analyze_release(parsed["ticker"], parsed.get("company"),
-                                               item.title, item.link)
+                                               item.title, item.link, body=body) if body else None
             log("press_release", run_id, "analysis" if analysis else "analysis_failed",
                 ticker=parsed["ticker"], verdict=(analysis or {}).get("verdict"))
             if analysis and not dry_run:
                 store.save_analysis(conn, item.guid, parsed["ticker"], analysis, analyst.MODEL, now)
+        # Structured financing terms (see financing.py) -- the testable
+        # counterpart of the analyst's prose dilution read. Reuses the
+        # body/market context already fetched above.
+        if financing.should_extract(parsed, item.link):
+            terms = financing.extract_terms(
+                parsed["ticker"], item.title, item.link, body=body,
+                context=(analysis or {}).get("market_context"))
+            log("press_release", run_id, "financing_terms" if terms else "financing_terms_failed",
+                ticker=parsed["ticker"])
+            if terms and not dry_run:
+                store.save_financing_terms(conn, item.guid, parsed["ticker"], terms,
+                                           financing.MODEL, now)
         dry_run_rows.append({
             "guid": item.guid, "feed_url": item.feed_url, "title": item.title,
             "link": item.link, "pubdate": item.pubdate,

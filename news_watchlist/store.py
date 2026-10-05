@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS release_outcomes (
     entry_date TEXT,
     prior_close REAL,
     entry_open REAL,
+    pre_close REAL,
     ret_1d REAL, bench_ret_1d REAL,
     ret_5d REAL, bench_ret_5d REAL,
     ret_20d REAL, bench_ret_20d REAL,
@@ -100,7 +101,7 @@ CREATE TABLE IF NOT EXISTS release_outcomes (
 _OUTCOME_COLUMNS = (
     "guid", "ticker", "yahoo_ticker", "company", "category", "materiality",
     "verdict", "dilution_level", "published_at", "entry_date", "prior_close",
-    "entry_open", "ret_1d", "bench_ret_1d", "ret_5d", "bench_ret_5d",
+    "entry_open", "pre_close", "ret_1d", "bench_ret_1d", "ret_5d", "bench_ret_5d",
     "ret_20d", "bench_ret_20d", "ret_60d", "bench_ret_60d", "status",
     "updated_at",
 )
@@ -131,6 +132,13 @@ def connect(db_path=DB_PATH):
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(watchlist_items)")}
     if "yahoo_ticker" not in existing_columns:
         conn.execute("ALTER TABLE watchlist_items ADD COLUMN yahoo_ticker TEXT")
+        conn.commit()
+    # Same PRAGMA-checked migration for release_outcomes.pre_close (added
+    # 2026-10 for financing discount-to-market, see news_watchlist/
+    # outcomes.py) -- a pending row picks it up on its next recompute.
+    outcome_columns = {row[1] for row in conn.execute("PRAGMA table_info(release_outcomes)")}
+    if "pre_close" not in outcome_columns:
+        conn.execute("ALTER TABLE release_outcomes ADD COLUMN pre_close REAL")
         conn.commit()
     return conn
 

@@ -45,6 +45,7 @@ from time_utils import TSX_TZ
 HORIZONS = (1, 5, 20, 60)
 BENCHMARK = "XIU.TO"
 MARKET_OPEN = time(9, 30)
+MARKET_CLOSE = time(16, 0)
 
 # Group-by keys the report breaks results down by -- each is a column on
 # news_watchlist/store.py's release_outcomes table.
@@ -113,6 +114,15 @@ def compute_outcome(bars: pd.DataFrame, bench: pd.DataFrame, published: datetime
     if not entry_open > 0:
         return None
     prior_close = float(bars["Close"].iloc[entry_pos - 1]) if entry_pos > 0 else None
+    # Last close of a session that had FINISHED when the release came out
+    # -- the market price a financing's issue price is compared against.
+    # Differs from prior_close for a release published during the session
+    # (prior_close is then the release day's own, post-news close).
+    if published.time() >= MARKET_CLOSE:
+        finished_before = stock_dates <= pub_day
+    else:
+        finished_before = stock_dates < pub_day
+    pre_close = float(bars["Close"][finished_before].iloc[-1]) if finished_before.any() else None
 
     bench_dates = bench.index.date
     bench_on_or_after = bench_dates >= entry_date
@@ -124,6 +134,7 @@ def compute_outcome(bars: pd.DataFrame, bench: pd.DataFrame, published: datetime
     out = {
         "entry_date": entry_date.isoformat(),
         "prior_close": prior_close,
+        "pre_close": pre_close,
         "entry_open": entry_open,
     }
     for h in HORIZONS:
@@ -146,13 +157,98 @@ def dedupe_events(rows: list[dict]) -> list[dict]:
     """One event per (symbol, entry_date): GlobeNewswire repeats a release
     in fr/de, and a busy story can produce several releases the same day
     -- counting each would overweight it. Prefers the row that carries an
-    analyst verdict (the English original that was analysed)."""
+    analyst verdict / financing terms (the English original that was
+    analysed)."""
+    def info(r):
+        return bool(r.get("verdict")) + bool(r.get("financing"))
+
     best: dict[tuple, dict] = {}
     for r in rows:
         key = (r["yahoo_ticker"], r["entry_date"])
-        if key not in best or (r.get("verdict") and not best[key].get("verdict")):
+        if key not in best or info(r) > info(best[key]):
             best[key] = r
     return list(best.values())
+
+
+# ── financing terms (press_release_tracker/financing.py) ─────────────────
+
+_CANADIAN_SUFFIXES = (".TO", ".V", ".CN", ".NE")
+
+
+def financing_metrics(terms: dict, pre_close: float | None, yahoo_ticker: str | None) -> dict:
+    """The two derived numbers, computed here rather than by the LLM:
+    discount_pct = issue price vs the last close before publication
+    (negative = priced below market), only when the deal is priced in CAD
+    and the symbol trades in Canada (else the currencies may differ);
+    dilution_pct = securities offered (or gross / issue price) as a % of
+    shares outstanding."""
+    price = terms.get("issue_price")
+    discount = None
+    if (price and pre_close and (terms.get("currency") in (None, "CAD"))
+            and yahoo_ticker and yahoo_ticker.endswith(_CANADIAN_SUFFIXES)):
+        discount = price / pre_close - 1.0
+    offered = terms.get("securities_offered")
+    if not offered and price and terms.get("gross_proceeds"):
+        offered = terms["gross_proceeds"] / price
+    shares_out = terms.get("shares_outstanding")
+    dilution = offered / shares_out if offered and shares_out else None
+    return {"discount_pct": discount, "dilution_pct": dilution}
+
+
+def _discount_bucket(d):
+    if d is None:
+        return None
+    if d >= 0:
+        return "a premium (>= 0%)"
+    if d > -0.10:
+        return "b 0 to -10%"
+    if d > -0.25:
+        return "c -10 to -25%"
+    return "d below -25%"
+
+
+def _dilution_bucket(d):
+    if d is None:
+        return None
+    if d < 0.05:
+        return "a < 5%"
+    if d < 0.15:
+        return "b 5-15%"
+    if d < 0.30:
+        return "c 15-30%"
+    return "d >= 30%"
+
+
+def _yes_no(v):
+    return None if v is None else ("yes" if v else "no")
+
+
+def attach_financing(rows: list[dict], terms_by_guid: dict) -> list[dict]:
+    """Rows with their financing terms (if any) under "financing" and the
+    report's financing group keys filled in. Only releases the extraction
+    confirmed are a financing (is_financing) get the group keys."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        t = terms_by_guid.get(r["guid"])
+        if t and t.get("is_financing"):
+            m = financing_metrics(t, r.get("pre_close"), r.get("yahoo_ticker"))
+            r["financing"] = {**t, **m}
+            r["fin_offering_type"] = t.get("offering_type")
+            r["fin_deal_stage"] = t.get("deal_stage")
+            r["fin_flow_through"] = _yes_no(t.get("flow_through"))
+            wc = t.get("warrant_coverage")
+            r["fin_warrants"] = None if wc is None else ("yes" if wc > 0 else "no")
+            r["fin_brokered"] = _yes_no(t.get("brokered"))
+            r["fin_insiders"] = _yes_no(t.get("insider_participation"))
+            r["fin_discount"] = _discount_bucket(m["discount_pct"])
+            r["fin_dilution"] = _dilution_bucket(m["dilution_pct"])
+        out.append(r)
+    return out
+
+
+FINANCING_GROUPS = ("fin_offering_type", "fin_deal_stage", "fin_flow_through", "fin_warrants",
+                    "fin_brokered", "fin_insiders", "fin_discount", "fin_dilution")
 
 
 def _stats(values: list[float]) -> dict:
@@ -185,21 +281,14 @@ def summarize(rows: list[dict], group_by: str) -> dict:
     return {k: {h: _stats(v.get(h, [])) for h in HORIZONS} for k, v in groups.items()}
 
 
-def format_report(rows: list[dict]) -> str:
-    events = dedupe_events(rows)
-    lines = [
-        f"Press-release outcomes: {len(events)} events "
-        f"({len(rows)} scored releases before de-duplication)",
-        "Excess return vs XIU.TO from the first tradeable open. "
-        "Each cell: mean / median / %beat XIU (n, t).",
-        "UNVALIDATED until n is in the hundreds -- |t| < 2 is noise.",
-    ]
-    for group_by in ("all",) + REPORT_GROUPS:
-        summary = summarize(events, group_by) if group_by != "all" else summarize(
-            [{**r, "all": "all events"} for r in events], "all")
+def _format_groups(events: list[dict], groups, lines: list[str], sort_by_key=False) -> None:
+    for group_by in groups:
+        summary = summarize(events, group_by)
         lines.append("")
         lines.append(f"== by {group_by} ==")
-        for key in sorted(summary, key=lambda k: -summary[k][HORIZONS[0]].get("n", 0)):
+        keys = sorted(summary) if sort_by_key else sorted(
+            summary, key=lambda k: -summary[k][HORIZONS[0]].get("n", 0))
+        for key in keys:
             cells = []
             for h in HORIZONS:
                 s = summary[key][h]
@@ -210,11 +299,54 @@ def format_report(rows: list[dict]) -> str:
                 cells.append(f"{h}d: {s['mean']:+.1%} / {s['median']:+.1%} / "
                              f"{s['beat']:.0%} (n={s['n']}, t={t})")
             lines.append(f"  {key:<24} " + " | ".join(cells))
+
+
+def format_report(rows: list[dict]) -> str:
+    events = dedupe_events(rows)
+    lines = [
+        f"Press-release outcomes: {len(events)} events "
+        f"({len(rows)} scored releases before de-duplication)",
+        "Excess return vs XIU.TO from the first tradeable open. "
+        "Each cell: mean / median / %beat XIU (n, t).",
+        "UNVALIDATED until n is in the hundreds -- |t| < 2 is noise.",
+    ]
+    _format_groups([{**r, "all": "all events"} for r in events], ("all",) + REPORT_GROUPS, lines)
+
+    fin = [r for r in events if r.get("financing")]
+    if fin:
+        lines.append("")
+        lines.append(f"######## Financings with extracted terms: {len(fin)} events ########")
+        lines.append("discount = issue price vs last close before the release (CAD deals on "
+                     "Canadian symbols only); dilution = securities offered / shares outstanding.")
+        lines.append("Groups not stated in a release are shown as (none).")
+        _format_groups(fin, FINANCING_GROUPS, lines, sort_by_key=True)
     return "\n".join(lines)
 
 
+def read_financing_terms(pr_db_path) -> dict:
+    """{guid: terms dict} from press_releases.db's financing_terms, read
+    read-only (this package never writes there) -- {} if the DB or the
+    table doesn't exist yet."""
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{pr_db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return {}
+    try:
+        cur = conn.execute("SELECT * FROM financing_terms")
+        cols = [d[0] for d in cur.description]
+        return {r[0]: dict(zip(cols, r)) for r in cur.fetchall()}
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
+    from config import PRESS_RELEASE_DB_PATH
     from news_watchlist import store
 
     conn = store.connect()
-    print(format_report(store.list_scored_outcomes(conn)))
+    rows = attach_financing(store.list_scored_outcomes(conn), read_financing_terms(PRESS_RELEASE_DB_PATH))
+    print(format_report(rows))

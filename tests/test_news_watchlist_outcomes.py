@@ -256,3 +256,101 @@ def test_dry_run_writes_nothing(tmp_path):
     rows = news_watchlist_service.score_release_outcomes("r", conn, pr_db, _fetcher(data), dry_run=True)
     assert len(rows) == 1
     assert store.list_scored_outcomes(conn) == []
+
+
+# ── pre_close (last close before publication) ────────────────────────────
+
+def test_pre_close_for_intraday_release_is_the_previous_sessions_close():
+    bars = _bars("2026-09-14", 10, open_=10.0, step=1.0)  # Mon close 10.5, Tue close 11.5
+    pub = datetime(2026, 9, 15, 11, 0, tzinfo=TSX_TZ)
+    out = outcomes.compute_outcome(bars, _bench("2026-09-14", 10), pub, TODAY)
+    assert out["pre_close"] == 10.5
+    assert out["prior_close"] == 11.5  # session before entry: the release day itself
+
+
+def test_pre_close_for_after_close_release_is_that_days_close():
+    bars = _bars("2026-09-14", 10, open_=10.0, step=1.0)
+    pub = datetime(2026, 9, 15, 16, 5, tzinfo=TSX_TZ)
+    out = outcomes.compute_outcome(bars, _bench("2026-09-14", 10), pub, TODAY)
+    assert out["pre_close"] == 11.5
+
+
+def test_pre_close_for_premarket_release_is_the_previous_sessions_close():
+    bars = _bars("2026-09-14", 10, open_=10.0, step=1.0)
+    pub = datetime(2026, 9, 15, 8, 0, tzinfo=TSX_TZ)
+    out = outcomes.compute_outcome(bars, _bench("2026-09-14", 10), pub, TODAY)
+    assert out["pre_close"] == 10.5 == out["prior_close"]
+
+
+# ── financing metrics / report ───────────────────────────────────────────
+
+def test_financing_discount_and_dilution():
+    terms = {"issue_price": 0.08, "currency": "CAD", "securities_offered": 25_000_000.0,
+             "shares_outstanding": 100_000_000.0}
+    m = outcomes.financing_metrics(terms, pre_close=0.10, yahoo_ticker="ABC.V")
+    assert m["discount_pct"] == pytest.approx(-0.20)
+    assert m["dilution_pct"] == pytest.approx(0.25)
+
+
+def test_financing_dilution_falls_back_to_proceeds_over_price():
+    terms = {"issue_price": 0.50, "gross_proceeds": 1_000_000.0, "shares_outstanding": 20_000_000.0}
+    assert outcomes.financing_metrics(terms, None, "ABC.V")["dilution_pct"] == pytest.approx(0.10)
+
+
+def test_financing_discount_skipped_for_usd_deal_or_us_symbol():
+    terms = {"issue_price": 1.0, "currency": "USD"}
+    assert outcomes.financing_metrics(terms, 1.2, "ABC.TO")["discount_pct"] is None
+    terms = {"issue_price": 1.0, "currency": "CAD"}
+    assert outcomes.financing_metrics(terms, 1.2, "ABCF")["discount_pct"] is None
+
+
+def test_attach_financing_sets_group_keys_only_for_confirmed_financings():
+    rows = [{"guid": "a", "pre_close": 0.10, "yahoo_ticker": "A.V"},
+            {"guid": "b", "pre_close": 1.0, "yahoo_ticker": "B.V"},
+            {"guid": "c", "pre_close": 1.0, "yahoo_ticker": "C.V"}]
+    terms = {
+        "a": {"is_financing": 1, "offering_type": "private_placement", "deal_stage": "announced",
+              "flow_through": 0, "warrant_coverage": 1.0, "issue_price": 0.07, "currency": "CAD",
+              "securities_offered": 40.0, "shares_outstanding": 100.0},
+        "b": {"is_financing": 0},
+    }
+    a, b, c = outcomes.attach_financing(rows, terms)
+    assert a["fin_discount"] == "d below -25%"
+    assert a["fin_dilution"] == "d >= 30%"
+    assert a["fin_warrants"] == "yes" and a["fin_flow_through"] == "no"
+    assert "financing" not in b and "financing" not in c
+
+
+def test_dedupe_prefers_the_row_with_financing_terms():
+    rows = [
+        {"guid": "fr", "yahoo_ticker": "X.V", "entry_date": "2026-09-01"},
+        {"guid": "en", "yahoo_ticker": "X.V", "entry_date": "2026-09-01", "financing": {"x": 1}},
+    ]
+    assert [r["guid"] for r in outcomes.dedupe_events(rows)] == ["en"]
+
+
+def test_report_includes_financing_section():
+    rows = outcomes.attach_financing(
+        [{"guid": "a", "yahoo_ticker": "A.V", "entry_date": "2026-09-01", "pre_close": 0.1,
+          "ret_1d": -0.05, "bench_ret_1d": 0.0}],
+        {"a": {"is_financing": 1, "offering_type": "private_placement", "issue_price": 0.08,
+               "currency": "CAD"}})
+    report = outcomes.format_report(rows)
+    assert "Financings with extracted terms: 1 events" in report
+    assert "c -10 to -25%" in report
+
+
+def test_read_financing_terms_missing_db_is_empty(tmp_path):
+    assert outcomes.read_financing_terms(tmp_path / "nope.db") == {}
+
+
+def test_store_migrates_pre_close_onto_an_old_release_outcomes_table(tmp_path):
+    import sqlite3
+    db = tmp_path / "nw.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE release_outcomes (guid TEXT PRIMARY KEY, ticker TEXT NOT NULL, "
+              "status TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    c.commit()
+    c.close()
+    conn = store.connect(db)
+    assert "pre_close" in {r[1] for r in conn.execute("PRAGMA table_info(release_outcomes)")}

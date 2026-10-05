@@ -1,8 +1,9 @@
 """Offline integration tests for press_release_service.run_collector (no
 network -- feeds.fetch_feed_items / llm_parser.parse_release / send_text_email
 are always monkeypatched; a real call to any of them would be a test bug).
-analyst.analyze_release is stubbed to None for every test by the autouse
-fixture below, unless a test overrides it."""
+analyst.analyze_release and financing.extract_terms are stubbed to None,
+and article.fetch_article_text to a fixed body, for every test by the
+autouse fixture below, unless a test overrides them."""
 
 import pytest
 import requests
@@ -15,6 +16,8 @@ from press_release_tracker.feeds import FeedItem
 @pytest.fixture(autouse=True)
 def _offline_analyst(monkeypatch):
     monkeypatch.setattr(press_release_service.analyst, "analyze_release", lambda *a, **k: None)
+    monkeypatch.setattr(press_release_service.financing, "extract_terms", lambda *a, **k: None)
+    monkeypatch.setattr(press_release_service.article, "fetch_article_text", lambda link: "full body")
 
 
 def _item(guid, feed_url="https://feed-a", **overrides):
@@ -254,7 +257,7 @@ def test_run_collector_analyses_important_item_and_emails_it(tmp_path, monkeypat
                                                      "materiality": "medium", "summary": "s"})
     seen = []
 
-    def fake_analyze(ticker, company, title, link):
+    def fake_analyze(ticker, company, title, link, body=None):
         seen.append(ticker)
         return {"verdict": "bearish", "trend": "unclear", "confidence": "medium",
                 "verdict_reason": "heavy dilution", "dilution": {"level": "significant", "detail": "15%"},
@@ -270,3 +273,31 @@ def test_run_collector_analyses_important_item_and_emails_it(tmp_path, monkeypat
     assert row == [("g1", "bearish", "significant")]
     assert "ANALYST: BEARISH" in calls[0][1]
     assert "dilution (significant): 15%" in calls[0][1]
+
+
+def test_financing_release_gets_structured_terms_reusing_the_fetched_body(tmp_path, monkeypatch):
+    conn = store.connect(tmp_path / "pr.db")
+    monkeypatch.setattr(press_release_service.feeds, "fetch_feed_items",
+                         lambda url: [_item("g1", link="https://x/news-release/1/0/en/a.html"),
+                                      _item("g2", link="https://x/news-release/1/0/fr/a.html")])
+    monkeypatch.setattr(press_release_service.llm_parser, "parse_release",
+                         lambda title, desc, cats: {"ticker": "YARR.V", "company": "Pirate Gold",
+                                                     "category": "financing", "materiality": "medium",
+                                                     "summary": "s"})
+    seen = []
+
+    def fake_extract(ticker, title, link, body=None, context=None):
+        seen.append((ticker, body))
+        return {"deal_stage": "announced", "offering_type": "private_placement",
+                "issue_price": 0.10, "securities_offered": 20_000_000.0, "flow_through": False,
+                "shares_outstanding": 100_000_000.0}
+
+    monkeypatch.setattr(press_release_service.financing, "extract_terms", fake_extract)
+    _no_email(monkeypatch)
+
+    press_release_service.run_collector("run1", conn=conn)
+
+    assert seen == [("YARR.V", "full body")]  # the French copy is skipped
+    rows = conn.execute("SELECT guid, offering_type, issue_price, securities_offered, "
+                        "shares_outstanding FROM financing_terms").fetchall()
+    assert rows == [("g1", "private_placement", 0.10, 20_000_000.0, 100_000_000.0)]

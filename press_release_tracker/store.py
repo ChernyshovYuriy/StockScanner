@@ -61,6 +61,30 @@ CREATE TABLE IF NOT EXISTS release_analysis (
     llm_model TEXT,
     analyzed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS financing_terms (
+    guid TEXT PRIMARY KEY,
+    ticker TEXT,
+    is_financing INTEGER,
+    deal_stage TEXT,
+    offering_type TEXT,
+    brokered INTEGER,
+    flow_through INTEGER,
+    gross_proceeds REAL,
+    currency TEXT,
+    issue_price REAL,
+    securities_offered REAL,
+    warrant_coverage REAL,
+    warrant_strike REAL,
+    warrant_term_months REAL,
+    insider_participation INTEGER,
+    strategic_investor TEXT,
+    use_of_proceeds TEXT,
+    yahoo_ticker TEXT,
+    shares_outstanding REAL,
+    market_cap REAL,
+    llm_model TEXT,
+    extracted_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS batch_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     last_sent_at TEXT
@@ -122,6 +146,42 @@ def save_analysis(conn, guid: str, ticker: str, analysis: dict, model: str, anal
          json.dumps(analysis, ensure_ascii=False), analysis.get("body_chars"), model, analyzed_at),
     )
     conn.commit()
+
+
+_FINANCING_COLUMNS = (
+    "is_financing", "deal_stage", "offering_type", "brokered", "flow_through",
+    "gross_proceeds", "currency", "issue_price", "securities_offered",
+    "warrant_coverage", "warrant_strike", "warrant_term_months",
+    "insider_participation", "strategic_investor", "use_of_proceeds",
+    "yahoo_ticker", "shares_outstanding", "market_cap",
+)
+
+
+def save_financing_terms(conn, guid: str, ticker: str, terms: dict, model: str,
+                         extracted_at: str) -> None:
+    """Store financing.py's extracted terms for guid. INSERT OR REPLACE,
+    same retry reasoning as save_parsed()."""
+    cols = ("guid", "ticker") + _FINANCING_COLUMNS + ("llm_model", "extracted_at")
+    values = (guid, ticker) + tuple(terms.get(c) for c in _FINANCING_COLUMNS) + (model, extracted_at)
+    conn.execute(
+        f"INSERT OR REPLACE INTO financing_terms({','.join(cols)}) "
+        f"VALUES({','.join('?' * len(cols))})",
+        values,
+    )
+    conn.commit()
+
+
+def financing_without_terms(conn) -> list[dict]:
+    """Parsed 'financing' releases with a ticker and no financing_terms
+    row yet, oldest first -- financing.py's backfill input."""
+    rows = conn.execute(
+        "SELECT p.guid, p.ticker, s.title, s.link FROM parsed_releases p "
+        "JOIN seen_items s ON s.guid = p.guid "
+        "LEFT JOIN financing_terms f ON f.guid = p.guid "
+        "WHERE p.category = 'financing' AND p.ticker IS NOT NULL AND p.ticker != '' "
+        "AND f.guid IS NULL ORDER BY s.first_seen_at"
+    ).fetchall()
+    return [dict(zip(("guid", "ticker", "title", "link"), r)) for r in rows]
 
 
 def unemailed(conn) -> list[dict]:
