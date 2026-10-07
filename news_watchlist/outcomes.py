@@ -251,39 +251,65 @@ FINANCING_GROUPS = ("fin_offering_type", "fin_deal_stage", "fin_flow_through", "
                     "fin_brokered", "fin_insiders", "fin_discount", "fin_dilution")
 
 
-def _stats(values: list[float]) -> dict:
+def _stats(values: list[float], pool_beat: float | None = None) -> dict:
+    """median, 1%-trimmed mean and beat rate lead -- a handful of penny-stock
+    or split-artifact moves (+6,884% in the archive) carry the plain mean
+    and its t-statistic, so neither is shown. z tests the beat rate against
+    pool_beat (the same horizon's beat rate over everything being compared),
+    not against 50%: most events lag XIU, so 50% would flag every group."""
     n = len(values)
     if n == 0:
         return {"n": 0}
-    mean = statistics.fmean(values)
-    sd = statistics.stdev(values) if n > 1 else 0.0
-    t = mean / (sd / math.sqrt(n)) if n > 1 and sd > 0 else None
+    ordered = sorted(values)
+    k = n // 100
+    beat = sum(v > 0 for v in values) / n
+    z = None
+    if pool_beat is not None and 0 < pool_beat < 1:
+        z = (beat - pool_beat) / math.sqrt(pool_beat * (1 - pool_beat) / n)
     return {
         "n": n,
-        "mean": mean,
+        "mean": statistics.fmean(values),
+        "trimmed": statistics.fmean(ordered[k:n - k]),
         "median": statistics.median(values),
-        "beat": sum(v > 0 for v in values) / n,
-        "t": t,
+        "beat": beat,
+        "z": z,
     }
 
 
-def summarize(rows: list[dict], group_by: str) -> dict:
+def _excess(r: dict, h: int) -> float | None:
+    ret, bench = r.get(f"ret_{h}d"), r.get(f"bench_ret_{h}d")
+    return None if ret is None or bench is None else ret - bench
+
+
+def pool_beat_rates(rows: list[dict]) -> dict:
+    """{horizon: share of rows beating XIU.TO}, the baseline z is measured against."""
+    out = {}
+    for h in HORIZONS:
+        xs = [x for x in (_excess(r, h) for r in rows) if x is not None]
+        out[h] = sum(x > 0 for x in xs) / len(xs) if xs else None
+    return out
+
+
+def summarize(rows: list[dict], group_by: str, pool_beat: dict | None = None) -> dict:
     """{group value: {horizon: stats of excess return}} over rows whose
     horizon is in. Excess = stock return - XIU.TO return, same window."""
     groups: dict[str, dict[int, list[float]]] = {}
     for r in rows:
         key = r.get(group_by) or "(none)"
         for h in HORIZONS:
-            ret, bench = r.get(f"ret_{h}d"), r.get(f"bench_ret_{h}d")
-            if ret is None or bench is None:
+            x = _excess(r, h)
+            if x is None:
                 continue
-            groups.setdefault(key, {}).setdefault(h, []).append(ret - bench)
-    return {k: {h: _stats(v.get(h, [])) for h in HORIZONS} for k, v in groups.items()}
+            groups.setdefault(key, {}).setdefault(h, []).append(x)
+    pool_beat = pool_beat or {}
+    return {k: {h: _stats(v.get(h, []), pool_beat.get(h)) for h in HORIZONS}
+            for k, v in groups.items()}
 
 
 def _format_groups(events: list[dict], groups, lines: list[str], sort_by_key=False) -> None:
+    pool = pool_beat_rates(events)
     for group_by in groups:
-        summary = summarize(events, group_by)
+        summary = summarize(events, group_by, pool)
         lines.append("")
         lines.append(f"== by {group_by} ==")
         keys = sorted(summary) if sort_by_key else sorted(
@@ -295,9 +321,9 @@ def _format_groups(events: list[dict], groups, lines: list[str], sort_by_key=Fal
                 if not s["n"]:
                     cells.append(f"{h}d: -")
                     continue
-                t = f"{s['t']:+.1f}" if s["t"] is not None else "n/a"
-                cells.append(f"{h}d: {s['mean']:+.1%} / {s['median']:+.1%} / "
-                             f"{s['beat']:.0%} (n={s['n']}, t={t})")
+                z = f"{s['z']:+.1f}" if s["z"] is not None else "n/a"
+                cells.append(f"{h}d: {s['median']:+.1%} / {s['trimmed']:+.1%} / "
+                             f"{s['beat']:.0%} (n={s['n']}, z={z})")
             lines.append(f"  {key:<24} " + " | ".join(cells))
 
 
@@ -307,8 +333,10 @@ def format_report(rows: list[dict]) -> str:
         f"Press-release outcomes: {len(events)} events "
         f"({len(rows)} scored releases before de-duplication)",
         "Excess return vs XIU.TO from the first tradeable open. "
-        "Each cell: mean / median / %beat XIU (n, t).",
-        "UNVALIDATED until n is in the hundreds -- |t| < 2 is noise.",
+        "Each cell: median / 1%-trimmed mean / %beat XIU (n, z of %beat vs the whole section).",
+        "Plain means are left out: a few penny-stock/split outliers carry them.",
+        "UNVALIDATED until n is in the hundreds -- |z| < 2 is noise, and with dozens "
+        "of groups a few |z| near 3 turn up by chance.",
     ]
     _format_groups([{**r, "all": "all events"} for r in events], ("all",) + REPORT_GROUPS, lines)
 

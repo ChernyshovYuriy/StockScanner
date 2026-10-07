@@ -152,6 +152,25 @@ def test_summarize_groups_excess_returns():
     assert s["bullish"][5]["n"] == 0
 
 
+def test_stats_trims_outliers_and_tests_beat_rate_against_the_pool():
+    values = [-0.01] * 99 + [50.0]          # one +5,000% split artifact
+    s = outcomes._stats(values, pool_beat=0.5)
+    assert s["mean"] > 0.4                  # the artifact carries the plain mean
+    assert s["trimmed"] == pytest.approx(-0.01)
+    assert s["median"] == pytest.approx(-0.01)
+    assert s["beat"] == pytest.approx(0.01)
+    assert s["z"] == pytest.approx((0.01 - 0.5) / (0.5 / 10))
+    assert outcomes._stats([0.1, -0.1])["z"] is None   # no pool -> no z
+
+
+def test_report_shows_median_and_z_not_mean_t():
+    rows = [{"guid": str(i), "yahoo_ticker": f"T{i}.V", "entry_date": "2026-09-01",
+             "category": "financing" if i % 2 else "earnings",
+             "ret_1d": 0.01 * (i % 3 - 1), "bench_ret_1d": 0.0} for i in range(30)]
+    report = outcomes.format_report(rows)
+    assert "z=" in report and "t=" not in report
+
+
 def test_format_report_handles_empty_input():
     assert "0 events" in outcomes.format_report([])
 

@@ -106,6 +106,11 @@ def normalize(raw: dict) -> dict:
     """Keep the known keys, coerce numbers (the model sometimes returns
     "2,500,000" as a string)."""
     out = {k: raw.get(k) for k in _FIELDS}
+    for k, v in out.items():   # e.g. use_of_proceeds as a list of purposes
+        if isinstance(v, list):
+            out[k] = "; ".join(str(x) for x in v) if v else None
+        elif isinstance(v, dict):
+            out[k] = json.dumps(v)
     for k in ("gross_proceeds", "issue_price", "securities_offered", "warrant_coverage",
               "warrant_strike", "warrant_term_months"):
         out[k] = _number(out[k])

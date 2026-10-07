@@ -29,6 +29,13 @@ def test_normalize_unparseable_number_is_none():
     assert financing.normalize({"issue_price": "TBD"})["issue_price"] is None
 
 
+def test_normalize_flattens_lists_so_sqlite_can_store_them():
+    t = financing.normalize({"use_of_proceeds": ["exploration", "working capital"],
+                             "strategic_investor": []})
+    assert t["use_of_proceeds"] == "exploration; working capital"
+    assert t["strategic_investor"] is None
+
+
 def test_extract_terms_without_key_is_none(monkeypatch):
     monkeypatch.setattr(financing, "OPENAI_API_KEY", None)
     assert financing.extract_terms("ABC.V", "t", "https://x", body="text", context={}) is None
