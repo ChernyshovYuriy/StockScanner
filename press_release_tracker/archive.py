@@ -35,10 +35,20 @@ Steps (python -m press_release_tracker.archive <step>):
              shares history), not today's. No analyst verdicts on old
              releases: the model may know what happened next
   score      forward returns via news_watchlist_service.score_release_outcomes()
+             (bars fetched first-choice symbol first, fallbacks only where
+             that has no data)
   report     outcome report + how many financings were lost to missing
              Yahoo data (survivorship -- a delisted junior is usually a
              bad outcome, so the report flatters)
   all        every step in order
+
+Yahoo pacing: every Yahoo request this module makes (share counts, daily
+bars) goes through one limiter, YAHOO_PER_SECOND (~1,400/hour, under the
+~2,000/hour Yahoo tolerates before it blocks the IP -- which also blocks
+the live services on the same network). The first 2026-10-06 run sent
+share-count lookups unpaced for hours and got the machine rate-limited.
+A rate-limit error stops the step at once (YahooRateLimited) instead of
+retrying into a longer block; nothing half-scored is written.
 """
 from __future__ import annotations
 
@@ -54,6 +64,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
+from urllib.parse import urljoin
 from typing import Optional
 
 import requests
@@ -73,6 +84,7 @@ except Exception:
     CLASSIFY_MODEL = "gpt-5-nano"
     USER_AGENT = "StockScanner-PressRelease/0.1"
 
+SITE_URL = "https://www.globenewswire.com"
 SITEMAP_URL = "https://sitemaps.globenewswire.com/news/en/{month}.xml"
 FIRST_MONTH = "2023-11"
 # The live feed starts 2026-09-16 (data/press_releases.db) -- the archive
@@ -320,13 +332,26 @@ class _RateLimiter:
         self._lock = threading.Lock()
         self._next = 0.0
 
-    def wait(self):
+    def wait(self, n: int = 1):
         with self._lock:
             now = time.monotonic()
             delay = max(0.0, self._next - now)
-            self._next = max(now, self._next) + self._gap
+            self._next = max(now, self._next) + self._gap * n
         if delay:
             time.sleep(delay)
+
+
+YAHOO_PER_SECOND = 0.4   # requests/second, shared by every Yahoo call below
+YAHOO_BATCH = 10         # symbols per bar download (one request each)
+_yahoo = _RateLimiter(per_second=YAHOO_PER_SECOND)
+
+
+class YahooRateLimited(RuntimeError):
+    """Yahoo is refusing requests; stop rather than make the block longer."""
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    return "RateLimit" in type(exc).__name__ or "Too Many Requests" in str(exc)
 
 
 def shares_at(candidates: list[str], published: datetime, fetch=None) -> tuple[Optional[str], Optional[float]]:
@@ -339,9 +364,12 @@ def shares_at(candidates: list[str], published: datetime, fetch=None) -> tuple[O
     start = (published.date() - timedelta(days=180)).isoformat()
     end = (published.date() + timedelta(days=1)).isoformat()
     for symbol in candidates:
+        _yahoo.wait()
         try:
             series = fetch(symbol, start, end)
-        except Exception:
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                raise YahooRateLimited(f"{symbol}: {exc}") from exc
             continue
         if series is None or len(series) == 0:
             continue
@@ -370,7 +398,8 @@ def step_financing(conn, workers: int = 4, limit: Optional[int] = None) -> None:
     def work(row):
         guid, title, link, pubdate = row
         limiter.wait()
-        body = article.fetch_article_text(link)
+        # some sitemap months give a site-relative <loc>
+        body = article.fetch_article_text(urljoin(SITE_URL, link))
         if not body:
             return row, None
         symbol, shares = shares_at(symbols[guid], parse_published(pubdate))
@@ -390,6 +419,52 @@ def step_financing(conn, workers: int = 4, limit: Optional[int] = None) -> None:
                 print(f"[{n}/{len(todo)}] {ok} extracted")
 
 
+def paced_bar_fetcher(symbols_by_guid: dict):
+    """A bar_fetcher for score_release_outcomes() that stays inside the
+    Yahoo budget: benchmark first (none -> YahooRateLimited, nothing
+    scored), then each release's first-choice symbol, and a fallback
+    symbol only for releases whose earlier choices returned nothing --
+    ~1.3k requests instead of ~5k. Three empty batches in a row re-probe
+    the benchmark, so a block that starts mid-run also stops it."""
+    import news_watchlist_service
+    from news_watchlist.outcomes import BENCHMARK
+
+    def download(chunk, start, end):
+        _yahoo.wait(len(chunk))
+        data = news_watchlist_service._download_bars(chunk, start, end)
+        return {s: df for s, df in data.items() if s in chunk and df is not None and not df.empty}
+
+    def fetch(symbols, start, end):
+        wanted = set(symbols)
+        bars = download([BENCHMARK], start, end)
+        if BENCHMARK not in bars:
+            raise YahooRateLimited(f"{BENCHMARK} benchmark unavailable")
+        tried = {BENCHMARK}
+        empty_run = 0
+        for rank in range(max((len(c) for c in symbols_by_guid.values()), default=1)):
+            todo = sorted({c[rank] for c in symbols_by_guid.values()
+                           if len(c) > rank and not any(s in bars for s in c[:rank])}
+                          & wanted - tried)
+            for i in range(0, len(todo), YAHOO_BATCH):
+                chunk = todo[i:i + YAHOO_BATCH]
+                got = download(chunk, start, end)
+                tried.update(chunk)
+                bars.update(got)
+                empty_run = 0 if got else empty_run + 1
+                if empty_run >= 3:
+                    if BENCHMARK not in download([BENCHMARK], start, end):
+                        raise YahooRateLimited("benchmark stopped returning data mid-run")
+                    empty_run = 0
+        # symbols outside symbols_by_guid (e.g. a bare live-path ticker)
+        known = {s for c in symbols_by_guid.values() for s in c}
+        rest = sorted(wanted - tried - known)
+        for i in range(0, len(rest), YAHOO_BATCH):
+            bars.update(download(rest[i:i + YAHOO_BATCH], start, end))
+        return bars
+
+    return fetch
+
+
 def step_score(conn, db_path=None) -> None:
     import news_watchlist_service
     from news_watchlist import store as nw_store
@@ -398,7 +473,7 @@ def step_score(conn, db_path=None) -> None:
     symbols = candidates_by_guid(conn)
     rows = news_watchlist_service.score_release_outcomes(
         uuid.uuid4().hex, nw_store.connect(db_path), db_path,
-        news_watchlist_service._download_bars,
+        paced_bar_fetcher(symbols),
         candidates_fn=lambda e: symbols.get(e["guid"]) or [e["ticker"]])
     by_status = {}
     for r in rows:
@@ -441,13 +516,17 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     conn = connect()
-    if args.step in ("list", "all"):
-        step_list(conn, args.first, args.last)
-    if args.step in ("classify", "all"):
-        step_classify(conn, workers=args.workers or 6, limit=args.limit)
-    if args.step in ("financing", "all"):
-        step_financing(conn, workers=args.workers or 4, limit=args.limit)
-    if args.step in ("score", "all"):
-        step_score(conn)
+    try:
+        if args.step in ("list", "all"):
+            step_list(conn, args.first, args.last)
+        if args.step in ("classify", "all"):
+            step_classify(conn, workers=args.workers or 6, limit=args.limit)
+        if args.step in ("financing", "all"):
+            step_financing(conn, workers=args.workers or 4, limit=args.limit)
+        if args.step in ("score", "all"):
+            step_score(conn)
+    except YahooRateLimited as exc:
+        raise SystemExit(f"STOPPED: Yahoo is rate-limiting ({exc}). Wait an hour or more, then re-run "
+                         "the same step -- it resumes where it stopped.")
     if args.step in ("report", "all"):
         print(step_report())

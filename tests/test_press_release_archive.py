@@ -11,6 +11,11 @@ import news_watchlist_service
 from news_watchlist import store as nw_store
 from press_release_tracker import archive, store
 
+
+@pytest.fixture(autouse=True)
+def _no_yahoo_pacing(monkeypatch):
+    monkeypatch.setattr(archive, "_yahoo", archive._RateLimiter(per_second=1e6))
+
 _SITEMAP = """<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
@@ -135,6 +140,46 @@ def test_shares_at_nothing_found():
     assert archive.shares_at(["X.V"], pub, fetch=lambda *a: None) == (None, None)
 
 
+def test_shares_at_stops_on_rate_limit():
+    class YFRateLimitError(Exception):
+        pass
+
+    def fetch(symbol, start, end):
+        raise YFRateLimitError("Too Many Requests. Rate limited.")
+
+    with pytest.raises(archive.YahooRateLimited):
+        archive.shares_at(["X.V", "X.TO"], datetime(2025, 3, 31, tzinfo=timezone.utc), fetch=fetch)
+
+
+# ── paced bar fetching ───────────────────────────────────────────────────
+
+def _bars():
+    return pd.DataFrame({"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": 1.0, "Volume": 1},
+                        index=pd.bdate_range("2025-01-01", periods=5))
+
+
+def test_paced_fetcher_requests_fallbacks_only_where_needed(monkeypatch):
+    calls = []
+
+    def fake_download(symbols, start, end):
+        calls.append(list(symbols))
+        return {s: _bars() for s in symbols if s in ("XIU.TO", "A.V", "B.TO")}
+
+    monkeypatch.setattr(news_watchlist_service, "_download_bars", fake_download)
+    fetch = archive.paced_bar_fetcher({"g1": ["A.V", "A.TO"], "g2": ["B.V", "B.TO"]})
+    bars = fetch(["A.V", "A.TO", "B.V", "B.TO", "XIU.TO"], "s", "e")
+
+    assert set(bars) == {"XIU.TO", "A.V", "B.TO"}
+    assert calls == [["XIU.TO"], ["A.V", "B.V"], ["B.TO"]]   # A.TO never requested
+
+
+def test_paced_fetcher_stops_without_benchmark(monkeypatch):
+    monkeypatch.setattr(news_watchlist_service, "_download_bars", lambda *a: {})
+    fetch = archive.paced_bar_fetcher({"g1": ["A.V"]})
+    with pytest.raises(archive.YahooRateLimited):
+        fetch(["A.V", "XIU.TO"], "s", "e")
+
+
 # ── scoring through the shared scorer ────────────────────────────────────
 
 def test_score_uses_archive_candidates_and_reports_survivorship(tmp_path, monkeypatch):
@@ -169,3 +214,16 @@ def test_bare_url_sitemap_yields_nothing():
     bare = ('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url>'
             '<loc>/news-release/2026/06/30/1/0/en/x.html</loc></url></urlset>')
     assert archive.parse_sitemap(bare) == []
+
+
+def test_financing_fetches_relative_sitemap_links_absolutely(tmp_path, monkeypatch):
+    conn = archive.connect(tmp_path / "a.db")
+    entry = archive.parse_sitemap(_SITEMAP)[0]
+    entry["link"] = "/news-release/2025/03/31/1/0/en/x.html"
+    archive.import_entries(conn, [entry], "now")
+    guid = conn.execute("SELECT guid FROM seen_items").fetchone()[0]
+    store.save_parsed(conn, guid, {"ticker": "ABC.V", "category": "financing"}, "m", "now")
+    fetched = []
+    monkeypatch.setattr(archive.article, "fetch_article_text", lambda url: fetched.append(url) or None)
+    archive.step_financing(conn)
+    assert fetched == ["https://www.globenewswire.com/news-release/2025/03/31/1/0/en/x.html"]
