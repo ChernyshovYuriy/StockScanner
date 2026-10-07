@@ -24,6 +24,7 @@ from urllib.parse import quote
 
 from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS, NEWS_WATCHLIST_DB_PATH, PRESS_RELEASE_DB_PATH
 from market_data import DEFAULT_PROVIDER
+from press_release_tracker.financing import risk_flag
 from time_utils import date_to_iso_extended, market_today
 
 _cache_lock = threading.Lock()
@@ -240,6 +241,27 @@ def _read_analyses(guids: List[str]) -> Dict[str, Dict]:
     return out
 
 
+def _read_risk_flags(guids: List[str]) -> Dict[str, str]:
+    """financing.risk_flag() text for each guid whose extracted
+    financing_terms.offering_type carries one, read-only from
+    press_releases.db, same as _read_analyses(). {} if the DB or the table
+    doesn't exist yet."""
+    guids = [g for g in guids if g]
+    if not guids or not PRESS_RELEASE_DB_PATH.exists():
+        return {}
+    conn = sqlite3.connect(f"file:{PRESS_RELEASE_DB_PATH}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            f"SELECT guid, offering_type FROM financing_terms WHERE guid IN ({','.join('?' * len(guids))})",
+            guids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+    return {guid: risk_flag(ot) for guid, ot in rows if risk_flag(ot)}
+
+
 def _read_items() -> list[dict]:
     """Every watchlist_items row + its price history. [] if the DB doesn't
     exist yet (no scheduled run has happened) -- same "not yet available"
@@ -263,12 +285,15 @@ def _read_items() -> list[dict]:
     for item_id, hdate, close_price in history_rows:
         history_by_id.setdefault(item_id, []).append({"date": hdate, "close_price": close_price})
 
-    analyses = _read_analyses([row[_ITEM_COLUMNS.index("guid")] for row in items])
+    guids = [row[_ITEM_COLUMNS.index("guid")] for row in items]
+    analyses = _read_analyses(guids)
+    risk_flags = _read_risk_flags(guids)
     out = []
     for row in items:
         item = dict(zip(_ITEM_COLUMNS, row))
         item["price_history"] = history_by_id.get(item["id"], [])
         item["analysis"] = analyses.get(item["guid"])
+        item["risk_flag"] = risk_flags.get(item["guid"])
         out.append(item)
     return out
 

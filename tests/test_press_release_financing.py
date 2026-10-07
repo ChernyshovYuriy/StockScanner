@@ -51,3 +51,15 @@ def test_store_round_trip_and_backfill_query(tmp_path):
                                "2026-10-01T00:00:00")
     assert [r["guid"] for r in store.financing_without_terms(conn)] == ["g2"]
     assert conn.execute("SELECT is_financing, issue_price FROM financing_terms").fetchone() == (1, 0.1)
+
+
+def test_unemailed_carries_the_extracted_offering_type(tmp_path):
+
+    conn = store.connect(tmp_path / "pr.db")
+    store.mark_seen(conn, FeedItem("g1", "f", "T", "l", "p", "d", []), first_seen_at="2026-10-03T09:00:00")
+    store.mark_seen(conn, FeedItem("g2", "f", "T2", "l2", "p", "d", []), first_seen_at="2026-10-03T09:01:00")
+    store.save_financing_terms(conn, "g1", "ACME.V", {"offering_type": "public_offering"},
+                               "gpt-5-mini", "2026-10-03T09:02:00")
+    rows = store.unemailed(conn)
+    assert [r["offering_type"] for r in rows] == ["public_offering", None]
+    assert financing.risk_flag("public_offering") and financing.risk_flag(None) is None

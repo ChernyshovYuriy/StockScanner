@@ -92,6 +92,7 @@
     details.nw-analysis summary { cursor: pointer; color: var(--text-muted); }
     details.nw-analysis ul { margin: 4px 0; padding-left: 18px; }
     details.nw-analysis p { margin: 4px 0; }
+    .nw-risk { margin-top: 4px; font-size: 12px; max-width: 520px; white-space: normal; color: var(--sell); }
     .nw-verdict { font-weight: 700; text-transform: uppercase; }
     .nw-verdict-bullish { color: var(--buy, #15803d); }
     .nw-verdict-bearish { color: var(--sell); }
@@ -190,7 +191,7 @@
             <td class="nw-tight">{{ item.company or "—" }}</td>
             <td class="nw-tight">{{ item.category or "—" }}</td>
             <td class="nw-tight">{{ item.materiality or "—" }}</td>
-            <td><div class="nw-summary" title="{{ item.summary or '' }}">{{ item.summary or "—" }}</div>{{ analysis_block(item.analysis) }}</td>
+            <td><div class="nw-summary" title="{{ item.summary or '' }}">{{ item.summary or "—" }}</div>{{ analysis_block(item.analysis) }}{% if item.risk_flag %}<div class="nw-risk">⚠ {{ item.risk_flag }}</div>{% endif %}</td>
             <td class="nw-tight" title="{{ item.flagged_at }}" data-sort-value="{{ item.created_at }}">{{ item.flagged_date or "—" }}<br>{{ item.flagged_time or "" }}</td>
             <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td class="nw-tight nw-volume" data-ticker="{{ item.ticker }}">…</td>
@@ -227,7 +228,7 @@
           {% for item in watching %}
           <tr data-row-id="{{ item.id }}">
             <td><a href="{{ item.quote_link }}" target="_blank" rel="noopener">{{ item.ticker }}</a></td>
-            <td>{{ item.company or "—" }}{{ analysis_block(item.analysis) }}</td>
+            <td>{{ item.company or "—" }}{{ analysis_block(item.analysis) }}{% if item.risk_flag %}<div class="nw-risk">⚠ {{ item.risk_flag }}</div>{% endif %}</td>
             <td>{{ item.flagged_at }}</td>
             <td>{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
             <td>{{ "$%.2f"|format(item.latest_price) if item.latest_price is not none else "—" }}</td>

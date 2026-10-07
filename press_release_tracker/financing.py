@@ -82,6 +82,20 @@ _FIELDS = (
 )
 
 
+# Shown next to a release whose extracted offering_type is a key here (email
+# digest + /news-watchlist). Only findings that held up in the 2023-11..2026-08
+# archive (press_release_tracker/archive.py) by median AND beat rate in EVERY
+# year belong here -- a risk flag, never a buy signal.
+RISK_FLAGS = {
+    "public_offering": "Public offering: in the 2023-26 archive these beat XIU only ~1/3 of "
+                       "the time over 5-20 sessions (n=257, every year). A risk flag, not a signal.",
+}
+
+
+def risk_flag(offering_type: Optional[str]) -> Optional[str]:
+    return RISK_FLAGS.get(offering_type or "")
+
+
 def should_extract(parsed: Optional[dict], link: str) -> bool:
     """A parsed ticker, an English page (same rule as analyst.py), and the
     classifier's category 'financing'."""

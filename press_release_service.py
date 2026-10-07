@@ -110,6 +110,7 @@ def run_collector(run_id, dry_run=False, conn=None):
         # Structured financing terms (see financing.py) -- the testable
         # counterpart of the analyst's prose dilution read. Reuses the
         # body/market context already fetched above.
+        terms = None
         if financing.should_extract(parsed, item.link):
             terms = financing.extract_terms(
                 parsed["ticker"], item.title, item.link, body=body,
@@ -125,6 +126,7 @@ def run_collector(run_id, dry_run=False, conn=None):
             **(parsed or {"ticker": None, "company": None, "category": None,
                            "materiality": None, "summary": None}),
             "analysis": analysis,
+            "offering_type": (terms or {}).get("offering_type"),
         })
 
     rows = dry_run_rows if dry_run else store.unemailed(conn)

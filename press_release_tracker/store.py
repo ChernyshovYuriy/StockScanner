@@ -192,13 +192,16 @@ def unemailed(conn) -> list[dict]:
     quiet fetch cycle can still catch up on a backlog."""
     rows = conn.execute(
         "SELECT s.guid, s.feed_url, s.title, s.link, s.pubdate, "
-        "       p.ticker, p.company, p.category, p.materiality, p.summary, a.analysis_json "
+        "       p.ticker, p.company, p.category, p.materiality, p.summary, a.analysis_json, "
+        "       f.offering_type "
         "FROM seen_items s LEFT JOIN parsed_releases p ON p.guid = s.guid "
         "LEFT JOIN release_analysis a ON a.guid = s.guid "
+        "LEFT JOIN financing_terms f ON f.guid = s.guid "
         "WHERE s.emailed = 0 ORDER BY s.first_seen_at"
     ).fetchall()
     cols = ["guid", "feed_url", "title", "link", "pubdate",
-            "ticker", "company", "category", "materiality", "summary", "analysis_json"]
+            "ticker", "company", "category", "materiality", "summary", "analysis_json",
+            "offering_type"]
     out = []
     for r in rows:
         row = dict(zip(cols, r))

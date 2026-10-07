@@ -364,6 +364,31 @@ def test_items_carry_the_analyst_read_from_press_releases_db(tmp_path, monkeypat
     assert by_ticker["BETA.V"]["analysis"] is None
 
 
+def test_items_carry_the_public_offering_risk_flag(tmp_path, monkeypatch):
+    from press_release_tracker import store as pr_store
+
+    db_path = tmp_path / "nw.db"
+    conn = store.connect(db_path)
+    for guid, ticker in (("g1", "ACME.V"), ("g2", "BETA.V")):
+        store.seed_inbox_item(
+            conn, guid=guid, ticker=ticker, company=None, category="financing",
+            materiality="high", summary=None, source_link=None, flagged_at="2026-10-03",
+            flag_price=0.5, created_at=f"2026-10-03T09:00:0{guid[-1]}",
+        )
+    pr_db = tmp_path / "pr.db"
+    pr_conn = pr_store.connect(pr_db)
+    pr_store.save_financing_terms(pr_conn, "g1", "ACME.V", {"offering_type": "public_offering"},
+                                  "gpt-5-mini", "2026-10-03T09:00:30")
+    pr_store.save_financing_terms(pr_conn, "g2", "BETA.V", {"offering_type": "private_placement"},
+                                  "gpt-5-mini", "2026-10-03T09:00:30")
+    monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", db_path)
+    monkeypatch.setattr(nwd, "PRESS_RELEASE_DB_PATH", pr_db)
+
+    by_ticker = {r["ticker"]: r for r in nwd._build_news_watchlist_state()["inbox"]}
+    assert "Public offering" in by_ticker["ACME.V"]["risk_flag"]
+    assert by_ticker["BETA.V"]["risk_flag"] is None
+
+
 def test_analyses_empty_when_press_release_db_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(nwd, "PRESS_RELEASE_DB_PATH", tmp_path / "missing.db")
     assert nwd._read_analyses(["g1"]) == {}

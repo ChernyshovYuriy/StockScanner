@@ -69,3 +69,10 @@ def test_build_digest_includes_llm_fields_when_present():
 def test_build_digest_omits_category_line_when_unparsed():
     _, body = build_digest([_row(category=None)])
     assert "category:" not in body
+
+
+def test_build_digest_flags_public_offerings_only():
+    _, body = build_digest([_row(ticker="A.V", offering_type="public_offering")])
+    assert "Public offering" in body and "risk flag" in body
+    _, body = build_digest([_row(ticker="A.V", offering_type="private_placement")])
+    assert "⚠" not in body
