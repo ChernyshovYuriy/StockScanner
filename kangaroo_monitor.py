@@ -61,6 +61,7 @@ from position_monitor import (
     LOGS_PATH,
     LOOKBACK_DAYS_BEFORE_ENTRY,
     MIN_BARS_REQUIRED,
+    drop_stale_sell_rows,
     execute_virtual_sells,
     fetch_intraday_snapshot,
     load_or_fetch_data,
@@ -323,6 +324,7 @@ def main() -> None:
                and r.get(POSITION_COL_LAST_CLOSE) is not None
                and r.get(POSITION_COL_SHARES) is not None
         ]
+        sell_rows = drop_stale_sell_rows(sell_rows, market_now(TSX_TZ).date())
         if sell_rows:
             funds_state = execute_virtual_sells(sell_rows=sell_rows, dry_run=dry_run, label="Kangaroo Tail")
             funds_before = funds_state.get("funds_before", funds_before)

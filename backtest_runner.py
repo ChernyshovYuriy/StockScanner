@@ -170,8 +170,9 @@ class BacktestConfig:
     #   "equal_split" — allocation = cash / n_actionable per morning
     #                   (pre-2026-07 backtest behaviour)
     #   "live"        — mirrors virtual_buy.py: shares = min(risk-based, cap-based)
-    #                   where dollar_risk = base × risk_pct% against the intent's
-    #                   planned entry−stop, and the position value is capped at
+    #                   where dollar_risk = base × risk_pct% against the fill
+    #                   price−stop (a fill at/below the stop is skipped, as
+    #                   live does), and the position value is capped at
     #                   base / remaining open slots.  Falls back to cap-only
     #                   sizing when the intent carries no usable stop (same as live).
     sizing: str = "equal_split"
@@ -710,7 +711,8 @@ def _execute_buys(
       "equal_split" — allocation_per_ticker = cash / n_actionable,
                       shares = int(allocation / price)  (whole shares only)
       "live"        — virtual_buy.py formula: risk-based share count from the
-                      intent's planned entry−stop, capped at base/remaining_slots
+                      fill price−stop (a fill at/below the stop is skipped),
+                      capped at base/remaining_slots
                       per position, base per cfg.sizing_basis ("cash"/"equity").
 
     If cfg.max_positions is set, buys stop when the book is full.
@@ -796,7 +798,12 @@ def _execute_buys(
             planned_stop = float(intent.get("stop") or 0.0)
             per_share_risk = planned_entry - planned_stop
             if per_share_risk > 0:
-                shares_by_risk = int(dollar_risk / per_share_risk)
+                # Size on the fill (next open), not the planned entry, and
+                # skip a fill at/below the stop — same as virtual_buy.py.
+                fill_risk = price - planned_stop
+                if not (fill_risk > 0):
+                    continue
+                shares_by_risk = int(dollar_risk / fill_risk)
                 shares_by_cap = int(max_position_value / price)
                 shares = min(shares_by_risk, shares_by_cap)
             else:

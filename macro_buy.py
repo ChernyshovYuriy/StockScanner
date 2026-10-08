@@ -232,7 +232,14 @@ def run_macro_buy(dry_run: bool, run_id: Optional[str] = None) -> None:
             continue
 
         stop_price = planned_stop
-        shares_by_risk = int(dollar_risk / per_share_risk)
+        # Size on the fill price, not the planned entry (same fix as
+        # virtual_buy.py): a gap-up fill otherwise risks more than planned,
+        # and a fill at/below the stop has no risk to size against at all.
+        fill_risk = price - planned_stop
+        if not (fill_risk > 0):
+            print(f"{Fore.YELLOW}price ${price:.2f} at/below stop ${planned_stop:.2f} — skipped{Style.RESET_ALL}")
+            continue
+        shares_by_risk = int(dollar_risk / fill_risk)
         shares_by_cap = int(max_position_value / price)
         shares = min(shares_by_risk, shares_by_cap)
 

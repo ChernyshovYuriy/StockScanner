@@ -53,6 +53,7 @@ from position_monitor import (
     LOOKBACK_DAYS_BEFORE_ENTRY,
     TodayBar,
     compute_signals,
+    drop_stale_sell_rows,
     execute_virtual_sells,
     fetch_intraday_snapshot,
     load_or_fetch_data,
@@ -193,6 +194,7 @@ def main() -> None:
                and r.get(POSITION_COL_LAST_CLOSE) is not None
                and r.get(POSITION_COL_SHARES) is not None
         ]
+        sell_rows = drop_stale_sell_rows(sell_rows, market_today().date())
         if sell_rows:
             funds_state = execute_virtual_sells(sell_rows=sell_rows, dry_run=dry_run, label="Momentum")
             funds_before = funds_state.get("funds_before", funds_before)

@@ -16,6 +16,7 @@ import macro_monitor
 import position_monitor
 from db import get_open_positions_df, init_db, insert_position, set_cash
 from schema_keys import POSITION_COL_REASON, POSITION_COL_STATUS
+from time_utils import market_today
 
 
 class _FakeLockFile:
@@ -64,6 +65,9 @@ def _fake_compute_signals_factory(status, reason="OK"):
         return {
             "ticker": pos.ticker, "entry_date": pos.entry_date.isoformat(),
             "entry_price": pos.entry_price, "shares": pos.shares,
+            # Real compute_signals() always returns last_date; the monitor
+            # refuses to sell on a price that isn't from today.
+            "last_date": market_today().date().isoformat(),
             "last_close": 10.5, "last_low": 10.0, "pnl_%": 5.0, "pnl_$": 50.0,
             "stop_price": pos.stop_price, "status": status, "reason": reason,
         }
