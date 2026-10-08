@@ -1219,13 +1219,21 @@ class TestMarketDataProvider:
     def test_live_provider_get_intraday_snapshot_shape(self, monkeypatch):
         import market_data as md
 
+        from datetime import datetime
+        from time_utils import TSX_TZ, set_backtest_clock
+
         idx = pd.bdate_range("2024-01-01", periods=3, freq="5min")
         df = pd.DataFrame({"Open": [10, 11, 12], "High": [10.5, 11.5, 12.5],
                             "Low": [9.5, 10.5, 11.5], "Close": [10.2, 11.2, 12.2],
                             "Volume": [100, 100, 100]}, index=idx)
         monkeypatch.setattr(md.yf, "download", lambda **kwargs: df)
         provider = md.LiveDataProvider()
-        snap = provider.get_intraday_snapshot("RY.TO")
+        # The snapshot keeps only today's bars — pin "today" to the fixture's day.
+        set_backtest_clock(datetime(2024, 1, 1, 11, 0, tzinfo=TSX_TZ))
+        try:
+            snap = provider.get_intraday_snapshot("RY.TO")
+        finally:
+            set_backtest_clock(None)
         assert snap.low == pytest.approx(9.5)
         assert snap.high == pytest.approx(12.5)
         assert snap.close == pytest.approx(12.2)

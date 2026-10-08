@@ -348,6 +348,17 @@ def compute_signals(
     # stop so normal post-entry noise doesn't shake it out prematurely.
     chandelier_stop = hh_since_entry - ep.chand_trail_atr_k * atr_latest
     if max_pnl_pct >= ep.chand_arm_pct:
+        # A trailing stop only ratchets up. Recomputed from today's ATR alone,
+        # a volatility spike (wider ATR) would LOWER it exactly when protection
+        # matters most. Nothing is persisted between runs, so take the highest
+        # level it reached on any bar since it armed (each bar's own
+        # highest-high-to-date and ATR) — stateless, identical in backtest.
+        hh_to_date = after_entry["High"].cummax()
+        peak_pnl_to_date = (after_entry["Close"].cummax() / pos.entry_price - 1.0) * 100.0
+        armed_levels = (hh_to_date - ep.chand_trail_atr_k * after_entry["ATR"])[
+            peak_pnl_to_date >= ep.chand_arm_pct].dropna()
+        if not armed_levels.empty:
+            chandelier_stop = max(chandelier_stop, float(armed_levels.max()))
         stop_price = max(initial_stop, chandelier_stop)
     else:
         stop_price = initial_stop
@@ -607,6 +618,29 @@ def execute_virtual_sells(
         "funds_gained": total_proceeds,
         "realized_pnl": total_pnl,
     }
+
+
+def drop_stale_sell_rows(sell_rows: List[Dict], today: date) -> List[Dict]:
+    """
+    Keep only SELL rows priced from today's session.
+
+    When the intraday snapshot fails, compute_signals() falls back to the last
+    daily bar — and when the daily download also fails, load_or_fetch_data()
+    serves the CSV cache, whose last bar is yesterday's. Selling on that would
+    fill at yesterday's price under today's date. A dropped row is not lost:
+    the position stays open and the next run re-evaluates it.
+    """
+    today_iso = today.isoformat()
+    fresh = []
+    for row in sell_rows:
+        if row.get("last_date") == today_iso:
+            fresh.append(row)
+        else:
+            print(
+                f"  {Fore.YELLOW}⚠ {row.get(SIGNAL_COL_TICKER)}: SELL not executed — "
+                f"price is from {row.get('last_date')}, not today{Style.RESET_ALL}"
+            )
+    return fresh
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -886,6 +920,7 @@ def main() -> None:
                and r.get(POSITION_COL_LAST_CLOSE) is not None
                and r.get(POSITION_COL_SHARES) is not None
         ]
+        sell_rows = drop_stale_sell_rows(sell_rows, market_now(TSX_TZ).date())
 
         if sell_rows:
             funds_state = execute_virtual_sells(

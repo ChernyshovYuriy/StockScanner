@@ -339,7 +339,21 @@ def run_virtual_buy(
             continue
 
         stop_price = planned_stop  # persist so the exit honours the planned stop
-        shares_by_risk = int(dollar_risk / per_share_risk)
+        # Size on the risk actually taken: the fill price, not the planned
+        # entry. With no gap filter a gap-up fill carries more risk per share
+        # than planned (live 2026-05..10: 1.13x on average, up to 2.17x), and
+        # a fill at/below the stop has no risk to size against at all — the
+        # monitor would just sell it at the close. Skip that one.
+        fill_risk = price - planned_stop
+        if not (fill_risk > 0):
+            print(
+                f"{Fore.YELLOW}price ${price:.2f} at/below stop ${planned_stop:.2f} — skipped{Style.RESET_ALL}"
+            )
+            if not dry_run:
+                mark_intent_skipped(intent_id, "price_below_stop")
+            skipped_count += 1
+            continue
+        shares_by_risk = int(dollar_risk / fill_risk)
         # Cap: position value must not exceed max_position_value
         shares_by_cap  = int(max_position_value / price)
         shares = min(shares_by_risk, shares_by_cap)

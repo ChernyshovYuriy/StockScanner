@@ -62,6 +62,7 @@ import yfinance as yf
 from colorama import Fore, Style
 
 from config import CACHE_PATH
+from time_utils import TSX_TZ, market_today
 
 warnings.filterwarnings("ignore")
 
@@ -350,6 +351,14 @@ class LiveDataProvider(MarketDataProvider):
                 df.columns = df.columns.get_level_values(0)
 
             df = df.dropna(subset=["High", "Low", "Close"])
+            # period="1d" is Yahoo's LAST session, not necessarily today's: on a
+            # day its feed hasn't started yet it returns yesterday's bars, and
+            # callers would act on them (a pre-close sell at yesterday's price,
+            # a breakout fill on yesterday's high). Keep only today's bars.
+            idx = df.index
+            if idx.tz is not None:
+                idx = idx.tz_convert(TSX_TZ)
+            df = df[idx.date == market_today().date()]
             if df.empty:
                 return None
 
