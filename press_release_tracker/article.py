@@ -8,8 +8,9 @@ price) never reach it -- analyst.py needs the whole body.
 
 Mechanical only, same fetch-vs-interpret split as feeds.py: no
 interpretation here. Stdlib html.parser (no BeautifulSoup dependency).
-GlobeNewswire marks the body with itemprop="articleBody"; a page without
-that marker returns None rather than guessing at a body from page chrome.
+GlobeNewswire marks the body with itemprop="articleBody", TMX Newsfile
+with <article id="release">; a page without either marker returns None
+rather than guessing at a body from page chrome.
 Tables are kept row-by-row ("cell | cell | cell") since an earnings
 release's numbers mostly live in them.
 """
@@ -43,7 +44,8 @@ class _BodyExtractor(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         if self._depth == 0:
-            if dict(attrs).get("itemprop") == "articleBody":
+            a = dict(attrs)
+            if a.get("itemprop") == "articleBody" or (tag == "article" and a.get("id") == "release"):
                 self._depth = 1
                 self.found = True
             return
@@ -87,7 +89,7 @@ class _BodyExtractor(HTMLParser):
 
 def extract_article_text(html: str) -> Optional[str]:
     """The article body's plain text (tables row-by-row), or None if the
-    page has no itemprop="articleBody" element."""
+    page has neither body marker (see module docstring)."""
     parser = _BodyExtractor()
     parser.feed(html)
     if not parser.found:

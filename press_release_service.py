@@ -25,6 +25,9 @@ Two delivery lanes, split on the LLM's own materiality read:
                so a busy newswire morning doesn't produce an email every
                5 minutes (the timer's own poll interval) for routine
                releases.
+A feed in config.PRESS_RELEASE_HIGH_ONLY_FEEDS (TMX Newsfile) only uses
+the "high" lane: its other items are parsed, analysed and stored as usual
+but filed without an email.
 Both lanes share one subject prefix (press_release_tracker/digest.py's
 SUBJECT_PREFIX, "Stock News Results") so every email this sleeve sends,
 either lane, can be filtered on that one string in an email client.
@@ -50,7 +53,7 @@ from datetime import datetime, timedelta
 import requests
 
 from concurrent_utils import acquire_lock
-from config import PRESS_RELEASE_BATCH_INTERVAL_MINUTES, PRESS_RELEASE_FEEDS
+from config import PRESS_RELEASE_BATCH_INTERVAL_MINUTES, PRESS_RELEASE_FEEDS, PRESS_RELEASE_HIGH_ONLY_FEEDS
 from log_utils import log
 from send_report import send_text_email
 from time_utils import market_now
@@ -130,6 +133,16 @@ def run_collector(run_id, dry_run=False, conn=None):
         })
 
     rows = dry_run_rows if dry_run else store.unemailed(conn)
+    # A high-only feed's item that isn't 'high' is filed without an email:
+    # marked emailed so it never waits in the batch lane.
+    filed = [r for r in rows
+             if r.get("feed_url") in PRESS_RELEASE_HIGH_ONLY_FEEDS and r.get("materiality") != "high"]
+    if filed:
+        if not dry_run:
+            store.mark_emailed(conn, [r["guid"] for r in filed])
+        log("press_release", run_id, "filed_without_email", count=len(filed))
+        filed_guids = {r["guid"] for r in filed}
+        rows = [r for r in rows if r["guid"] not in filed_guids]
     if not rows:
         log("press_release", run_id, "quiet")
         return

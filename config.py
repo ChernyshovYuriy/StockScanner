@@ -338,9 +338,25 @@ PRESS_RELEASE_DB_PATH = DATA_PATH / "press_releases.db"
 # URL appended here later, no code change needed in press_release_service.py.
 # TMX Newsfile was added 2026-09 then removed the same month -- it flooded
 # News Watchlist's inbox with noise, so back to the single GlobeNewswire feed.
+# TMX Newsfile re-added 2026-10 per industry (it has no working all-news
+# feed): every item is still fetched, parsed, analysed, stored and scored,
+# but only a materiality 'high' one is emailed or seeded into News
+# Watchlist's inbox -- see PRESS_RELEASE_HIGH_ONLY_FEEDS below.
+PRESS_RELEASE_NEWSFILE_FEEDS = [
+    "https://feeds.newsfilecorp.com/industry/mining-metals",
+    "https://feeds.newsfilecorp.com/industry/technology",
+    "https://feeds.newsfilecorp.com/industry/cannabis",
+    "https://feeds.newsfilecorp.com/industry/oil-gas",
+]
 PRESS_RELEASE_FEEDS = [
     "https://www.globenewswire.com/RssFeed/country/Canada/feedTitle/GlobeNewswire%20-%20News%20from%20Canada",
+    *PRESS_RELEASE_NEWSFILE_FEEDS,
 ]
+# Feeds whose items reach the user (email, News Watchlist inbox) only when
+# the classifier rates them materiality 'high'; the rest are filed silently
+# (still in press_releases.db, still scored by news_watchlist/outcomes.py,
+# so the gate itself can be checked later).
+PRESS_RELEASE_HIGH_ONLY_FEEDS = frozenset(PRESS_RELEASE_NEWSFILE_FEEDS)
 
 # Fair-access identification for the RSS fetch (same spirit as
 # EDGAR_USER_AGENT / DEMAND_USER_AGENT / MACRO_USER_AGENT).

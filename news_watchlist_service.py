@@ -57,7 +57,7 @@ from datetime import date, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 from concurrent_utils import acquire_lock
-from config import NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS, PRESS_RELEASE_DB_PATH
+from config import NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS, PRESS_RELEASE_DB_PATH, PRESS_RELEASE_HIGH_ONLY_FEEDS
 from log_utils import log
 from manual_sell import get_market_price
 from market_data import DEFAULT_PROVIDER
@@ -128,7 +128,8 @@ def _is_stale(pubdate: str, now, max_age_days: int) -> bool:
 
 def _read_parsed_candidates(pr_db_path) -> list[dict]:
     """Every parsed_releases row with a non-null ticker, joined against
-    seen_items for its link and pubdate -- [] if press_releases.db doesn't
+    seen_items for its link and pubdate -- except a non-'high' item from
+    a config.PRESS_RELEASE_HIGH_ONLY_FEEDS feed (filed, never seeded) -- [] if press_releases.db doesn't
     exist yet (press_release_service.py hasn't run), same "not yet
     available" convention every read-only cross-DB reader in this repo
     uses."""
@@ -139,7 +140,7 @@ def _read_parsed_candidates(pr_db_path) -> list[dict]:
     try:
         rows = conn.execute(
             "SELECT p.guid, p.ticker, p.company, p.category, p.materiality, p.summary, "
-            "       s.link, s.pubdate "
+            "       s.link, s.pubdate, s.feed_url "
             "FROM parsed_releases p JOIN seen_items s ON s.guid = p.guid "
             "WHERE p.ticker IS NOT NULL AND p.ticker != ''"
         ).fetchall()
@@ -148,7 +149,8 @@ def _read_parsed_candidates(pr_db_path) -> list[dict]:
     finally:
         conn.close()
     cols = ["guid", "ticker", "company", "category", "materiality", "summary", "link", "pubdate"]
-    return [dict(zip(cols, r)) for r in rows]
+    return [dict(zip(cols, r[:-1])) for r in rows
+            if r[-1] not in PRESS_RELEASE_HIGH_ONLY_FEEDS or r[4] == "high"]
 
 
 def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[dict]:
