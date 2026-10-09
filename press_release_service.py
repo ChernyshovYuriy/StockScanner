@@ -26,8 +26,8 @@ Two delivery lanes, split on the LLM's own materiality read:
                5 minutes (the timer's own poll interval) for routine
                releases.
 A feed in config.PRESS_RELEASE_HIGH_ONLY_FEEDS (TMX Newsfile) only uses
-the "high" lane: its other items are parsed, analysed and stored as usual
-but filed without an email.
+the "high" lane: its other items are parsed and stored as usual but filed
+without an email or a full-article read.
 Both lanes share one subject prefix (press_release_tracker/digest.py's
 SUBJECT_PREFIX, "Stock News Results") so every email this sleeve sends,
 either lane, can be filtered on that one string in an email client.
@@ -102,7 +102,11 @@ def run_collector(run_id, dry_run=False, conn=None):
         # email below, so even the immediate "high" lane carries it.
         analysis = None
         body = None
-        if analyst.should_analyze(parsed, item.link):
+        # A high-only feed's non-high item is filed without an email, so it
+        # gets no article fetch either (fewer page requests to that wire).
+        notified = (item.feed_url not in PRESS_RELEASE_HIGH_ONLY_FEEDS
+                    or (parsed or {}).get("materiality") == "high")
+        if notified and analyst.should_analyze(parsed, item.link):
             body = article.fetch_article_text(item.link)
             analysis = analyst.analyze_release(parsed["ticker"], parsed.get("company"),
                                                item.title, item.link, body=body) if body else None
@@ -114,7 +118,7 @@ def run_collector(run_id, dry_run=False, conn=None):
         # counterpart of the analyst's prose dilution read. Reuses the
         # body/market context already fetched above.
         terms = None
-        if financing.should_extract(parsed, item.link):
+        if notified and financing.should_extract(parsed, item.link):
             terms = financing.extract_terms(
                 parsed["ticker"], item.title, item.link, body=body,
                 context=(analysis or {}).get("market_context"))

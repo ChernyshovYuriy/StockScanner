@@ -19,6 +19,7 @@ from press_release_tracker.feeds import FeedItem
 from time_utils import TSX_TZ, set_backtest_clock
 
 GNW = "https://gnw-feed"
+_REAL_FETCH = article.fetch_article_text  # the autouse fixture below stubs it
 NEWSFILE = "https://newsfile-feed"
 
 
@@ -77,8 +78,10 @@ def test_only_high_newsfile_items_are_emailed(tmp_path, monkeypatch):
     assert store.unemailed(conn) == []  # filed items don't wait in the batch lane
 
 
-def test_filed_newsfile_items_are_still_parsed_and_analysed(tmp_path, monkeypatch):
-    analysed = []
+def test_filed_newsfile_items_are_parsed_but_get_no_article_read(tmp_path, monkeypatch):
+    fetched, analysed = [], []
+    monkeypatch.setattr(press_release_service.article, "fetch_article_text",
+                        lambda link: fetched.append(link) or "full body")
     monkeypatch.setattr(press_release_service.analyst, "analyze_release",
                         lambda ticker, *a, **k: analysed.append(ticker) or None)
     monkeypatch.setattr(press_release_service.financing, "extract_terms",
@@ -86,7 +89,10 @@ def test_filed_newsfile_items_are_still_parsed_and_analysed(tmp_path, monkeypatc
     conn, _ = _collect(tmp_path, monkeypatch)
     parsed = {r[0] for r in conn.execute("SELECT guid FROM parsed_releases")}
     assert parsed == set(ITEMS)
-    assert "NFLOW" in analysed and "terms:NFLOW" in analysed
+    assert sorted(analysed) == ["GNWHIGH", "GNWLOW", "NFHIGH",
+                                "terms:GNWHIGH", "terms:GNWLOW", "terms:NFHIGH"]
+    assert sorted(fetched) == ["https://example.com/gnw-high", "https://example.com/gnw-low",
+                               "https://example.com/nf-high"]
 
 
 def test_filed_items_are_not_resent_on_the_next_run(tmp_path, monkeypatch):
@@ -150,3 +156,74 @@ def test_article_reads_newsfile_release_body_only():
 
 def test_other_article_elements_are_not_a_body():
     assert article.extract_article_text('<article id="other"><p>x</p></article>') is None
+
+
+# ── article fetches are paced one by one per host ───────────────────────────
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+        self.slept = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, s):
+        self.slept.append(round(s, 6))
+        self.now += s
+
+
+@pytest.fixture
+def paced(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(article, "time", clock)
+    monkeypatch.setattr(article, "_last_fetch", {})
+    monkeypatch.setattr(article, "MIN_INTERVAL_SECONDS", 10.0)
+    monkeypatch.setattr(article, "fetch_article_text", _REAL_FETCH)
+    got = []
+
+    class _Resp:
+        text = "<article id='release'><p>body</p></article>"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(article.requests, "get",
+                        lambda url, **k: got.append((url, clock.now)) or _Resp())
+    return clock, got
+
+
+def test_back_to_back_fetches_to_one_host_wait_the_interval(paced):
+    clock, got = paced
+    for i in range(3):
+        assert article.fetch_article_text(f"https://www.newsfilecorp.com/release/{i}") == "body"
+    assert clock.slept == [10.0, 10.0]
+    assert [t for _, t in got] == [1000.0, 1010.0, 1020.0]
+
+
+def test_time_already_passed_counts_toward_the_interval(paced):
+    clock, got = paced
+    article.fetch_article_text("https://www.globenewswire.com/a")
+    clock.now += 7.0  # e.g. the LLM call in between
+    article.fetch_article_text("https://www.globenewswire.com/b")
+    assert clock.slept == [3.0]
+
+
+def test_different_hosts_do_not_wait_for_each_other(paced):
+    clock, got = paced
+    article.fetch_article_text("https://www.globenewswire.com/a")
+    article.fetch_article_text("https://www.newsfilecorp.com/release/1")
+    assert clock.slept == []
+
+
+def test_a_failed_fetch_still_counts(paced, monkeypatch):
+    clock, got = paced
+
+    def boom(url, **k):
+        got.append((url, clock.now))
+        raise article.requests.ConnectionError("refused")
+
+    monkeypatch.setattr(article.requests, "get", boom)
+    assert article.fetch_article_text("https://www.globenewswire.com/a") is None
+    assert article.fetch_article_text("https://www.globenewswire.com/b") is None
+    assert clock.slept == [10.0]

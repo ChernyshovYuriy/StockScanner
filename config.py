@@ -339,8 +339,8 @@ PRESS_RELEASE_DB_PATH = DATA_PATH / "press_releases.db"
 # TMX Newsfile was added 2026-09 then removed the same month -- it flooded
 # News Watchlist's inbox with noise, so back to the single GlobeNewswire feed.
 # TMX Newsfile re-added 2026-10 per industry (it has no working all-news
-# feed): every item is still fetched, parsed, analysed, stored and scored,
-# but only a materiality 'high' one is emailed or seeded into News
+# feed): every item is still fetched, parsed, stored and scored, but only
+# a materiality 'high' one is analysed, emailed or seeded into News
 # Watchlist's inbox -- see PRESS_RELEASE_HIGH_ONLY_FEEDS below.
 PRESS_RELEASE_NEWSFILE_FEEDS = [
     "https://feeds.newsfilecorp.com/industry/mining-metals",
@@ -352,10 +352,10 @@ PRESS_RELEASE_FEEDS = [
     "https://www.globenewswire.com/RssFeed/country/Canada/feedTitle/GlobeNewswire%20-%20News%20from%20Canada",
     *PRESS_RELEASE_NEWSFILE_FEEDS,
 ]
-# Feeds whose items reach the user (email, News Watchlist inbox) only when
-# the classifier rates them materiality 'high'; the rest are filed silently
-# (still in press_releases.db, still scored by news_watchlist/outcomes.py,
-# so the gate itself can be checked later).
+# Feeds whose items reach the user (email, News Watchlist inbox) and get a
+# full-article read only when the classifier rates them materiality 'high';
+# the rest are filed silently (still in press_releases.db, still scored by
+# news_watchlist/outcomes.py, so the gate itself can be checked later).
 PRESS_RELEASE_HIGH_ONLY_FEEDS = frozenset(PRESS_RELEASE_NEWSFILE_FEEDS)
 
 # Fair-access identification for the RSS fetch (same spirit as
@@ -402,6 +402,11 @@ PRESS_RELEASE_ANALYSIS_CATEGORIES = ("earnings", "financing", "ma_acquisition", 
 # Caps tokens per analysis; a full results release with its statement
 # tables is typically 10-25k characters.
 PRESS_RELEASE_ANALYSIS_MAX_BODY_CHARS = 24000
+# Minimum gap between two article-page fetches from the same wire host
+# (press_release_tracker/article.py). Added 2026-10 after the archive
+# backfill's ~860 GlobeNewswire pages/hour got the home IP refused by
+# Akamai (403), and a burst of ~6 Newsfile pages drew an AWS WAF challenge.
+PRESS_RELEASE_ARTICLE_MIN_INTERVAL_SECONDS = 10.0
 # Historical backfill (press_release_tracker/archive.py): GlobeNewswire's
 # monthly English sitemaps, Canadian-listed releases only, in their OWN
 # DB -- never read by the live services, so 3-year-old releases can't

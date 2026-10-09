@@ -13,12 +13,18 @@ with <article id="release">; a page without either marker returns None
 rather than guessing at a body from page chrome.
 Tables are kept row-by-row ("cell | cell | cell") since an earnings
 release's numbers mostly live in them.
+
+Fetches are paced one by one per host
+(config.PRESS_RELEASE_ARTICLE_MIN_INTERVAL_SECONDS): both wires block an IP
+that pulls pages in bursts.
 """
 from __future__ import annotations
 
 import re
+import time
 from html.parser import HTMLParser
 from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -26,6 +32,12 @@ try:
     from config import PRESS_RELEASE_USER_AGENT as USER_AGENT
 except Exception:
     USER_AGENT = "StockScanner-PressRelease/0.1 (chernyshov.yuriy@gmail.com)"
+try:
+    from config import PRESS_RELEASE_ARTICLE_MIN_INTERVAL_SECONDS as MIN_INTERVAL_SECONDS
+except Exception:
+    MIN_INTERVAL_SECONDS = 10.0
+
+_last_fetch: dict = {}  # host -> time.monotonic() of its last fetch
 
 _BLOCK_TAGS = {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "table", "ul", "ol"}
 _SKIP_TAGS = {"script", "style", "noscript"}
@@ -106,6 +118,13 @@ def fetch_article_text(link: str, timeout: int = 30) -> Optional[str]:
     item, never crashes the run over one page."""
     if not link:
         return None
+    host = urlparse(link).netloc
+    last = _last_fetch.get(host)
+    if last is not None:
+        wait = MIN_INTERVAL_SECONDS - (time.monotonic() - last)
+        if wait > 0:
+            time.sleep(wait)
+    _last_fetch[host] = time.monotonic()
     try:
         resp = requests.get(link, headers={"User-Agent": USER_AGENT}, timeout=timeout)
         resp.raise_for_status()
