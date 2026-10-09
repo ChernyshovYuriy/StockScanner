@@ -65,10 +65,10 @@ def _parse_signal_date(row: pd.Series):
 
 def fetch_latest_price(ticker: str) -> Optional[float]:
     """Same strategy as virtual_buy.py — see its docstring. Delegates to
-    market_data.DEFAULT_PROVIDER.get_quote(), the single place this fetch
+    market_data.DEFAULT_PROVIDER.get_session_quote(), the single place this fetch
     logic now lives (previously a byte-identical duplicate of
     virtual_buy.fetch_latest_price)."""
-    return DEFAULT_PROVIDER.get_quote(ticker)
+    return DEFAULT_PROVIDER.get_session_quote(ticker)
 
 
 def _skip_unprocessed(intent_ids: list[int], reason: str, dry_run: bool) -> int:

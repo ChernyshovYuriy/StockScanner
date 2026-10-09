@@ -209,6 +209,11 @@ class MarketDataProvider:
         unavailable (e.g. a historical provider, which has no "today")."""
         raise NotImplementedError
 
+    def get_session_quote(self, ticker: str) -> Optional[float]:
+        """Return the last trade price from TODAY's session, or None when
+        the ticker hasn't traded today / on failure / unavailable."""
+        raise NotImplementedError
+
     def get_sector(self, ticker: str) -> str:
         """Return the GICS sector for ticker, or UNKNOWN_SECTOR."""
         raise NotImplementedError
@@ -323,6 +328,44 @@ class LiveDataProvider(MarketDataProvider):
             print(f"  {Fore.RED}{ticker}: fallback download error — {e}{Style.RESET_ALL}")
 
         return None
+
+    # ------------------------------------------------------------------
+    # get_session_quote() — a buy fill price that is provably from today
+    # ------------------------------------------------------------------
+    def get_session_quote(self, ticker: str) -> Optional[float]:
+        """
+        Last 1-minute close from TODAY's session, or None.
+
+        get_quote() is fine for display, but not for a fill: before a
+        ticker's first trade of the day fast_info["last_price"] is
+        yesterday's close, and period="1d" bars can be yesterday's session.
+        The buy services (virtual/momentum/macro_buy) use this instead, so a
+        thin name that hasn't traded by 09:45 is skipped, not bought at
+        yesterday's price.
+        """
+        try:
+            df = yf.download(
+                tickers=ticker,
+                period="1d",
+                interval="1m",
+                auto_adjust=True,
+                progress=False,
+            )
+            if df is None or df.empty:
+                return None
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            close = df["Close"].dropna()
+            idx = close.index
+            if idx.tz is not None:
+                idx = idx.tz_convert(TSX_TZ)
+            close = close[idx.date == market_today().date()]
+            if close.empty or not float(close.iloc[-1]) > 0:
+                return None
+            return float(close.iloc[-1])
+        except Exception as e:
+            print(f"  {Fore.RED}{ticker}: session quote error — {e}{Style.RESET_ALL}")
+            return None
 
     # ------------------------------------------------------------------
     # get_intraday_snapshot() — used during pre-close monitor run
@@ -889,6 +932,11 @@ class HistoricalSliceProvider(MarketDataProvider):
         """The backtester works off daily bars only; there is no "today"
         intraday snapshot for historical data. Always returns None so
         callers fall back to the completed daily bar, same as a live failure."""
+        return None
+
+    def get_session_quote(self, ticker: str) -> Optional[float]:
+        """No "today" session in pre-loaded daily bars — always None, like
+        get_intraday_snapshot()."""
         return None
 
     # ------------------------------------------------------------------

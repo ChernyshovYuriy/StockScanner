@@ -31,7 +31,7 @@ import argparse
 import pandas as pd
 
 import db
-from virtual_buy import fetch_latest_price
+from market_data import DEFAULT_PROVIDER
 
 
 def _print_df(title: str, df: pd.DataFrame) -> None:
@@ -55,7 +55,8 @@ def _mark_to_market(positions: pd.DataFrame) -> pd.DataFrame:
     """
     Add live-price columns to the open-positions DataFrame.
 
-    Makes one yfinance quote call per ticker via fetch_latest_price().
+    Makes one yfinance quote call per ticker via DEFAULT_PROVIDER.get_quote()
+    (not virtual_buy's today-only fill price — this report runs any time).
     Adds: cost, last, market_value, unrealized_pnl, unrealized_pct.
     last/market_value/P&L are NaN for any ticker whose quote failed.
     """
@@ -68,7 +69,7 @@ def _mark_to_market(positions: pd.DataFrame) -> pd.DataFrame:
         df["unrealized_pct"] = []
         return df
 
-    df["last"] = df["ticker"].apply(fetch_latest_price)
+    df["last"] = df["ticker"].apply(DEFAULT_PROVIDER.get_quote)
     df["market_value"] = df["last"] * df["shares"]
     df["unrealized_pnl"] = df["market_value"] - df["cost"]
     df["unrealized_pct"] = df["unrealized_pnl"] / df["cost"] * 100.0

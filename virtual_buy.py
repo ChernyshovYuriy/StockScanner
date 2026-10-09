@@ -77,22 +77,19 @@ def _parse_signal_date(row: pd.Series):
 
 def fetch_latest_price(ticker: str) -> Optional[float]:
     """
-    Fetch the latest available market price for a ticker via Yahoo Finance.
-
-    Strategy (in order of preference):
-      1. yf.Ticker.fast_info["last_price"]  — fastest, returns the most recent
-         delayed quote (~15 min) directly without downloading OHLCV bars.
-      2. Fallback: download 1-minute bars for the last 1 trading day and take
-         the last bar's Close — useful outside regular hours when fast_info
-         may return None.
+    Fetch the latest available market price for a ticker via Yahoo Finance:
+    the last 1-minute bar's Close from today's session.
 
     This intentionally does NOT use daily bars so the price reflects the
     current session, not yesterday's close.
 
-    Delegates to market_data.DEFAULT_PROVIDER.get_quote() — the single place
-    this fetch logic now lives (see market_data.py).
+    Delegates to market_data.DEFAULT_PROVIDER.get_session_quote(), which
+    only returns a price from TODAY's session: before a ticker's first trade
+    of the day the plain quote is yesterday's close, and buying on it filled
+    at a price that never traded. None (skipped as no_price_data) if the
+    ticker hasn't traded yet.
     """
-    return DEFAULT_PROVIDER.get_quote(ticker)
+    return DEFAULT_PROVIDER.get_session_quote(ticker)
 
 
 def _skip_unprocessed(intent_ids: list[int], reason: str, dry_run: bool) -> int:

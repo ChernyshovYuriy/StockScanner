@@ -83,8 +83,8 @@ def _parse_signal_date(row: pd.Series):
 
 def fetch_latest_price(ticker: str) -> Optional[float]:
     """Same strategy as virtual_buy.py — see its docstring. Delegates to
-    market_data.DEFAULT_PROVIDER.get_quote()."""
-    return DEFAULT_PROVIDER.get_quote(ticker)
+    market_data.DEFAULT_PROVIDER.get_session_quote()."""
+    return DEFAULT_PROVIDER.get_session_quote(ticker)
 
 
 def _read_core_intents(as_of_date: date) -> pd.DataFrame:
