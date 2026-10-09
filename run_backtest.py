@@ -6,7 +6,15 @@ Command-line entry point for the backtest system.
 Single run:
     python run_backtest.py --start 2022-01-01 --end 2024-01-01
 
-Custom tickers source (URL or file):
+Universe: by default the RAW list (config.BACKTEST_RAW_TICKERS_URL) is
+screened point-in-time — each week only the names that passed
+swing_tickers.py's filters on the previous week's close, the way the live
+CAN_TICKERS_URL list is built. Screening today's published list over past
+years is look-ahead (names chosen on today's readings); it overstated the
+2022-10..2026-10 walk-forward return ~3x. --static-universe restores it:
+    python run_backtest.py --static-universe --start 2022-01-01 --end 2024-01-01
+
+Custom tickers source (URL or file; a raw list unless --static-universe):
     python run_backtest.py --tickers https://example.com/tickers.txt --start 2022-01-01 --end 2024-01-01
 
 Parameter sweep (exit params — time_stop_days × stop_atr, 4×4=16 combos):
@@ -34,13 +42,20 @@ import pandas as pd
 from backtest_report import write_backtest_report
 from backtest_runner import BacktestConfig, BacktestResults, BacktestRunner
 from position_monitor import ExitParams
-from config import CAN_TICKERS_URL, OUT_PATH
+from config import BACKTEST_RAW_TICKERS_URL, CAN_TICKERS_URL, OUT_PATH
 from market_data import HistoricalSliceProvider
+from swing_tickers import Thresholds
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _universe_filter(args: argparse.Namespace) -> Thresholds | None:
+    """Point-in-time universe filter for BacktestConfig — None (legacy,
+    screen every ticker every day) only with --static-universe."""
+    return None if args.static_universe else Thresholds()
+
 
 def _load_tickers(source: str) -> list[str]:
     """Read tickers from a URL or local file (one per line), strip blanks and comments."""
@@ -137,6 +152,7 @@ def _run_single(
 
     cfg = BacktestConfig(
         tickers            = tickers,
+        universe_filter    = _universe_filter(args),
         benchmark          = args.benchmark,
         start_date         = args.start,
         end_date           = args.end,
@@ -237,6 +253,7 @@ def _run_sweep(
     )
     base_cfg = BacktestConfig(
         tickers            = tickers,
+        universe_filter    = _universe_filter(args),
         benchmark          = args.benchmark,
         start_date         = args.start,
         end_date           = args.end,
@@ -284,6 +301,7 @@ def _run_sweep(
 
         cfg = BacktestConfig(
             tickers            = tickers,
+            universe_filter    = _universe_filter(args),
             benchmark          = args.benchmark,
             start_date         = args.start,
             end_date           = args.end,
@@ -436,6 +454,7 @@ def _run_walk_forward_gap(
     )
     base_cfg = BacktestConfig(
         tickers            = tickers,
+        universe_filter    = _universe_filter(args),
         benchmark          = args.benchmark,
         start_date         = args.start,
         end_date           = args.end,
@@ -502,6 +521,7 @@ def _run_walk_forward_gap(
         end_date   = str(trading_days[end_i]) if end_i < n else args.end
         cfg = BacktestConfig(
             tickers            = tickers,
+            universe_filter    = _universe_filter(args),
             benchmark          = args.benchmark,
             start_date         = start_date,
             end_date           = end_date,
@@ -647,8 +667,13 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Backtest end date   (YYYY-MM-DD, exclusive)")
 
     # Universe
-    p.add_argument("--tickers",  default=CAN_TICKERS_URL,
-                   help="URL or file path for the ticker list (one ticker per line)")
+    p.add_argument("--tickers",  default=None,
+                   help="URL or file path for the ticker list (one ticker per line). "
+                        "Default: BACKTEST_RAW_TICKERS_URL (raw, screened point-in-time); "
+                        "CAN_TICKERS_URL with --static-universe")
+    p.add_argument("--static-universe", dest="static_universe", action="store_true",
+                   help="Screen every ticker in --tickers on every day (legacy; look-ahead "
+                        "when --tickers is today's CAN_TICKERS_URL selection)")
     p.add_argument("--benchmark", default="XIU.TO",
                    help="Benchmark ETF ticker")
 
@@ -722,6 +747,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _build_parser().parse_args()
+    if args.tickers is None:
+        args.tickers = CAN_TICKERS_URL if args.static_universe else BACKTEST_RAW_TICKERS_URL
 
     # ── Load tickers ─────────────────────────────────────────────────────────
     try:
@@ -740,7 +767,8 @@ def main() -> None:
 
     print(f"\n{'='*60}")
     print(f"  TSX Backtest  {args.start} → {args.end}")
-    print(f"  Universe: {len(tickers) - 1} tickers + {args.benchmark}")
+    print(f"  Universe: {len(tickers) - 1} tickers + {args.benchmark}"
+          + ("" if args.static_universe else "  (raw list, screened point-in-time weekly)"))
     print(f"{'='*60}")
 
     # ── Pre-load data once ───────────────────────────────────────────────────

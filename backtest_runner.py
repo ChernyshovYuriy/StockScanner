@@ -81,6 +81,17 @@ class BacktestConfig:
     tickers: List[str]  # must include benchmark (e.g. "XIU.TO")
     benchmark: str = "XIU.TO"
 
+    # Point-in-time universe. None = screen every ticker in `tickers` on every
+    # day (legacy). Set to swing_tickers.Thresholds() to treat `tickers` as the
+    # RAW list (can_tickers_full) and screen, each week, only the names that
+    # passed swing_tickers.py's filters on the previous week's close — the
+    # way the live CAN_TICKERS_URL list is built (rebuilt weekly from the raw
+    # list). Screening today's published list instead backtests names
+    # selected on today's ATR/trend readings: look-ahead that overstated the
+    # 2022-10..2026-10 walk-forward return ~3x (see run_backtest.py).
+    universe_filter: Optional["Thresholds"] = None
+    _universe_cache: Dict = field(default_factory=dict, repr=False)
+
     # Date range
     start_date: str = "2023-01-01"  # ISO string, inclusive
     end_date: str = "2024-01-01"  # ISO string, exclusive (last day analysed is end_date - 1 bday)
@@ -430,6 +441,57 @@ def _day_close_price(
 # SCREENER STEP  (after close D)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _point_in_time_universe(
+        cfg: BacktestConfig,
+        provider: HistoricalSliceProvider,
+        sim_date: pd.Timestamp,
+) -> List[str]:
+    """
+    The tickers in cfg.tickers that passed swing_tickers.py's filters
+    (cfg.universe_filter) on the last close BEFORE sim_date's week began —
+    one rebuild per week, like the live list. Cached per week on cfg.
+    """
+    import time_utils
+    from swing_tickers import analyze_symbol, pass_filters
+
+    sim_date = pd.Timestamp(sim_date).normalize()
+    week_start = sim_date - pd.Timedelta(days=sim_date.weekday())
+    if week_start in cfg._universe_cache:
+        return cfg._universe_cache[week_start]
+
+    data = provider._data
+    bench = data.get(cfg.benchmark)
+    bench_close = None
+    if bench is not None:
+        bench_close = bench.loc[bench.index < week_start, "Close"].iloc[-252:]
+    if bench_close is None or bench_close.empty:
+        cfg._universe_cache[week_start] = []
+        return []
+    as_of = bench_close.index[-1]
+
+    # analyze_symbol() judges staleness against market_today(): pin the clock
+    # to that close for the rebuild, then restore whatever the caller had.
+    saved = time_utils._backtest_now
+    set_backtest_clock(datetime(as_of.year, as_of.month, as_of.day, 18, 0, tzinfo=TSX_TZ))
+    try:
+        passed = []
+        for ticker in cfg.tickers:
+            if ticker == cfg.benchmark or ticker not in data:
+                continue
+            df = data[ticker]
+            df = df.loc[df.index < week_start].iloc[-252:]
+            if len(df) < 60:
+                continue
+            ok, _ = pass_filters(analyze_symbol(df, bench_close), cfg.universe_filter)
+            if ok:
+                passed.append(ticker)
+    finally:
+        time_utils._backtest_now = saved
+
+    cfg._universe_cache[week_start] = passed
+    return passed
+
+
 def _run_screener_step(
         cfg: BacktestConfig,
         provider: HistoricalSliceProvider,
@@ -446,7 +508,12 @@ def _run_screener_step(
         StockScreener, BENCHMARK, TechnicalIndicators,
     )
 
-    universe_tickers = [t for t in cfg.tickers if t != cfg.benchmark]
+    if cfg.universe_filter is not None:
+        universe_tickers = _point_in_time_universe(cfg, provider, sim_date)
+        if not universe_tickers:
+            return pd.DataFrame()
+    else:
+        universe_tickers = [t for t in cfg.tickers if t != cfg.benchmark]
 
     screener_cfg = ScreenerConfig(
         lookback_days=cfg.lookback_days,

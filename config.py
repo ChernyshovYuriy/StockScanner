@@ -11,6 +11,10 @@ CACHE_PATH = ROOT_DIR / "cache"
 
 # URL for the ticker list (one ticker per line); used by all services.
 CAN_TICKERS_URL = "https://raw.githubusercontent.com/ChernyshovYuriy/Financing/refs/heads/main/data/can_tickers_swing_universe"
+# The raw list CAN_TICKERS_URL is filtered from each week (swing_tickers.py's
+# filters). run_backtest.py screens this list point-in-time by default, since
+# CAN_TICKERS_URL itself is only ever today's selection.
+BACKTEST_RAW_TICKERS_URL = "https://raw.githubusercontent.com/ChernyshovYuriy/Financing/refs/heads/main/data/can_tickers_full"
 SCREENER_OUT_PATH = OUT_PATH / "screener_out"
 REPORT_PATH = OUT_PATH / "report.html"
 REPORT_POSITION_PATH = OUT_PATH / "position_monitor_report.html"

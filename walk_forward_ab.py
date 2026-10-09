@@ -44,7 +44,8 @@ from backtest_runner import (
 from position_monitor import ExitParams
 from market_data import HistoricalSliceProvider
 from time_utils import set_backtest_clock, TSX_TZ
-from config import CAN_TICKERS_URL, OUT_PATH
+from config import BACKTEST_RAW_TICKERS_URL, OUT_PATH
+from swing_tickers import Thresholds
 
 # Per-run hang guard: an earlier grid-search run over this same backtest
 # loop stalled on one combo for 7+ hours with zero CPU/progress and no
@@ -69,7 +70,10 @@ def _alarm_handler(signum, frame):
 # to serve unresolved git merge-conflict markers when the remote repo has
 # a pending conflict -- if that happens, point this at a locally-saved
 # clean snapshot instead rather than let it silently corrupt the universe.
-TICKERS_SOURCE = CAN_TICKERS_URL
+# This is the RAW list, screened point-in-time each week (universe_filter
+# below) -- CAN_TICKERS_URL itself is only today's selection, and screening
+# it over past years is look-ahead (see backtest_runner.BacktestConfig).
+TICKERS_SOURCE = BACKTEST_RAW_TICKERS_URL
 
 START = "2022-08-26"
 END = "2026-08-26"
@@ -131,7 +135,7 @@ def main():
         lookback_days=LOOKBACK_DAYS, screener_frequency=SCREENER_FREQ,
         max_tracked_tickers=40, regime_filter=True, min_rr=2.0,
         max_positions=8, sizing="live", sizing_basis="cash",
-        gap_filter_pct=None, _provider=provider,
+        gap_filter_pct=None, universe_filter=Thresholds(), _provider=provider,
     )
 
     # Pre-compute screener scores once for the FULL period (base config just
