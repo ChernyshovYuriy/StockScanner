@@ -153,6 +153,47 @@ def test_sell_position_uses_manual_price_when_given(monkeypatch):
     assert trades.iloc[0]["sell_price"] == 8.50
 
 
+def test_cli_momentum_sleeve_sells_from_momentum_db_and_prints_json(monkeypatch, tmp_path, capsys):
+    """--sleeve momentum --json (what the dashboard's momentum Sell button
+    runs) sells from the momentum DB, labels the email Momentum, and prints
+    only the JSON result on stdout."""
+    import json
+    import manual_sell
+    from db import set_cash
+
+    momentum_path = tmp_path / "momentum.db"
+    init_db(momentum_path)
+    set_cash(0.0)
+    insert_position("AEM.TO", "2026-09-01", 100.0, 10)
+    monkeypatch.setattr("config.MOMENTUM_DB_PATH", momentum_path)
+    labels = []
+    monkeypatch.setattr("position_monitor.send_transaction_email",
+                        lambda **kw: labels.append(kw.get("label")))
+    monkeypatch.setattr("sys.argv", ["manual_sell.py", "AEM.TO", "--sleeve", "momentum",
+                                     "--json", "--price", "110"])
+
+    with pytest.raises(SystemExit) as exc:
+        manual_sell.main()
+
+    assert exc.value.code == 0
+    result = json.loads(capsys.readouterr().out.strip())
+    assert result["ok"] is True and result["price"] == 110.0
+    assert get_open_positions() == []
+    assert get_cash() == 1_100.0
+    assert labels == ["Momentum"]
+
+
+def test_momentum_label_uses_its_own_lock():
+    """A momentum sell must not be blocked by a core sell in progress."""
+    set_cash_and_position_no_price()
+    lock_path, lock_file = acquire_lock("manual_sell")
+    try:
+        result = sell_position("RY.TO", price=45.0, label="Momentum")
+    finally:
+        lock_file.close()
+    assert result["ok"] is True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,6 +211,12 @@ def set_cash_and_position(monkeypatch, cash: float = 0.0, price: float = 45.00):
         "manual_sell.fetch_intraday_snapshot",
         lambda ticker: _TodayBar(price),
     )
+
+
+def set_cash_and_position_no_price():
+    from db import set_cash
+    set_cash(0.0)
+    insert_position("RY.TO", "2026-05-01", 42.50, 100)
 
 
 class _TodayBar:

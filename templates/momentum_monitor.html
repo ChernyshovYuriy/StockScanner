@@ -67,7 +67,7 @@
       <tr>
         <th>Ticker</th><th>Entry Date</th><th>Entry</th><th>Shares</th>
         <th>Last</th><th>PnL %</th><th>PnL $</th><th>Stop</th>
-        <th>R</th><th>Days</th><th>Status</th><th>Reason</th>
+        <th>R</th><th>Days</th><th>Status</th><th>Reason</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -91,6 +91,9 @@
         <td>{{ row.get('tdays', '—') }}</td>
         <td><span class="badge badge-{{ row.get('status', 'unknown')|lower }}">{{ row.get('status', '—') }}</span></td>
         <td>{{ row.get('reason', '') }}</td>
+        <td>
+          <button class="sell-btn" data-ticker="{{ row.get('ticker') }}" data-sell-url="/api/momentum/positions/">Sell</button>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

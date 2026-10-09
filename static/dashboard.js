@@ -74,9 +74,11 @@ document.querySelectorAll("button.refresh-btn[onclick]").forEach((btn) => {
   btn.addEventListener("click", showNavProgress);
 });
 
-function postSell(ticker, price) {
+// A button's data-sell-url picks the sleeve's sell endpoint (e.g. the
+// momentum tab's /api/momentum/positions/); none means the core sleeve.
+function postSell(ticker, price, baseUrl = "/api/positions/") {
   const body = price === undefined ? {} : { price };
-  return fetch(`/api/positions/${encodeURIComponent(ticker)}/sell`, {
+  return fetch(`${baseUrl}${encodeURIComponent(ticker)}/sell`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -93,7 +95,9 @@ document.addEventListener("click", (event) => {
   btn.disabled = true;
   btn.textContent = "Selling…";
 
-  postSell(ticker)
+  const baseUrl = btn.dataset.sellUrl || "/api/positions/";
+
+  postSell(ticker, undefined, baseUrl)
     .then(({ res, data }) => {
       if (res.ok && data.ok) {
         location.reload();
@@ -118,7 +122,7 @@ document.addEventListener("click", (event) => {
           btn.textContent = "Sell";
           return;
         }
-        postSell(ticker, price).then(({ res: res2, data: data2 }) => {
+        postSell(ticker, price, baseUrl).then(({ res: res2, data: data2 }) => {
           if (res2.ok && data2.ok) {
             location.reload();
             return;

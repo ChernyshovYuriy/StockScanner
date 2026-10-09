@@ -165,6 +165,80 @@ def test_sell_endpoint_rejects_invalid_manual_price(client, monkeypatch, bad_pri
     assert resp.get_json()["ok"] is False
 
 
+def test_momentum_page_shows_sell_button(client, monkeypatch):
+    row = {"ticker": "AEM.TO", "entry_date": "2026-09-01", "entry_price": 100.0, "shares": 10,
+           "last_close": 110.0, "pnl_%": 10.0, "pnl_$": 100.0, "status": "HOLD"}
+    monkeypatch.setattr("dashboard_app.build_momentum_positions", lambda: [row])
+    monkeypatch.setattr("dashboard_app.get_momentum_cash", lambda: 1_000.0)
+    monkeypatch.setattr("dashboard_app.get_momentum_transactions", lambda: get_transactions())
+
+    resp = client.get("/momentum")
+
+    assert resp.status_code == 200
+    assert b'data-sell-url="/api/momentum/positions/"' in resp.data
+    assert b'data-ticker="AEM.TO"' in resp.data
+
+
+def test_momentum_sell_endpoint_happy_path_invalidates_cache(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr("dashboard_app._run_momentum_sell",
+                        lambda ticker, price: calls.append((ticker, price)) or {"ok": True, "ticker": ticker})
+    invalidated = []
+    monkeypatch.setattr("dashboard_app.invalidate_momentum_cache", lambda: invalidated.append(1))
+
+    resp = client.post("/api/momentum/positions/AEM.TO/sell", json={"price": 110})
+
+    assert resp.status_code == 200
+    assert calls == [("AEM.TO", 110.0)]
+    assert invalidated == [1]
+
+
+@pytest.mark.parametrize("error,expected_status", [("locked", 409), ("no_position", 404),
+                                                     ("no_price", 503), ("failed", 500)])
+def test_momentum_sell_endpoint_maps_errors(client, monkeypatch, error, expected_status):
+    monkeypatch.setattr("dashboard_app._run_momentum_sell",
+                        lambda ticker, price: {"ok": False, "ticker": ticker, "error": error, "message": "nope"})
+
+    resp = client.post("/api/momentum/positions/AEM.TO/sell")
+
+    assert resp.status_code == expected_status
+
+
+def test_momentum_sell_endpoint_rejects_bad_price(client):
+    resp = client.post("/api/momentum/positions/AEM.TO/sell", json={"price": -1})
+    assert resp.status_code == 400
+
+
+def test_run_momentum_sell_runs_cli_in_child_process(monkeypatch):
+    import subprocess
+    import dashboard_app
+    seen = {}
+
+    def _fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"ok": true, "ticker": "AEM.TO"}\n', stderr="")
+
+    monkeypatch.setattr("dashboard_app.subprocess.run", _fake_run)
+
+    result = dashboard_app._run_momentum_sell("AEM.TO", 110.0)
+
+    assert result == {"ok": True, "ticker": "AEM.TO"}
+    assert seen["cmd"][2:] == ["AEM.TO", "--sleeve", "momentum", "--json", "--price", "110.0"]
+
+
+def test_run_momentum_sell_reports_a_crash(monkeypatch):
+    import subprocess
+    import dashboard_app
+    monkeypatch.setattr("dashboard_app.subprocess.run",
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="",
+                                                                      stderr="Traceback\nIOException: lock\n"))
+
+    result = dashboard_app._run_momentum_sell("AEM.TO", None)
+
+    assert result["ok"] is False and result["error"] == "failed"
+    assert "IOException: lock" in result["message"]
+
+
 def test_macro_page_renders_when_no_positions(client, monkeypatch):
     monkeypatch.setattr("dashboard_app.build_macro_positions", lambda: [])
     monkeypatch.setattr("dashboard_app.get_macro_cash", lambda: 10_000.0)

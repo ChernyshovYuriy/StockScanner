@@ -19,10 +19,14 @@ build step on ARM).
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from datetime import date
+from pathlib import Path
 from typing import Any, Callable
 
 import duckdb
@@ -57,7 +61,12 @@ from kangaroo_dashboard_data import (
 )
 from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
 from manual_sell import get_market_price, sell_position
-from momentum_dashboard_data import build_momentum_positions, get_momentum_cash, get_momentum_transactions
+from momentum_dashboard_data import (
+    build_momentum_positions,
+    get_momentum_cash,
+    get_momentum_transactions,
+    invalidate_momentum_cache,
+)
 from news_watchlist import store as news_watchlist_store
 from news_watchlist_dashboard_data import (
     build_news_watchlist_state, build_quote_link, fetch_ticker_volume, fetch_volumes,
@@ -74,6 +83,32 @@ _ERROR_STATUS = {
     "no_price": 503,
     "already_closed": 409,
 }
+
+MANUAL_SELL_SCRIPT = Path(__file__).resolve().parent / "manual_sell.py"
+MOMENTUM_SELL_TIMEOUT_SECONDS = 120
+
+
+def _run_momentum_sell(ticker: str, price: float | None) -> dict:
+    """Sell from the momentum sleeve in a child process (manual_sell.py
+    --sleeve momentum --json): db.py's global DB_PATH stays on the core DB
+    in this process, so an in-process momentum sell would race the core
+    sleeve's reads and sells."""
+    cmd = [sys.executable, str(MANUAL_SELL_SCRIPT), ticker, "--sleeve", "momentum", "--json"]
+    if price is not None:
+        cmd += ["--price", str(price)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=MOMENTUM_SELL_TIMEOUT_SECONDS, cwd=MANUAL_SELL_SCRIPT.parent)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "ticker": ticker, "error": "failed",
+                "message": f"Sell of {ticker} timed out — check the Momentum tab before retrying."}
+    lines = proc.stdout.strip().splitlines()
+    try:
+        return json.loads(lines[-1])
+    except (IndexError, ValueError):
+        tail = proc.stderr.strip().splitlines()[-1:] or ["no output"]
+        return {"ok": False, "ticker": ticker, "error": "failed",
+                "message": f"Sell of {ticker} failed: {tail[0]}"}
 
 
 def _compute_initial_capital(cash: float, transactions) -> float:
@@ -169,10 +204,11 @@ def create_app() -> Flask:
 
     @app.get("/momentum")
     def momentum():
-        """Read-only view of the momentum sleeve (separate DB/capital — see
-        config.py MOMENTUM_* and momentum_dashboard_data.py). No sell action
-        here: db.py's global DB_PATH means a manual-sell route sharing this
-        process with the core sleeve's would race between the two DBs."""
+        """View of the momentum sleeve (separate DB/capital — see config.py
+        MOMENTUM_* and momentum_dashboard_data.py). Its Sell button posts to
+        /api/momentum/positions/<ticker>/sell, which sells in a child
+        process: db.py's global DB_PATH means an in-process sell sharing
+        this process with the core sleeve's would race between the two DBs."""
         try:
             rows = _read_with_retry(build_momentum_positions)
             cash = _read_with_retry(get_momentum_cash)
@@ -645,6 +681,26 @@ def create_app() -> Flask:
                                  "message": "Price must be positive."}), 400
 
         result = sell_position(ticker, price=price)
+        status = 200 if result["ok"] else _ERROR_STATUS.get(result["error"], 500)
+        return jsonify(result), status
+
+    @app.post("/api/momentum/positions/<ticker>/sell")
+    def momentum_sell(ticker: str):
+        body = request.get_json(silent=True) or {}
+        price = body.get("price")
+        if price is not None:
+            try:
+                price = float(price)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "ticker": ticker, "error": "bad_price",
+                                 "message": "Price must be a number."}), 400
+            if price <= 0:
+                return jsonify({"ok": False, "ticker": ticker, "error": "bad_price",
+                                 "message": "Price must be positive."}), 400
+
+        result = _run_momentum_sell(ticker, price)
+        if result["ok"]:
+            invalidate_momentum_cache()
         status = 200 if result["ok"] else _ERROR_STATUS.get(result["error"], 500)
         return jsonify(result), status
 

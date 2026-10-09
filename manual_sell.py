@@ -7,6 +7,7 @@ Usage:
     python manual_sell.py TICKER
     python manual_sell.py TICKER --dry-run          # print the planned sell, write nothing
     python manual_sell.py TICKER --price 12.34       # skip market-price lookup, sell at this price
+    python manual_sell.py TICKER --sleeve momentum   # sell from the momentum sleeve's DB instead
 
 Fetches a best-effort current price (live 5-min intraday snapshot, falling back
 to the last completed daily close), then closes the position through the same
@@ -18,10 +19,17 @@ transaction email.
 (e.g. a stale/delisted symbol with an open position that would otherwise be
 unsellable) — it bypasses get_market_price() entirely and uses the given
 value as the sell price.
+
+--sleeve momentum points db.py at config.MOMENTUM_DB_PATH and labels the
+transaction email "Momentum". The dashboard's /momentum Sell button runs
+this CLI as a subprocess with --json, since db.py's global DB_PATH can't
+point at two sleeves inside the one dashboard process.
 """
 
 from __future__ import annotations
 
+import contextlib
+import json
 import sys
 import uuid
 from datetime import date, timedelta
@@ -61,7 +69,8 @@ def get_market_price(ticker: str) -> tuple[float, str] | tuple[None, None]:
     return float(df["Close"].iloc[-1]), "daily-close"
 
 
-def sell_position(ticker: str, dry_run: bool = False, price: float | None = None) -> dict:
+def sell_position(ticker: str, dry_run: bool = False, price: float | None = None,
+                  label: str = "TSX") -> dict:
     """
     Close one open position at the current market price.
 
@@ -72,6 +81,10 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
     price: if given, skips get_market_price() entirely and sells at this
     value instead — the manual escape hatch for a ticker Yahoo Finance has
     no live quote for.
+
+    label: forwarded to execute_virtual_sells() for the transaction email
+    ("Momentum" for the momentum sleeve). A non-TSX label also gets its own
+    lock name, so selling from one sleeve never blocks the other.
 
     Returns a dict:
       ok=True  : {"ok": True, "ticker", "price", "source",
@@ -89,7 +102,7 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
     e.g. a test's tmp_path DB or the web dashboard's own startup init).
     """
     ticker = ticker.strip().upper()
-    service = "manual_sell"
+    service = "manual_sell" if label == "TSX" else f"manual_sell_{label.lower()}"
     run_id = uuid.uuid4().hex
 
     try:
@@ -144,7 +157,7 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
             POSITION_COL_REASON: "MANUAL_SELL",
         }
 
-        funds_state = execute_virtual_sells([sell_row], dry_run=dry_run)
+        funds_state = execute_virtual_sells([sell_row], dry_run=dry_run, label=label)
 
         # execute_virtual_sells() silently skips (no cash credit, no trade
         # record) a ticker that a concurrent process already closed first —
@@ -184,12 +197,28 @@ def main() -> None:
     parser.add_argument("--price", type=float, default=None,
                          help="Sell at this price instead of looking one up "
                               "(use when Yahoo Finance has no live quote for the ticker)")
+    parser.add_argument("--sleeve", choices=("core", "momentum"), default="core",
+                         help="Which paper account to sell from (default: core)")
+    parser.add_argument("--json", action="store_true",
+                         help="Print only the result as JSON on stdout (progress goes to stderr)")
     args = parser.parse_args()
 
     from db import init_db
-    init_db()
+    if args.sleeve == "momentum":
+        from config import MOMENTUM_DB_PATH
+        init_db(path=MOMENTUM_DB_PATH)
+        label = "Momentum"
+    else:
+        init_db()
+        label = "TSX"
 
-    result = sell_position(args.ticker, dry_run=args.dry_run, price=args.price)
+    if args.json:
+        with contextlib.redirect_stdout(sys.stderr):
+            result = sell_position(args.ticker, dry_run=args.dry_run, price=args.price, label=label)
+        print(json.dumps(result))
+        sys.exit(0 if result["ok"] else 1)
+
+    result = sell_position(args.ticker, dry_run=args.dry_run, price=args.price, label=label)
 
     if not result["ok"]:
         print(f"{Fore.RED}{result['message']}{Style.RESET_ALL}")
