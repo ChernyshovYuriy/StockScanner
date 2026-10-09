@@ -348,15 +348,23 @@ PRESS_RELEASE_NEWSFILE_FEEDS = [
     "https://feeds.newsfilecorp.com/industry/cannabis",
     "https://feeds.newsfilecorp.com/industry/oil-gas",
 ]
+# CSE company news (added 2026-10): every CSE-listed company's releases,
+# whatever wire they used (ACCESS Newswire etc. have no public feed). Not
+# RSS -- a JSON file of the whole archive, read via an HTTP Range request
+# of its first PRESS_RELEASE_CSE_NEWS_RANGE_BYTES (~2 days of releases);
+# see press_release_tracker/cse_news.py. Title-only: no full-article read.
+PRESS_RELEASE_CSE_NEWS_FEED = "https://webapi-backup.thecse.com/news-releases/en/news-releases.json"
+PRESS_RELEASE_CSE_NEWS_RANGE_BYTES = 80_000
 PRESS_RELEASE_FEEDS = [
     "https://www.globenewswire.com/RssFeed/country/Canada/feedTitle/GlobeNewswire%20-%20News%20from%20Canada",
     *PRESS_RELEASE_NEWSFILE_FEEDS,
+    PRESS_RELEASE_CSE_NEWS_FEED,
 ]
 # Feeds whose items reach the user (email, News Watchlist inbox) and get a
 # full-article read only when the classifier rates them materiality 'high';
 # the rest are filed silently (still in press_releases.db, still scored by
 # news_watchlist/outcomes.py, so the gate itself can be checked later).
-PRESS_RELEASE_HIGH_ONLY_FEEDS = frozenset(PRESS_RELEASE_NEWSFILE_FEEDS)
+PRESS_RELEASE_HIGH_ONLY_FEEDS = frozenset([*PRESS_RELEASE_NEWSFILE_FEEDS, PRESS_RELEASE_CSE_NEWS_FEED])
 
 # Fair-access identification for the RSS fetch (same spirit as
 # EDGAR_USER_AGENT / DEMAND_USER_AGENT / MACRO_USER_AGENT).

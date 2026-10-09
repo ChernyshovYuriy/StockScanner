@@ -97,7 +97,10 @@ def _resolve_market_price(ticker: str) -> tuple[float, str, str] | tuple[None, N
     watchlist_items.yahoo_ticker so the dashboard's Ticker column link
     can point at a real Yahoo Finance quote page instead of the bare,
     often-wrong symbol (see news_watchlist/store.py's schema comment).
-    (None, None, None) if no candidate has data at all."""
+    (None, None, None) if no candidate has data at all. The parser's ".CSE"
+    suffix is Yahoo's ".CN"."""
+    if ticker.upper().endswith(".CSE"):
+        ticker = ticker[:-4] + ".CN"
     if "." in ticker:
         price, source = get_market_price(ticker)
         return (price, source, ticker) if price is not None else (None, None, None)

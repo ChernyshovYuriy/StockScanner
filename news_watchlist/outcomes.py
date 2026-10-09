@@ -71,8 +71,11 @@ def symbol_candidates(ticker: str) -> list[str]:
     disambiguation idea as news_watchlist_service._resolve_market_price()
     (a bare Canadian symbol often collides with an unrelated US listing,
     so the Canadian suffixes go first), plus .CN -- GlobeNewswire's Canada
-    feed carries many CSE names. An already-suffixed ticker is used as-is."""
+    feed carries many CSE names. An already-suffixed ticker is used as-is,
+    except the parser's ".CSE", which Yahoo spells ".CN"."""
     ticker = ticker.strip().upper()
+    if ticker.endswith(".CSE"):
+        ticker = ticker[:-4] + ".CN"
     if "." in ticker:
         return [ticker]
     return [ticker + ".TO", ticker + ".V", ticker + ".CN", ticker]

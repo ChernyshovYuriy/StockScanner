@@ -48,7 +48,12 @@ def fetch_feed_items(feed_url: str, timeout: int = 30) -> List[FeedItem]:
 
     guid falls back to link when a feed omits <guid> -- either way it's
     the value store.py dedupes on.
+
+    The CSE's company-news JSON (not RSS) is read by cse_news.py instead.
     """
+    from press_release_tracker import cse_news
+    if cse_news.is_cse_news_url(feed_url):
+        return cse_news.fetch_cse_items(feed_url)
     resp = requests.get(feed_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
     resp.raise_for_status()
     root = ET.fromstring(resp.content)

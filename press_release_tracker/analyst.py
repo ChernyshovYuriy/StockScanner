@@ -102,7 +102,10 @@ def should_analyze(parsed: Optional[dict], link: str) -> bool:
 
 def _candidates(ticker: str) -> list[str]:
     """Same order as news_watchlist_service._resolve_market_price(): a
-    bare symbol is tried as TSX (.TO), then TSX Venture (.V), then as-is."""
+    bare symbol is tried as TSX (.TO), then TSX Venture (.V), then as-is.
+    The parser's ".CSE" suffix is Yahoo's ".CN"."""
+    if ticker.upper().endswith(".CSE"):
+        ticker = ticker[:-4] + ".CN"
     if "." in ticker:
         return [ticker]
     return [ticker + ".TO", ticker + ".V", ticker]

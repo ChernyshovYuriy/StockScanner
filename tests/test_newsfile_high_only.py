@@ -128,8 +128,9 @@ def test_inbox_seeds_only_high_newsfile_items(tmp_path, monkeypatch):
     assert tickers == {"GNWHIGH", "GNWLOW", "NFHIGH"}
 
 
-def test_config_gates_exactly_the_newsfile_feeds():
-    assert config.PRESS_RELEASE_HIGH_ONLY_FEEDS == frozenset(config.PRESS_RELEASE_NEWSFILE_FEEDS)
+def test_config_gates_the_newsfile_and_cse_feeds_only():
+    assert config.PRESS_RELEASE_HIGH_ONLY_FEEDS == frozenset(
+        [*config.PRESS_RELEASE_NEWSFILE_FEEDS, config.PRESS_RELEASE_CSE_NEWS_FEED])
     assert set(config.PRESS_RELEASE_NEWSFILE_FEEDS) <= set(config.PRESS_RELEASE_FEEDS)
     assert config.PRESS_RELEASE_FEEDS[0].startswith("https://www.globenewswire.com/")
     assert all(u.startswith("https://feeds.newsfilecorp.com/industry/")
