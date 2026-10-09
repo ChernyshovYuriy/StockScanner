@@ -132,6 +132,18 @@ def previous_trading_day(day: "date_cls") -> "date_cls":
     return d
 
 
+def next_trading_day(day: "date_cls") -> "date_cls":
+    """
+    Return the first TSX trading day strictly after `day` (skips weekends and
+    TSX_HOLIDAYS) -- the session a CONFIRMED signal's entry actually fills on,
+    named in the pipeline report instead of "tomorrow".
+    """
+    d = day + timedelta(days=1)
+    while d.weekday() >= 5 or d.strftime(ISO_DATE_EXTENDED) in TSX_HOLIDAYS:
+        d += timedelta(days=1)
+    return d
+
+
 def last_trading_day_on_or_before(day: "date_cls") -> "date_cls":
     """
     Return `day` itself if it is a TSX trading day, otherwise the last trading

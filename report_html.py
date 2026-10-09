@@ -11,6 +11,7 @@ approach that renders correctly in Gmail without workarounds.
 from __future__ import annotations
 
 import os
+from datetime import date
 from typing import Any, Dict, List, Tuple
 
 from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSITION_COL_LAST_CLOSE, \
@@ -18,6 +19,7 @@ from schema_keys import POSITION_COL_ENTRY_DATE, POSITION_COL_ENTRY_PRICE, POSIT
     POSITION_COL_PNL_PCT, POSITION_COL_REASON, POSITION_COL_STATUS, SIGNAL_COL_DAYS_IN_STATE, SIGNAL_COL_DETAIL, \
     SIGNAL_COL_ENTRY, SIGNAL_COL_LAST_SEEN, SIGNAL_COL_PATTERN, SIGNAL_COL_RISK_PCT, SIGNAL_COL_STATE, SIGNAL_COL_STOP, \
     SIGNAL_COL_TICKER
+from time_utils import next_trading_day
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PALETTE  — light theme, high contrast
@@ -499,6 +501,15 @@ def _header_banner(title: str, subtitle: str) -> str:
     )
 
 
+def _entry_session(date_str: str) -> str:
+    """The next TSX session after the report date, e.g. "Tue Oct 13" --
+    "tomorrow" is wrong on a Friday or before a holiday."""
+    try:
+        return next_trading_day(date.fromisoformat(date_str)).strftime("%a %b %d").replace(" 0", " ")
+    except ValueError:
+        return "Next Session"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PUBLIC API — called from auto_pipeline.py
 # ─────────────────────────────────────────────────────────────────────────────
@@ -529,7 +540,7 @@ def write_pipeline_report(
 
     if confirmed:
         inner = (
-                _section_header("Confirmed &mdash; Enter Tomorrow Open",
+                _section_header(f"Confirmed &mdash; Enter {_entry_session(date_str)} Open",
                                 "Pattern breakout confirmed with volume. Act at next session open.",
                                 C["confirmed_bar"]) +
                 _pipeline_table(confirmed)

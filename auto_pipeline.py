@@ -57,7 +57,7 @@ from schema_keys import SIGNAL_DB_COLS, SIGNAL_COL_ALERT_SENT, SIGNAL_COL_CONSEC
     SIGNAL_COL_TARGET_2R, SIGNAL_COL_TARGET_3R, SIGNAL_COL_TICKER, INTENT_COL_ALERT_STATE, INTENT_COL_CREATED_AT, \
     INTENT_COL_ENTRY_PRICE_PLANNED, INTENT_COL_PRIORITY, INTENT_COL_REASON, INTENT_COL_RR, INTENT_COL_SIGNAL_DATE, \
     INTENT_COL_STATUS, INTENT_COL_STOP_PRICE, INTENT_COL_TARGET_PRICE, INTENT_REQUIRED_COLS
-from time_utils import market_today, date_to_iso_extended, date_to_iso_basic, market_now
+from time_utils import market_today, date_to_iso_extended, date_to_iso_basic, market_now, next_trading_day
 
 warnings.filterwarnings("ignore")
 init(autoreset=True)
@@ -1050,11 +1050,15 @@ def _write_report(df_alerts: pd.DataFrame, db: pd.DataFrame,
     lines.append(f"Tracked : {n_tracked} tickers")
     lines.append("=" * 65)
 
+    # The session the entry fills on -- "tomorrow" is wrong on a Friday or before a holiday.
+    entry_day = next_trading_day(today.date() if isinstance(today, datetime) else today)
+    entry_session = entry_day.strftime("%a %b %d").replace(" 0", " ")
+
     if df_alerts.empty:
         lines.append("No actionable signals today.")
     else:
         for state_label, state in [
-            ("CONFIRMED — Enter tomorrow open", STATE_CONFIRMED),
+            (f"CONFIRMED — Enter {entry_session} open", STATE_CONFIRMED),
             ("AT PIVOT — Place buy-stop above pivot", STATE_AT_PIVOT),
             ("FORMING — Watch, check tomorrow", STATE_FORMING),
         ]:
