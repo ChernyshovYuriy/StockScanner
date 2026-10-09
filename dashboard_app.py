@@ -559,7 +559,7 @@ def create_app() -> Flask:
             conn.close()
         invalidate_news_watchlist_cache()
         days_since_flagged = (date.today() - date.fromisoformat(item["flagged_at"])).days
-        vol = fetch_ticker_volume(item["ticker"])
+        vol = fetch_ticker_volume(item["yahoo_ticker"] or item["ticker"])
         return jsonify({"ok": True, "item": {
             "id": item["id"], "ticker": item["ticker"], "company": item["company"],
             "flagged_at": item["flagged_at"], "flag_price": item["flag_price"],

@@ -123,7 +123,7 @@ def _fetch_volumes(tickers: List[str]) -> Dict[str, Dict[str, float]]:
         # minute to fetch once (see this function's own docstring); trying
         # .TO/.V for every bare ticker unconditionally would triple that.
         missing = [t for t in to_fetch if "." not in t and (t not in data or data[t].empty)]
-        for suffix in (".TO", ".V"):
+        for suffix in (".TO", ".V", ".CN"):  # .CN: CSE (2026-10)
             if not missing:
                 break
             probe = [t + suffix for t in missing]
@@ -300,7 +300,10 @@ def _read_items() -> list[dict]:
 
 def _build_news_watchlist_state() -> Dict[str, List[Dict]]:
     items = _read_items()
-    watching_tickers = [item["ticker"] for item in items if item["status"] == "watching"]
+    # Volume is looked up by the resolved Yahoo symbol when there is one --
+    # the bare parsed ticker can be an unrelated US listing (e.g. CSE "VIK"
+    # vs Viking Holdings).
+    watching_tickers = [item["yahoo_ticker"] or item["ticker"] for item in items if item["status"] == "watching"]
     volumes = _fetch_volumes(watching_tickers)
 
     inbox, watching, dismissed = [], [], []
@@ -312,7 +315,7 @@ def _build_news_watchlist_state() -> Dict[str, List[Dict]]:
         item["days_since_flagged"] = _days_since(item["flagged_at"])
         item["flagged_date"], item["flagged_time"] = _flagged_date_time(item["created_at"])
         item["quote_link"] = build_quote_link(item["ticker"], item["yahoo_ticker"], item["company"])
-        vol = volumes.get(item["ticker"])
+        vol = volumes.get(item["yahoo_ticker"] or item["ticker"])
         item["current_volume"] = vol["current_volume"] if vol else None
         item["average_volume"] = vol["average_volume"] if vol else None
         if item["status"] == "inbox":

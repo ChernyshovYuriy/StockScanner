@@ -392,3 +392,36 @@ def test_items_carry_the_public_offering_risk_flag(tmp_path, monkeypatch):
 def test_analyses_empty_when_press_release_db_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(nwd, "PRESS_RELEASE_DB_PATH", tmp_path / "missing.db")
     assert nwd._read_analyses(["g1"]) == {}
+
+
+def test_watching_volume_uses_the_resolved_yahoo_symbol(tmp_path, monkeypatch):
+    """CSE "VIK" (Avila Energy, VIK.CN) must not show Viking Holdings' US
+    volume: the volume lookup goes by yahoo_ticker when there is one."""
+    db_path = tmp_path / "nw.db"
+    conn = store.connect(db_path)
+    item_id = store.add_manual(conn, ticker="VIK", note="", flagged_at="2026-10-09", flag_price=0.015,
+                               created_at="2026-10-09T13:10:00")
+    store.set_yahoo_ticker(conn, item_id, "VIK.CN")
+    monkeypatch.setattr(nwd, "NEWS_WATCHLIST_DB_PATH", db_path)
+    asked = []
+    monkeypatch.setattr(nwd, "_fetch_volumes", lambda tickers: asked.extend(tickers) or {
+        "VIK.CN": {"current_volume": 120_000.0, "average_volume": 80_000.0},
+        "VIK": {"current_volume": 1_740_000.0, "average_volume": 4_540_000.0}})
+
+    row = nwd._build_news_watchlist_state()["watching"][0]
+    assert asked == ["VIK.CN"]
+    assert row["current_volume"] == 120_000.0
+
+
+def test_fetch_volumes_probes_cn_for_a_bare_cse_ticker(monkeypatch):
+    monkeypatch.setattr(nwd, "_fetch_volumes", _REAL_FETCH_VOLUMES)
+    nwd._volume_cache.clear()
+    calls = []
+
+    def fake_download_range(tickers, start, end):
+        calls.append(list(tickers))
+        return ({"MTTA.CN": _fake_volume_df(50_000.0)} if tickers == ["MTTA.CN"] else {}), []
+
+    monkeypatch.setattr(nwd.DEFAULT_PROVIDER, "download_range", fake_download_range)
+    assert nwd._fetch_volumes(["MTTA"]) == {"MTTA": {"current_volume": 50_000.0, "average_volume": 50_000.0}}
+    assert calls == [["MTTA"], ["MTTA.TO"], ["MTTA.V"], ["MTTA.CN"]]

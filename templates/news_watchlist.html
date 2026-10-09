@@ -194,7 +194,7 @@
             <td><div class="nw-summary" title="{{ item.summary or '' }}">{{ item.summary or "—" }}</div>{{ analysis_block(item.analysis) }}{% if item.risk_flag %}<div class="nw-risk">⚠ {{ item.risk_flag }}</div>{% endif %}</td>
             <td class="nw-tight" title="{{ item.flagged_at }}" data-sort-value="{{ item.created_at }}">{{ item.flagged_date or "—" }}<br>{{ item.flagged_time or "" }}</td>
             <td class="nw-tight">{{ "$%.2f"|format(item.flag_price) if item.flag_price is not none else "—" }}</td>
-            <td class="nw-tight nw-volume" data-ticker="{{ item.ticker }}">…</td>
+            <td class="nw-tight nw-volume" data-ticker="{{ item.yahoo_ticker or item.ticker }}">…</td>
             <td class="nw-tight">
               <div class="nw-actions">
                 <button class="confirm-btn" type="button" data-nw-action="confirm" data-id="{{ item.id }}">Watch</button>
