@@ -104,7 +104,7 @@ def _resolve_market_price(ticker: str) -> tuple[float, str, str] | tuple[None, N
     if "." in ticker:
         price, source = get_market_price(ticker)
         return (price, source, ticker) if price is not None else (None, None, None)
-    for suffix in (".TO", ".V"):
+    for suffix in (".TO", ".V", ".CN"):  # .CN: CSE (2026-10, same order as outcomes.symbol_candidates)
         price, source = get_market_price(ticker + suffix)
         if price is not None:
             return price, source, ticker + suffix

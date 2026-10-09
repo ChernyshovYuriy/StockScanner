@@ -170,3 +170,14 @@ def test_watchlist_price_resolver_maps_cse_to_cn(monkeypatch):
                         lambda t: asked.append(t) or ((0.5, "daily-close") if t == "HZ.CN" else (None, None)))
     assert news_watchlist_service._resolve_market_price("HZ.CSE") == (0.5, "daily-close", "HZ.CN")
     assert asked == ["HZ.CN"]
+
+
+def test_bare_cse_ticker_resolves_to_cn_before_a_us_lookalike(monkeypatch):
+    # The parser writes a CSE item's ticker bare ("SX"); a bare US "SX" must
+    # not win over the CSE listing.
+    asked = []
+    monkeypatch.setattr(news_watchlist_service, "get_market_price",
+                        lambda t: asked.append(t) or ((1.0, "daily-close") if t in ("SX.CN", "SX") else (None, None)))
+    assert news_watchlist_service._resolve_market_price("SX") == (1.0, "daily-close", "SX.CN")
+    assert asked == ["SX.TO", "SX.V", "SX.CN"]
+    assert analyst._candidates("SX") == ["SX.TO", "SX.V", "SX.CN", "SX"]

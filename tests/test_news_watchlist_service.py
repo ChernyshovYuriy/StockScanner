@@ -495,4 +495,4 @@ def test_resolve_market_price_falls_back_to_the_bare_ticker_when_neither_suffix_
     price, source, yahoo_ticker = news_watchlist_service._resolve_market_price("XENE")
 
     assert (price, source, yahoo_ticker) == (38.99, "daily-close", "XENE")
-    assert calls == ["XENE.TO", "XENE.V", "XENE"]
+    assert calls == ["XENE.TO", "XENE.V", "XENE.CN", "XENE"]
