@@ -104,13 +104,13 @@ def run_collector(run_id, dry_run=False, conn=None):
         body = None
         # A high-only feed's non-high item is filed without an email, so it
         # gets no article fetch either (fewer page requests to that wire).
-        # A CSE item links to the company's page, not the release (its PDF
-        # link expires), so there's no article to read.
-        read_article = ((item.feed_url not in PRESS_RELEASE_HIGH_ONLY_FEEDS
-                         or (parsed or {}).get("materiality") == "high")
-                        and not cse_news.is_cse_news_url(item.feed_url))
+        # A CSE item links to the company's page, not the release, so its
+        # body is read from the release PDF instead (cse_news.py).
+        read_article = (item.feed_url not in PRESS_RELEASE_HIGH_ONLY_FEEDS
+                        or (parsed or {}).get("materiality") == "high")
+        cse_item = cse_news.is_cse_news_url(item.feed_url)
         if read_article and analyst.should_analyze(parsed, item.link):
-            body = article.fetch_article_text(item.link)
+            body = cse_news.fetch_release_text(item) if cse_item else article.fetch_article_text(item.link)
             analysis = analyst.analyze_release(parsed["ticker"], parsed.get("company"),
                                                item.title, item.link, body=body) if body else None
             log("press_release", run_id, "analysis" if analysis else "analysis_failed",
@@ -121,7 +121,9 @@ def run_collector(run_id, dry_run=False, conn=None):
         # counterpart of the analyst's prose dilution read. Reuses the
         # body/market context already fetched above.
         terms = None
-        if read_article and financing.should_extract(parsed, item.link):
+        # (a CSE item with no PDF text has nothing to extract from -- its
+        # link is the company page)
+        if read_article and financing.should_extract(parsed, item.link) and not (cse_item and body is None):
             terms = financing.extract_terms(
                 parsed["ticker"], item.title, item.link, body=body,
                 context=(analysis or {}).get("market_context"))

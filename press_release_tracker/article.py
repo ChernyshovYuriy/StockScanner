@@ -20,8 +20,12 @@ that pulls pages in bursts.
 """
 from __future__ import annotations
 
+import io
 import re
+import subprocess
 import time
+import zipfile
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from typing import Optional
 from urllib.parse import urlparse
@@ -112,19 +116,66 @@ def extract_article_text(html: str) -> Optional[str]:
     return re.sub(r"\n{3,}", "\n\n", text) or None
 
 
-def fetch_article_text(link: str, timeout: int = 30) -> Optional[str]:
-    """Fetch link and extract its article body. None on any fetch failure
-    or an unrecognised page -- the caller then skips the analysis for that
-    item, never crashes the run over one page."""
-    if not link:
-        return None
-    host = urlparse(link).netloc
+def wait_turn(url: str) -> None:
+    """Sleep until url's host is due another request (MIN_INTERVAL_SECONDS
+    since its last one), then record this one. Every wire page or PDF
+    fetch goes through here."""
+    host = urlparse(url).netloc
     last = _last_fetch.get(host)
     if last is not None:
         wait = MIN_INTERVAL_SECONDS - (time.monotonic() - last)
         if wait > 0:
             time.sleep(wait)
     _last_fetch[host] = time.monotonic()
+
+
+def pdf_to_text(data: bytes, timeout: int = 60) -> Optional[str]:
+    """Plain text of a PDF via poppler's pdftotext (installed on the Pi),
+    or None if it's missing, fails, or finds no text (e.g. a scanned
+    image)."""
+    try:
+        out = subprocess.run(["pdftotext", "-q", "-enc", "UTF-8", "-", "-"], input=data,
+                             capture_output=True, timeout=timeout, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = [" ".join(line.split()) for line in out.decode("utf-8", errors="replace").splitlines()]
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return text or None
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def docx_to_text(data: bytes) -> Optional[str]:
+    """Plain text of a Word .docx (one line per paragraph, table cells
+    included), or None if it isn't one or has no text."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+    except (zipfile.BadZipFile, KeyError, ET.ParseError):
+        return None
+    lines = [" ".join("".join(t.text or "" for t in p.iter(_W + "t")).split()) for p in root.iter(_W + "p")]
+    text = "\n".join(line for line in lines if line)
+    return text or None
+
+
+def document_to_text(data: bytes) -> Optional[str]:
+    """A release file's text by its leading bytes: PDF (pdf_to_text) or
+    Word .docx (docx_to_text) -- the CSE serves both (~98% / ~2%)."""
+    if data[:5] == b"%PDF-":
+        return pdf_to_text(data)
+    if data[:2] == b"PK":
+        return docx_to_text(data)
+    return None
+
+
+def fetch_article_text(link: str, timeout: int = 30) -> Optional[str]:
+    """Fetch link and extract its article body. None on any fetch failure
+    or an unrecognised page -- the caller then skips the analysis for that
+    item, never crashes the run over one page."""
+    if not link:
+        return None
+    wait_turn(link)
     try:
         resp = requests.get(link, headers={"User-Agent": USER_AGENT}, timeout=timeout)
         resp.raise_for_status()

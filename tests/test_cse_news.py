@@ -5,6 +5,7 @@ feed items, gated like Newsfile (only 'high' reaches the user), never
 article-fetched. Plus: the parser's ".CSE" suffix resolves to Yahoo's ".CN".
 """
 import json
+import shutil
 from email.utils import parsedate_to_datetime
 
 import pytest
@@ -130,27 +131,128 @@ def test_cse_config_is_high_only():
     assert URL in config.PRESS_RELEASE_HIGH_ONLY_FEEDS
 
 
-@pytest.mark.parametrize("materiality,emailed", [("high", True), ("medium", False)])
-def test_cse_items_gated_and_never_article_fetched(tmp_path, monkeypatch, materiality, emailed):
+def _run_cse_item(tmp_path, monkeypatch, materiality, category="financing"):
     conn = store.connect(tmp_path / "pr.db")
     monkeypatch.setattr(press_release_service, "PRESS_RELEASE_FEEDS", [URL])
     monkeypatch.setattr(press_release_service, "PRESS_RELEASE_HIGH_ONLY_FEEDS", frozenset({URL}))
     monkeypatch.setattr(press_release_service.feeds, "fetch_feed_items",
                         lambda url: [cse_news.to_feed_item(_entry(1), URL)])
     monkeypatch.setattr(press_release_service.llm_parser, "parse_release",
-                        lambda *a: {"ticker": "HZ.CSE", "company": "Hertz", "category": "financing",
+                        lambda *a: {"ticker": "HZ.CSE", "company": "Hertz", "category": category,
                                     "materiality": materiality, "summary": "s"})
     monkeypatch.setattr(press_release_service.article, "fetch_article_text",
-                        lambda link: pytest.fail("CSE item must not be article-fetched"))
+                        lambda link: pytest.fail("a CSE item's link is the company page, never read"))
+    calls = {"pdf": [], "analyst": [], "terms": [], "sent": []}
+    monkeypatch.setattr(press_release_service.cse_news, "fetch_release_text",
+                        lambda item: calls["pdf"].append(item.guid) or calls.get("pdf_text", "PDF BODY"))
     monkeypatch.setattr(press_release_service.analyst, "analyze_release",
-                        lambda *a, **k: pytest.fail("no analyst read for a CSE item"))
+                        lambda ticker, company, title, link, body=None: calls["analyst"].append(body) or None)
     monkeypatch.setattr(press_release_service.financing, "extract_terms",
-                        lambda *a, **k: pytest.fail("no financing extraction for a CSE item"))
-    sent = []
-    monkeypatch.setattr(press_release_service, "send_text_email", lambda s, b: sent.append(b) or True)
+                        lambda ticker, title, link, body=None, context=None: calls["terms"].append(body) or None)
+    monkeypatch.setattr(press_release_service, "send_text_email",
+                        lambda s, b: calls["sent"].append(b) or True)
+    return conn, calls
+
+
+def test_high_cse_item_is_emailed_and_analysed_from_its_pdf(tmp_path, monkeypatch):
+    conn, calls = _run_cse_item(tmp_path, monkeypatch, "high")
     press_release_service.run_collector("r", conn=conn)
-    assert bool(sent) == emailed
-    assert store.unemailed(conn) == []
+    assert calls["pdf"] == ["cse-news:1"]
+    assert calls["analyst"] == ["PDF BODY"] and calls["terms"] == ["PDF BODY"]
+    assert calls["sent"] and store.unemailed(conn) == []
+
+
+def test_non_high_cse_item_is_filed_with_no_pdf_read(tmp_path, monkeypatch):
+    conn, calls = _run_cse_item(tmp_path, monkeypatch, "medium")
+    press_release_service.run_collector("r", conn=conn)
+    assert calls["pdf"] == [] and calls["analyst"] == [] and calls["terms"] == []
+    assert not calls["sent"] and store.unemailed(conn) == []
+
+
+def test_unreadable_pdf_skips_analysis_and_financing(tmp_path, monkeypatch):
+    conn, calls = _run_cse_item(tmp_path, monkeypatch, "high")
+    monkeypatch.setattr(press_release_service.cse_news, "fetch_release_text",
+                        lambda item: calls["pdf"].append(item.guid) or None)
+    press_release_service.run_collector("r", conn=conn)
+    assert calls["pdf"] == ["cse-news:1"]
+    assert calls["analyst"] == [] and calls["terms"] == []  # nothing to read; company page never fetched
+    assert calls["sent"]  # still emailed, just without the analyst block
+
+
+# ── the release PDF: fresh link from the prefix, paced, pdftotext ───────────
+
+def test_release_text_uses_a_fresh_link_from_the_prefix(monkeypatch):
+    fresh = dict(_entry(42), fileUrl="https://webfiles-primary.thecse.com/pdf/42?sig=fresh")
+    got = []
+
+    def fake_get(url, headers=None, timeout=None, stream=False):
+        got.append(url)
+        if url == URL:
+            return _Resp(_doc([_entry(43), fresh]).encode())
+        r = _Resp(b"%PDF-bytes", 200)
+        r.content = b"%PDF-bytes"
+        return r
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(cse_news.article, "wait_turn", lambda url: got.append("wait:" + url))
+    monkeypatch.setattr(cse_news.article, "document_to_text", lambda data: "text of " + data.decode())
+    item = cse_news.to_feed_item(_entry(42), URL)
+    assert cse_news.fetch_release_text(item) == "text of %PDF-bytes"
+    assert got == [URL, "wait:" + fresh["fileUrl"], fresh["fileUrl"]]
+
+
+def test_release_text_none_when_release_left_the_prefix(monkeypatch):
+    monkeypatch.setattr(requests, "get", lambda url, **k: _Resp(_doc([_entry(43)]).encode()))
+    assert cse_news.fetch_release_text(cse_news.to_feed_item(_entry(42), URL)) is None
+
+
+def test_release_text_none_on_pdf_fetch_failure(monkeypatch):
+    def fake_get(url, **k):
+        if url == URL:
+            return _Resp(_doc([_entry(42)]).encode())
+        return _Resp(b"", 403)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(cse_news.article, "wait_turn", lambda url: None)
+    assert cse_news.fetch_release_text(cse_news.to_feed_item(_entry(42), URL)) is None
+
+
+def _tiny_pdf(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = bytearray(b"%PDF-1.4\n"), []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % off for off in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
+
+
+@pytest.mark.skipif(not shutil.which("pdftotext"), reason="poppler pdftotext not installed")
+def test_pdf_to_text_extracts_the_text():
+    from press_release_tracker import article
+    assert article.pdf_to_text(_tiny_pdf("Hertz Energy closes placement")) == "Hertz Energy closes placement"
+
+
+def test_pdf_to_text_none_without_pdftotext_or_on_garbage(monkeypatch):
+    from press_release_tracker import article
+    monkeypatch.setattr(article.subprocess, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("pdftotext")))
+    assert article.pdf_to_text(b"%PDF") is None
+
+
+@pytest.mark.skipif(not shutil.which("pdftotext"), reason="poppler pdftotext not installed")
+def test_pdf_to_text_none_for_a_non_pdf():
+    from press_release_tracker import article
+    assert article.pdf_to_text(b"<html>not a pdf</html>") is None
 
 
 # ── ".CSE" resolves to Yahoo's ".CN" everywhere a price is looked up ────────
@@ -181,3 +283,27 @@ def test_bare_cse_ticker_resolves_to_cn_before_a_us_lookalike(monkeypatch):
     assert news_watchlist_service._resolve_market_price("SX") == (1.0, "daily-close", "SX.CN")
     assert asked == ["SX.TO", "SX.V", "SX.CN"]
     assert analyst._candidates("SX") == ["SX.TO", "SX.V", "SX.CN", "SX"]
+
+
+def _tiny_docx(paragraphs) -> bytes:
+    import io, zipfile
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    body = "".join(f"<w:p><w:r><w:t>{p[:5]}</w:t></w:r><w:r><w:t>{p[5:]}</w:t></w:r></w:p>" for p in paragraphs)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", f'<w:document xmlns:w="{w}"><w:body>{body}</w:body></w:document>')
+    return buf.getvalue()
+
+
+def test_docx_release_text():
+    from press_release_tracker import article
+    data = _tiny_docx(["Asep Medical Announces LIFE Financing", "Proceeds of $1.5 million"])
+    assert article.document_to_text(data) == "Asep Medical Announces LIFE Financing\nProceeds of $1.5 million"
+
+
+@pytest.mark.skipif(not shutil.which("pdftotext"), reason="poppler pdftotext not installed")
+def test_document_to_text_routes_pdf_and_rejects_unknown():
+    from press_release_tracker import article
+    assert article.document_to_text(_tiny_pdf("Hertz closes")) == "Hertz closes"
+    assert article.document_to_text(b"<html>login</html>") is None
+    assert article.docx_to_text(b"PK not really a zip") is None

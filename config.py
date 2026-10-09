@@ -352,7 +352,8 @@ PRESS_RELEASE_NEWSFILE_FEEDS = [
 # whatever wire they used (ACCESS Newswire etc. have no public feed). Not
 # RSS -- a JSON file of the whole archive, read via an HTTP Range request
 # of its first PRESS_RELEASE_CSE_NEWS_RANGE_BYTES (~2 days of releases);
-# see press_release_tracker/cse_news.py. Title-only: no full-article read.
+# see press_release_tracker/cse_news.py. Classified from the title; a
+# 'high' item's analyst read uses its release PDF (pdftotext).
 PRESS_RELEASE_CSE_NEWS_FEED = "https://webapi-backup.thecse.com/news-releases/en/news-releases.json"
 PRESS_RELEASE_CSE_NEWS_RANGE_BYTES = 80_000
 PRESS_RELEASE_FEEDS = [
