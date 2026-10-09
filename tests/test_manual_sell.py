@@ -183,6 +183,35 @@ def test_cli_momentum_sleeve_sells_from_momentum_db_and_prints_json(monkeypatch,
     assert labels == ["Momentum"]
 
 
+@pytest.mark.parametrize("sleeve,db_attr,label", [
+    ("kangaroo", "KANGAROO_DB_PATH", "Kangaroo Tail"),
+    ("macro", "MACRO_DB_PATH", "Macro"),
+])
+def test_cli_kangaroo_and_macro_sleeves_sell_from_their_db(monkeypatch, tmp_path, capsys, sleeve, db_attr, label):
+    import json
+    import manual_sell
+    from db import set_cash
+
+    path = tmp_path / f"{sleeve}.db"
+    init_db(path)
+    set_cash(0.0)
+    insert_position("CNQ.TO", "2026-09-01", 40.0, 10)
+    monkeypatch.setattr(f"config.{db_attr}", path)
+    labels = []
+    monkeypatch.setattr("position_monitor.send_transaction_email",
+                        lambda **kw: labels.append(kw.get("label")))
+    monkeypatch.setattr("sys.argv", ["manual_sell.py", "CNQ.TO", "--sleeve", sleeve, "--json", "--price", "41"])
+
+    with pytest.raises(SystemExit) as exc:
+        manual_sell.main()
+
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out.strip())["ok"] is True
+    assert get_open_positions() == []
+    assert get_cash() == 410.0
+    assert labels == [label]
+
+
 def test_momentum_label_uses_its_own_lock():
     """A momentum sell must not be blocked by a core sell in progress."""
     set_cash_and_position_no_price()

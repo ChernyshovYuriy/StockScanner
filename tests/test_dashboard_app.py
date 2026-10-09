@@ -181,23 +181,72 @@ def test_momentum_page_shows_sell_button(client, monkeypatch):
 
 def test_momentum_sell_endpoint_happy_path_invalidates_cache(client, monkeypatch):
     calls = []
-    monkeypatch.setattr("dashboard_app._run_momentum_sell",
-                        lambda ticker, price: calls.append((ticker, price)) or {"ok": True, "ticker": ticker})
+    monkeypatch.setattr("dashboard_app._run_sleeve_sell",
+                        lambda sleeve, ticker, price: calls.append((sleeve, ticker, price)) or {"ok": True, "ticker": ticker})
     invalidated = []
     monkeypatch.setattr("dashboard_app.invalidate_momentum_cache", lambda: invalidated.append(1))
 
     resp = client.post("/api/momentum/positions/AEM.TO/sell", json={"price": 110})
 
     assert resp.status_code == 200
-    assert calls == [("AEM.TO", 110.0)]
+    assert calls == [("momentum", "AEM.TO", 110.0)]
     assert invalidated == [1]
+
+
+@pytest.mark.parametrize("sleeve", ["kangaroo", "macro"])
+def test_kangaroo_and_macro_sell_endpoints_run_their_sleeve(client, monkeypatch, sleeve):
+    calls = []
+    monkeypatch.setattr("dashboard_app._run_sleeve_sell",
+                        lambda s, ticker, price: calls.append((s, ticker, price)) or {"ok": True, "ticker": ticker})
+    invalidated = []
+    monkeypatch.setattr(f"dashboard_app.invalidate_{sleeve}_cache", lambda: invalidated.append(1))
+
+    resp = client.post(f"/api/{sleeve}/positions/RY.TO/sell")
+
+    assert resp.status_code == 200
+    assert calls == [(sleeve, "RY.TO", None)]
+    assert invalidated == [1]
+
+
+def test_sleeve_sell_endpoint_rejects_unknown_sleeve(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app._run_sleeve_sell", lambda *a: 1 / 0)
+    resp = client.post("/api/core/positions/RY.TO/sell")
+    assert resp.status_code == 404
+
+
+def test_kangaroo_page_shows_sell_button(client, monkeypatch):
+    row = {"ticker": "CNQ.TO", "entry_date": "2026-09-01", "entry_price": 40.0, "shares": 10,
+           "last_close": 41.0, "pnl_%": 2.5, "pnl_$": 10.0, "status": "HOLD"}
+    monkeypatch.setattr("dashboard_app.build_kangaroo_positions", lambda: [row])
+    monkeypatch.setattr("dashboard_app.get_kangaroo_cash", lambda: 1_000.0)
+    monkeypatch.setattr("dashboard_app.get_kangaroo_transactions", lambda: get_transactions())
+    monkeypatch.setattr("dashboard_app.get_kangaroo_pending_intents", lambda: None)
+
+    resp = client.get("/kangaroo")
+
+    assert resp.status_code == 200
+    assert b'data-sell-url="/api/kangaroo/positions/"' in resp.data
+
+
+def test_macro_page_shows_sell_button(client, monkeypatch):
+    row = {"ticker": "RY.TO", "entry_date": "2026-09-01", "entry_price": 40.0, "shares": 10,
+           "last_close": 41.0, "pnl_%": 2.5, "pnl_$": 10.0, "status": "HOLD"}
+    monkeypatch.setattr("dashboard_app.build_macro_positions", lambda: [row])
+    monkeypatch.setattr("dashboard_app.get_macro_cash", lambda: 1_000.0)
+    monkeypatch.setattr("dashboard_app.get_macro_transactions", lambda: get_transactions())
+    monkeypatch.setattr("dashboard_app.get_current_regime", lambda: 1 / 0)
+
+    resp = client.get("/macro")
+
+    assert resp.status_code == 200
+    assert b'data-sell-url="/api/macro/positions/"' in resp.data
 
 
 @pytest.mark.parametrize("error,expected_status", [("locked", 409), ("no_position", 404),
                                                      ("no_price", 503), ("failed", 500)])
 def test_momentum_sell_endpoint_maps_errors(client, monkeypatch, error, expected_status):
-    monkeypatch.setattr("dashboard_app._run_momentum_sell",
-                        lambda ticker, price: {"ok": False, "ticker": ticker, "error": error, "message": "nope"})
+    monkeypatch.setattr("dashboard_app._run_sleeve_sell",
+                        lambda sleeve, ticker, price: {"ok": False, "ticker": ticker, "error": error, "message": "nope"})
 
     resp = client.post("/api/momentum/positions/AEM.TO/sell")
 
@@ -220,7 +269,7 @@ def test_run_momentum_sell_runs_cli_in_child_process(monkeypatch):
 
     monkeypatch.setattr("dashboard_app.subprocess.run", _fake_run)
 
-    result = dashboard_app._run_momentum_sell("AEM.TO", 110.0)
+    result = dashboard_app._run_sleeve_sell("momentum", "AEM.TO", 110.0)
 
     assert result == {"ok": True, "ticker": "AEM.TO"}
     assert seen["cmd"][2:] == ["AEM.TO", "--sleeve", "momentum", "--json", "--price", "110.0"]
@@ -233,7 +282,7 @@ def test_run_momentum_sell_reports_a_crash(monkeypatch):
                         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="",
                                                                       stderr="Traceback\nIOException: lock\n"))
 
-    result = dashboard_app._run_momentum_sell("AEM.TO", None)
+    result = dashboard_app._run_sleeve_sell("kangaroo", "AEM.TO", None)
 
     assert result["ok"] is False and result["error"] == "failed"
     assert "IOException: lock" in result["message"]

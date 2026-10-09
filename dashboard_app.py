@@ -58,8 +58,15 @@ from kangaroo_dashboard_data import (
     get_kangaroo_cash,
     get_kangaroo_pending_intents,
     get_kangaroo_transactions,
+    invalidate_kangaroo_cache,
 )
-from macro_dashboard_data import build_macro_positions, get_current_regime, get_macro_cash, get_macro_transactions
+from macro_dashboard_data import (
+    build_macro_positions,
+    get_current_regime,
+    get_macro_cash,
+    get_macro_transactions,
+    invalidate_macro_cache,
+)
 from manual_sell import get_market_price, sell_position
 from momentum_dashboard_data import (
     build_momentum_positions,
@@ -85,23 +92,30 @@ _ERROR_STATUS = {
 }
 
 MANUAL_SELL_SCRIPT = Path(__file__).resolve().parent / "manual_sell.py"
-MOMENTUM_SELL_TIMEOUT_SECONDS = 120
+SLEEVE_SELL_TIMEOUT_SECONDS = 120
+
+# Sleeves whose tab has a Sell button -> the cache to drop after a sale.
+_SLEEVE_CACHE_INVALIDATORS = {
+    "momentum": lambda: invalidate_momentum_cache(),
+    "kangaroo": lambda: invalidate_kangaroo_cache(),
+    "macro": lambda: invalidate_macro_cache(),
+}
 
 
-def _run_momentum_sell(ticker: str, price: float | None) -> dict:
-    """Sell from the momentum sleeve in a child process (manual_sell.py
-    --sleeve momentum --json): db.py's global DB_PATH stays on the core DB
-    in this process, so an in-process momentum sell would race the core
+def _run_sleeve_sell(sleeve: str, ticker: str, price: float | None) -> dict:
+    """Sell from a non-core sleeve in a child process (manual_sell.py
+    --sleeve <sleeve> --json): db.py's global DB_PATH stays on the core DB
+    in this process, so an in-process sleeve sell would race the core
     sleeve's reads and sells."""
-    cmd = [sys.executable, str(MANUAL_SELL_SCRIPT), ticker, "--sleeve", "momentum", "--json"]
+    cmd = [sys.executable, str(MANUAL_SELL_SCRIPT), ticker, "--sleeve", sleeve, "--json"]
     if price is not None:
         cmd += ["--price", str(price)]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=MOMENTUM_SELL_TIMEOUT_SECONDS, cwd=MANUAL_SELL_SCRIPT.parent)
+                              timeout=SLEEVE_SELL_TIMEOUT_SECONDS, cwd=MANUAL_SELL_SCRIPT.parent)
     except subprocess.TimeoutExpired:
         return {"ok": False, "ticker": ticker, "error": "failed",
-                "message": f"Sell of {ticker} timed out — check the Momentum tab before retrying."}
+                "message": f"Sell of {ticker} timed out — check the tab before retrying."}
     lines = proc.stdout.strip().splitlines()
     try:
         return json.loads(lines[-1])
@@ -256,9 +270,9 @@ def create_app() -> Flask:
 
     @app.get("/kangaroo")
     def kangaroo():
-        """Read-only view of the Kangaroo Tail sleeve (separate DB/capital —
-        see config.py KANGAROO_* and kangaroo_dashboard_data.py). No sell
-        action here, same isolation reasoning as /momentum."""
+        """View of the Kangaroo Tail sleeve (separate DB/capital —
+        see config.py KANGAROO_* and kangaroo_dashboard_data.py). Its Sell
+        button sells in a child process, same as /momentum's."""
         try:
             rows = _read_with_retry(build_kangaroo_positions)
             cash = _read_with_retry(get_kangaroo_cash)
@@ -313,9 +327,9 @@ def create_app() -> Flask:
 
     @app.get("/macro")
     def macro():
-        """Read-only view of the macro conviction sleeve (separate DB/capital
-        — see config.py MACRO_* and macro_dashboard_data.py). No sell action
-        here, same isolation reasoning as /momentum."""
+        """View of the macro conviction sleeve (separate DB/capital
+        — see config.py MACRO_* and macro_dashboard_data.py). Its Sell button
+        sells in a child process, same as /momentum's."""
         try:
             rows = _read_with_retry(build_macro_positions)
             cash = _read_with_retry(get_macro_cash)
@@ -377,7 +391,7 @@ def create_app() -> Flask:
     def demand():
         """Read-only view of demand_signals.db (EDGAR insider buys + FINRA
         dark-pool ratio + options-flow proxy, normalized — see
-        demand_signals/__init__.py). No action here, same as /momentum: this
+        demand_signals/__init__.py). No action here: this
         is a display layer over what demand_signals_service.py has already
         populated, never a trigger for a fetch or a trade."""
         try:
@@ -684,8 +698,11 @@ def create_app() -> Flask:
         status = 200 if result["ok"] else _ERROR_STATUS.get(result["error"], 500)
         return jsonify(result), status
 
-    @app.post("/api/momentum/positions/<ticker>/sell")
-    def momentum_sell(ticker: str):
+    @app.post("/api/<sleeve>/positions/<ticker>/sell")
+    def sleeve_sell(sleeve: str, ticker: str):
+        if sleeve not in _SLEEVE_CACHE_INVALIDATORS:
+            return jsonify({"ok": False, "ticker": ticker, "error": "unknown_sleeve",
+                            "message": f"No Sell for sleeve {sleeve!r}."}), 404
         body = request.get_json(silent=True) or {}
         price = body.get("price")
         if price is not None:
@@ -698,9 +715,9 @@ def create_app() -> Flask:
                 return jsonify({"ok": False, "ticker": ticker, "error": "bad_price",
                                  "message": "Price must be positive."}), 400
 
-        result = _run_momentum_sell(ticker, price)
+        result = _run_sleeve_sell(sleeve, ticker, price)
         if result["ok"]:
-            invalidate_momentum_cache()
+            _SLEEVE_CACHE_INVALIDATORS[sleeve]()
         status = 200 if result["ok"] else _ERROR_STATUS.get(result["error"], 500)
         return jsonify(result), status
 

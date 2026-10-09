@@ -137,3 +137,10 @@ def build_kangaroo_positions() -> List[Dict]:
         _cache["rows"] = rows
         _cache["ts"] = now
         return rows
+
+
+def invalidate_kangaroo_cache() -> None:
+    """Drop the cached rows so the page reload after a Sell shows the
+    position gone instead of the TTL-cached snapshot."""
+    with _cache_lock:
+        _cache["rows"] = None

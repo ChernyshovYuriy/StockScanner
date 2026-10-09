@@ -8,6 +8,7 @@ Usage:
     python manual_sell.py TICKER --dry-run          # print the planned sell, write nothing
     python manual_sell.py TICKER --price 12.34       # skip market-price lookup, sell at this price
     python manual_sell.py TICKER --sleeve momentum   # sell from the momentum sleeve's DB instead
+                                                     # (also: kangaroo, macro)
 
 Fetches a best-effort current price (live 5-min intraday snapshot, falling back
 to the last completed daily close), then closes the position through the same
@@ -20,10 +21,11 @@ transaction email.
 unsellable) — it bypasses get_market_price() entirely and uses the given
 value as the sell price.
 
---sleeve momentum points db.py at config.MOMENTUM_DB_PATH and labels the
-transaction email "Momentum". The dashboard's /momentum Sell button runs
-this CLI as a subprocess with --json, since db.py's global DB_PATH can't
-point at two sleeves inside the one dashboard process.
+--sleeve momentum|kangaroo|macro points db.py at that sleeve's DB
+(config.py MOMENTUM_/KANGAROO_/MACRO_DB_PATH) and labels the transaction
+email the way that sleeve's own monitor does. The dashboard's Sell buttons
+on those tabs run this CLI as a subprocess with --json, since db.py's
+global DB_PATH can't point at two sleeves inside the one dashboard process.
 """
 
 from __future__ import annotations
@@ -56,6 +58,15 @@ from schema_keys import (
 )
 
 init(autoreset=True)
+
+
+# --sleeve name -> (config.py DB path constant, transaction-email label,
+# matching each sleeve's own monitor's execute_virtual_sells() label).
+SLEEVES = {
+    "momentum": ("MOMENTUM_DB_PATH", "Momentum"),
+    "kangaroo": ("KANGAROO_DB_PATH", "Kangaroo Tail"),
+    "macro": ("MACRO_DB_PATH", "Macro"),
+}
 
 
 def get_market_price(ticker: str) -> tuple[float, str] | tuple[None, None]:
@@ -102,7 +113,7 @@ def sell_position(ticker: str, dry_run: bool = False, price: float | None = None
     e.g. a test's tmp_path DB or the web dashboard's own startup init).
     """
     ticker = ticker.strip().upper()
-    service = "manual_sell" if label == "TSX" else f"manual_sell_{label.lower()}"
+    service = "manual_sell" if label == "TSX" else "manual_sell_" + label.lower().replace(" ", "_")
     run_id = uuid.uuid4().hex
 
     try:
@@ -197,17 +208,17 @@ def main() -> None:
     parser.add_argument("--price", type=float, default=None,
                          help="Sell at this price instead of looking one up "
                               "(use when Yahoo Finance has no live quote for the ticker)")
-    parser.add_argument("--sleeve", choices=("core", "momentum"), default="core",
+    parser.add_argument("--sleeve", choices=("core", *SLEEVES), default="core",
                          help="Which paper account to sell from (default: core)")
     parser.add_argument("--json", action="store_true",
                          help="Print only the result as JSON on stdout (progress goes to stderr)")
     args = parser.parse_args()
 
     from db import init_db
-    if args.sleeve == "momentum":
-        from config import MOMENTUM_DB_PATH
-        init_db(path=MOMENTUM_DB_PATH)
-        label = "Momentum"
+    if args.sleeve in SLEEVES:
+        import config
+        db_attr, label = SLEEVES[args.sleeve]
+        init_db(path=getattr(config, db_attr))
     else:
         init_db()
         label = "TSX"

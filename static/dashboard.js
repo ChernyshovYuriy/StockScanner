@@ -75,7 +75,7 @@ document.querySelectorAll("button.refresh-btn[onclick]").forEach((btn) => {
 });
 
 // A button's data-sell-url picks the sleeve's sell endpoint (e.g. the
-// momentum tab's /api/momentum/positions/); none means the core sleeve.
+// momentum/kangaroo/macro tabs' /api/<sleeve>/positions/); none means the core sleeve.
 function postSell(ticker, price, baseUrl = "/api/positions/") {
   const body = price === undefined ? {} : { price };
   return fetch(`${baseUrl}${encodeURIComponent(ticker)}/sell`, {
