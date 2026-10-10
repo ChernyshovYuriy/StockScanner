@@ -75,7 +75,8 @@ def test_build_signals_flags_rising_trend_as_bullish(monkeypatch):
         {"week_start": "2026-05-11", "shares": 150_000},
         {"week_start": "2026-05-18", "shares": 250_000},
     ]
-    monkeypatch.setattr(darkpool, "_total_weekly_volume", lambda us_ticker, week: 1_000_000)
+    monkeypatch.setattr(darkpool, "_weekly_volumes",
+                        lambda us_ticker, weeks: {w: 1_000_000 for w in weeks})
     monkeypatch.setattr(darkpool, "RISING_WEEKS", 3)
 
     signals = darkpool.build_signals("MU", "MU", ats_weekly, fetched_at="2026-05-20T00:00:00")
@@ -94,7 +95,8 @@ def test_build_signals_flat_ratio_is_neutral(monkeypatch):
         {"week_start": "2026-05-11", "shares": 100_000},
         {"week_start": "2026-05-18", "shares": 100_000},
     ]
-    monkeypatch.setattr(darkpool, "_total_weekly_volume", lambda us_ticker, week: 1_000_000)
+    monkeypatch.setattr(darkpool, "_weekly_volumes",
+                        lambda us_ticker, weeks: {w: 1_000_000 for w in weeks})
     monkeypatch.setattr(darkpool, "RISING_WEEKS", 3)
 
     signals = darkpool.build_signals("MU", "MU", ats_weekly, fetched_at="2026-05-20T00:00:00")
@@ -104,17 +106,50 @@ def test_build_signals_flat_ratio_is_neutral(monkeypatch):
 
 def test_build_signals_skips_weeks_with_no_total_volume(monkeypatch):
     ats_weekly = [{"week_start": "2026-05-04", "shares": 100_000}]
-    monkeypatch.setattr(darkpool, "_total_weekly_volume", lambda us_ticker, week: None)
+    monkeypatch.setattr(darkpool, "_weekly_volumes", lambda us_ticker, weeks: {})
 
     signals = darkpool.build_signals("MU", "MU", ats_weekly, fetched_at="2026-05-20T00:00:00")
     assert signals == []
 
 
 def test_build_signals_carries_ticker_and_us_ticker_through(monkeypatch):
-    monkeypatch.setattr(darkpool, "_total_weekly_volume", lambda us_ticker, week: 1_000_000)
+    monkeypatch.setattr(darkpool, "_weekly_volumes",
+                        lambda us_ticker, weeks: {w: 1_000_000 for w in weeks})
     signals = darkpool.build_signals(
         "SLF.TO", "SLF", [{"week_start": "2026-05-04", "shares": 50_000}],
         fetched_at="2026-05-20T00:00:00",
     )
     assert signals[0].ticker == "SLF.TO"
     assert signals[0].us_ticker == "SLF"
+
+
+def test_weekly_volumes_sums_each_week_from_one_download(monkeypatch):
+    import pandas as pd
+    import market_data
+
+    calls = []
+    idx = pd.to_datetime(["2026-05-04", "2026-05-05", "2026-05-08", "2026-05-11", "2026-05-15"])
+    df = pd.DataFrame({"Volume": [100, 200, 300, 1_000, 2_000]}, index=idx)
+
+    class _Provider:
+        def get(self, ticker, as_of, start_dt=None, end_dt=None):
+            calls.append((ticker, start_dt, end_dt))
+            return df
+
+    monkeypatch.setattr(market_data, "LiveDataProvider", _Provider)
+
+    totals = darkpool._weekly_volumes("MU", ["2026-05-11", "2026-05-04", "2026-05-18"])
+
+    assert calls == [("MU", "2026-05-04", "2026-05-24")]
+    assert totals == {"2026-05-04": 600, "2026-05-11": 3_000}  # 05-18 has no bars
+
+
+def test_weekly_volumes_fetch_failure_is_empty(monkeypatch):
+    import market_data
+
+    class _Provider:
+        def get(self, *a, **k):
+            raise KeyError("no data")
+
+    monkeypatch.setattr(market_data, "LiveDataProvider", _Provider)
+    assert darkpool._weekly_volumes("MU", ["2026-05-04"]) == {}

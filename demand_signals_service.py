@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import uuid
 from collections import defaultdict
 
@@ -36,6 +37,12 @@ from demand_signals.ticker_map import get_us_ticker
 
 from edgar import store as edgar_store
 from edgar.core import load_cik_to_ticker
+
+# Yahoo pacing: each US-covered ticker costs up to 3 Yahoo requests (one
+# daily-volume download for the dark-pool ratio, then the options
+# expirations list and nearest chain). 7.5 s per ticker keeps the run at
+# or under ~0.4 req/s, the bulk-job limit after the 2026-10 IP block.
+YAHOO_SECONDS_PER_TICKER = 7.5
 
 
 def run_collector(run_id, dry_run=False):
@@ -63,6 +70,7 @@ def run_collector(run_id, dry_run=False):
             log("demand_signals", run_id, "no_us_line", ticker=ticker)
             continue
 
+        started = time.monotonic()
         ats_weekly = darkpool.fetch_weekly_ats_volume(us_ticker)
         if ats_weekly:
             all_signals.extend(darkpool.build_signals(ticker, us_ticker, ats_weekly, fetched_at))
@@ -78,6 +86,7 @@ def run_collector(run_id, dry_run=False):
             snap = None
         if snap:
             all_signals.extend(options_flow.build_signals(ticker, us_ticker, snap, fetched_at))
+        time.sleep(max(0.0, YAHOO_SECONDS_PER_TICKER - (time.monotonic() - started)))
 
     log("demand_signals", run_id, "computed", total_signals=len(all_signals))
 

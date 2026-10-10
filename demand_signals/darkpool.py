@@ -154,23 +154,32 @@ def _parse_ats_records(records: list[dict]) -> list[dict]:
     return [{"week_start": w, "shares": s} for w, s in sorted(by_week.items())]
 
 
-def _total_weekly_volume(us_ticker: str, week_start: str) -> int | None:
-    """Sum of daily consolidated Volume (all venues, lit + dark) over the
-    trading week starting `week_start`, via the existing yfinance path.
-    None if the fetch fails -- caller skips that week's ratio rather than
-    dividing by a wrong number."""
+def _weekly_volumes(us_ticker: str, week_starts: list[str]) -> dict[str, int]:
+    """Sum of daily consolidated Volume (all venues, lit + dark) over each
+    trading week starting at one of `week_starts`, from ONE yfinance
+    download spanning all of them (one request per ticker, not one per
+    week -- the collector paces Yahoo per ticker). A week with no bars is
+    left out, and {} if the fetch fails -- caller skips that week's ratio
+    rather than dividing by a wrong number."""
     from market_data import LiveDataProvider
 
-    start = date.fromisoformat(week_start)
-    end = start + timedelta(days=6)
+    if not week_starts:
+        return {}
+    starts = sorted(date.fromisoformat(w) for w in week_starts)
     try:
-        df = LiveDataProvider().get(us_ticker, as_of=None, start_dt=start.isoformat(),
-                                     end_dt=end.isoformat())
+        df = LiveDataProvider().get(us_ticker, as_of=None, start_dt=starts[0].isoformat(),
+                                     end_dt=(starts[-1] + timedelta(days=6)).isoformat())
     except Exception:
-        return None
+        return {}
     if df is None or df.empty:
-        return None
-    return int(df["Volume"].sum())
+        return {}
+    days = df.index.date
+    totals = {}
+    for start in starts:
+        in_week = (days >= start) & (days < start + timedelta(days=6))
+        if in_week.any():
+            totals[start.isoformat()] = int(df["Volume"][in_week].sum())
+    return totals
 
 
 def _consecutive_rising(ratios: list[float], idx: int, weeks: int) -> bool:
@@ -191,9 +200,10 @@ def build_signals(ticker: str, us_ticker: str, ats_weekly: list[dict],
     source is never 'bearish' (a falling ratio isn't a documented
     distribution signal, just the absence of this one).
     """
+    totals = _weekly_volumes(us_ticker, [row["week_start"] for row in ats_weekly])
     weeks_with_ratio = []
     for row in ats_weekly:
-        total = _total_weekly_volume(us_ticker, row["week_start"])
+        total = totals.get(row["week_start"])
         if not total:
             continue
         weeks_with_ratio.append((row["week_start"], row["shares"] / total, row["shares"], total))

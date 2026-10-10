@@ -1,5 +1,7 @@
 """Offline integration test for demand_signals_service.run_collector (no network)."""
 
+import pytest
+
 import demand_signals_service
 from demand_signals import darkpool, short_volume, store
 from demand_signals.options_flow import OptionsSnapshot
@@ -12,6 +14,11 @@ class _FakeProvider:
 
     def snapshot(self, us_ticker):
         return self._snapshot
+
+
+@pytest.fixture(autouse=True)
+def _no_yahoo_pacing(monkeypatch):
+    monkeypatch.setattr(demand_signals_service, "YAHOO_SECONDS_PER_TICKER", 0.0)
 
 
 def test_run_collector_combines_all_four_sources(tmp_path, monkeypatch):
@@ -31,7 +38,8 @@ def test_run_collector_combines_all_four_sources(tmp_path, monkeypatch):
 
     monkeypatch.setattr(darkpool, "fetch_weekly_ats_volume",
                          lambda us_ticker, weeks=8: [{"week_start": "2026-06-01", "shares": 50_000}])
-    monkeypatch.setattr(darkpool, "_total_weekly_volume", lambda us_ticker, week: 1_000_000)
+    monkeypatch.setattr(darkpool, "_weekly_volumes",
+                        lambda us_ticker, weeks: {w: 1_000_000 for w in weeks})
 
     monkeypatch.setattr(short_volume, "fetch_daily_short_volume",
                          lambda us_ticker, days=10: [{"date": "2026-06-05", "short_shares": 50_000,
@@ -108,3 +116,28 @@ def test_run_collector_options_flow_failure_does_not_sink_the_run(tmp_path, monk
 
     # Must not raise.
     demand_signals_service.run_collector("rid", dry_run=False)
+
+
+def test_run_collector_paces_each_us_covered_ticker(tmp_path, monkeypatch):
+    """Every ticker with a US line waits out YAHOO_SECONDS_PER_TICKER, so a
+    large watchlist stays within the Yahoo bulk-job rate."""
+    demand_conn = store.connect(tmp_path / "demand_signals.db")
+    edgar_conn = edgar_store.connect(tmp_path / "edgar.db")
+    monkeypatch.setattr(demand_signals_service.store, "connect", lambda *a, **k: demand_conn)
+    monkeypatch.setattr(demand_signals_service.edgar_store, "connect", lambda *a, **k: edgar_conn)
+
+    edgar_store.set_watchlist(edgar_conn, [("MU", 1), ("AMD", 2), ("JUNIOR.V", 3)])
+    monkeypatch.setattr(demand_signals_service, "load_cik_to_ticker",
+                        lambda: {1: "MU", 2: "AMD", 3: "JUNIOR.V"})
+    monkeypatch.setattr(demand_signals_service, "get_us_ticker", lambda t: None if t.endswith(".V") else t)
+    monkeypatch.setattr(darkpool, "fetch_weekly_ats_volume", lambda *a, **k: [])
+    monkeypatch.setattr(short_volume, "fetch_daily_short_volume", lambda *a, **k: [])
+    monkeypatch.setattr(demand_signals_service, "YahooOptionsProvider", lambda: _FakeProvider(None))
+    monkeypatch.setattr(demand_signals_service, "YAHOO_SECONDS_PER_TICKER", 7.5)
+    sleeps = []
+    monkeypatch.setattr(demand_signals_service.time, "sleep", sleeps.append)
+
+    demand_signals_service.run_collector("rid", dry_run=True)
+
+    assert len(sleeps) == 2  # MU and AMD; the no-US-line name makes no request
+    assert all(7.0 < s <= 7.5 for s in sleeps)
