@@ -365,6 +365,25 @@ def test_demand_page_renders_signals_grouped_by_ticker(client, monkeypatch):
     assert "badge-bearish" in html
 
 
+def test_demand_page_folds_signal_rows_under_each_summary(client, monkeypatch):
+    rows = {
+        "CDE": [{"source": "options_flow", "signal_type": "call_put_skew", "direction": "bearish",
+                 "strength": 0.3, "lag_days": 0, "date": "2026-10-08"}],
+        "MU": [{"source": "options_flow", "signal_type": "call_put_skew", "direction": "bullish",
+                "strength": 0.3, "lag_days": 0, "date": "2026-10-08"},
+               {"source": "finra_short_volume", "signal_type": "short_volume_ratio",
+                "direction": "neutral", "strength": 1.0, "lag_days": 1, "date": "2026-10-07"}],
+    }
+    monkeypatch.setattr("dashboard_app.build_demand_signals_by_ticker", lambda: rows)
+
+    html = client.get("/demand").data.decode()
+
+    assert html.count('class="summary-row group-toggle"') == 2
+    assert html.count('<tr class="detail-row" data-group="1" hidden>') == 1
+    assert html.count('<tr class="detail-row" data-group="2" hidden>') == 2
+    assert "(2 signals)" in html and "(1 signal)" in html
+
+
 def test_news_watchlist_volumes_endpoint_returns_fetched_volumes(client, monkeypatch):
     """The Inbox table's async volume fill (templates/news_watchlist.html)
     hits this endpoint after the page renders. fetch_volumes() itself is

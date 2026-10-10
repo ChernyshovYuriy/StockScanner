@@ -12,6 +12,11 @@
       background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe;
       vertical-align: middle;
     }
+    /* Each ticker's summary row folds its raw signal rows (click to
+       toggle) so the page reads as a list of highlights first. */
+    .group-toggle { cursor: pointer; }
+    .group-toggle .caret { display: inline-block; width: 1em; color: #6d28d9; }
+    .group-toggle .signal-count { margin-left: 8px; font-weight: 400; color: #6b7280; }
   </style>
 {% endblock %}
 {% block content %}
@@ -35,7 +40,7 @@
        or nothing has cleared a threshold yet.</p>
   {% else %}
   <div class="table-wrap">
-  <table class="sortable">
+  <table>
     <thead>
       <tr>
         <th>Ticker</th><th>Source</th><th>Signal</th><th>Direction</th>
@@ -45,17 +50,19 @@
     <tbody>
       {% for ticker, signals in rows.items() %}
         {% set summary = summaries[ticker] %}
-        <tr class="summary-row">
+        <tr class="summary-row group-toggle" data-group="{{ loop.index }}" aria-expanded="false">
           <td>
-            <a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
+            <span class="caret">▸</span><a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
           </td>
           <td colspan="6">
             <span class="badge badge-{{ summary.label.replace(' ', '_') }}">{{ summary.label }}</span>
             <span class="summary-reasons">{{ summary.reasons|join('; ') }}</span>
+            <span class="signal-count">({{ signals|length }} signal{{ "s" if signals|length != 1 }})</span>
           </td>
         </tr>
+        {% set group = loop.index %}
         {% for s in signals %}
-        <tr>
+        <tr class="detail-row" data-group="{{ group }}" hidden>
           <td>
             <a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
           </td>
@@ -72,4 +79,18 @@
   </table>
   </div>
   {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  document.querySelectorAll("tr.group-toggle").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;  // the ticker link still opens Yahoo
+      const expand = row.getAttribute("aria-expanded") !== "true";
+      row.setAttribute("aria-expanded", expand ? "true" : "false");
+      row.querySelector(".caret").textContent = expand ? "▾" : "▸";
+      document.querySelectorAll(`tr.detail-row[data-group="${row.dataset.group}"]`)
+        .forEach((detail) => { detail.hidden = !expand; });
+    });
+  });
+</script>
 {% endblock %}
