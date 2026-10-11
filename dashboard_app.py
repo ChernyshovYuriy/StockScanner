@@ -51,7 +51,7 @@ from conviction_watchlist.holdings_store import remove_holding as conviction_rem
 from conviction_watchlist.settings import save_settings as conviction_save_settings
 from dashboard_positions import build_live_positions
 from db import get_all_trades, get_cash, get_transactions
-from demand_dashboard_data import build_demand_signals_by_ticker
+from demand_dashboard_data import build_demand_signals_by_ticker, read_company_names
 from demand_signals.summary import summarize_all
 from kangaroo_dashboard_data import (
     build_kangaroo_positions,
@@ -402,7 +402,10 @@ def create_app() -> Flask:
             error = "Database temporarily unavailable — retrying on next refresh."
 
         summaries = summarize_all(rows)
-        return render_template("demand_signals.html", rows=rows, summaries=summaries, error=error)
+        return render_template(
+            "demand_signals.html", rows=rows, summaries=summaries,
+            names=read_company_names(), error=error,
+        )
 
     @app.get("/scanner")
     def scanner():

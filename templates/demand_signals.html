@@ -17,6 +17,13 @@
     .group-toggle { cursor: pointer; }
     .group-toggle .caret { display: inline-block; width: 1em; color: #6d28d9; }
     .group-toggle .signal-count { margin-left: 8px; font-weight: 400; color: #6b7280; }
+    .company-name { margin-left: 8px; font-weight: 400; color: #374151; }
+    /* Newest-first strip of each ticker's latest 10 signal directions
+       (B bullish / S bearish / N neutral), to spot which group to open. */
+    .severity-strip { font-family: ui-monospace, monospace; font-weight: 700; letter-spacing: 1px; margin-right: 10px; }
+    .severity-strip .sev-bullish { color: var(--hold); }
+    .severity-strip .sev-bearish { color: var(--sell); }
+    .severity-strip .sev-neutral { color: var(--text-muted); }
   </style>
 {% endblock %}
 {% block content %}
@@ -53,8 +60,14 @@
         <tr class="summary-row group-toggle" data-group="{{ loop.index }}" aria-expanded="false">
           <td>
             <span class="caret">▸</span><a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
+            {%- if names.get(ticker) %}<span class="company-name">{{ names[ticker] }}</span>{% endif %}
           </td>
           <td colspan="6">
+            <span class="severity-strip">
+              {%- for s in signals[:10] -%}
+              <span class="sev-{{ s.direction }}" title="{{ s.date }} · {{ s.source }} · {{ s.signal_type }} · {{ s.direction }}">{{ {"bullish": "B", "bearish": "S"}.get(s.direction, "N") }}</span>
+              {%- endfor -%}
+            </span>
             <span class="badge badge-{{ summary.label.replace(' ', '_') }}">{{ summary.label }}</span>
             <span class="summary-reasons">{{ summary.reasons|join('; ') }}</span>
             <span class="signal-count">({{ signals|length }} signal{{ "s" if signals|length != 1 }})</span>

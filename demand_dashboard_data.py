@@ -22,10 +22,11 @@ import time
 from collections import defaultdict
 from typing import Dict, List
 
-from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS, DEMAND_DB_PATH
+from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS, DEMAND_DB_PATH, EDGAR_CACHE_PATH
 
 _cache_lock = threading.Lock()
 _cache: Dict[str, object] = {"ts": 0.0, "rows": None}
+_names_cache: Dict[str, object] = {"file": None, "names": {}}
 
 
 def _read_demand_signals() -> list[dict]:
@@ -73,3 +74,27 @@ def build_demand_signals_by_ticker() -> Dict[str, List[Dict]]:
         _cache["rows"] = rows
         _cache["ts"] = now
         return rows
+
+
+def read_company_names() -> Dict[str, str]:
+    """{TICKER: company name} from the newest SEC company_tickers_*.json that
+    edgar/core.py's load_ticker_map() already caches daily -- the same file
+    demand_signals_service.py resolves its watchlist tickers from, so every
+    ticker on the page has an entry. Read straight off disk (never fetched
+    from here, never imports edgar/); {} if no cached copy exists yet."""
+    files = sorted(EDGAR_CACHE_PATH.glob("company_tickers_*.json"))
+    if not files:
+        return {}
+    latest = files[-1]
+    with _cache_lock:
+        if _names_cache["file"] == latest:
+            return _names_cache["names"]
+    try:
+        data = json.loads(latest.read_text())
+        names = {row["ticker"].upper(): row["title"] for row in data.values()}
+    except (OSError, ValueError, KeyError, AttributeError):
+        return {}
+    with _cache_lock:
+        _names_cache["file"] = latest
+        _names_cache["names"] = names
+    return names

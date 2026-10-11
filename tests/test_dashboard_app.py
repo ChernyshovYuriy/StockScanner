@@ -9,6 +9,8 @@ routing, rendering, and HTTP status mapping.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import db as db_module
@@ -382,6 +384,23 @@ def test_demand_page_folds_signal_rows_under_each_summary(client, monkeypatch):
     assert html.count('<tr class="detail-row" data-group="1" hidden>') == 1
     assert html.count('<tr class="detail-row" data-group="2" hidden>') == 2
     assert "(2 signals)" in html and "(1 signal)" in html
+
+
+def test_demand_summary_shows_company_name_and_severity_strip(client, monkeypatch):
+    signals = [{"source": "options_flow", "signal_type": "call_put_skew", "direction": "bullish",
+                "strength": 0.2, "lag_days": 0, "date": "2026-10-09"},
+               {"source": "finra_short_volume", "signal_type": "short_volume_pressure",
+                "direction": "bearish", "strength": 0.5, "lag_days": 1, "date": "2026-10-08"}]
+    signals += [{"source": "finra_short_volume", "signal_type": "short_volume_ratio",
+                 "direction": "neutral", "strength": 1.0, "lag_days": 1, "date": "2026-10-07"}] * 10
+    monkeypatch.setattr("dashboard_app.build_demand_signals_by_ticker", lambda: {"C": signals})
+    monkeypatch.setattr("dashboard_app.read_company_names", lambda: {"C": "Citigroup Inc"})
+
+    html = client.get("/demand").data.decode()
+
+    assert '<span class="company-name">Citigroup Inc</span>' in html
+    strip = html.split('class="severity-strip">')[1].split("</span>\n")[0]
+    assert re.sub(r"<[^>]+>", "", strip) == "BSNNNNNNNN"
 
 
 def test_news_watchlist_volumes_endpoint_returns_fetched_volumes(client, monkeypatch):
