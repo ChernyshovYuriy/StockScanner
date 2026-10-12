@@ -16,14 +16,27 @@
        toggle) so the page reads as a list of highlights first. */
     .group-toggle { cursor: pointer; }
     .group-toggle .caret { display: inline-block; width: 1em; color: #6d28d9; }
-    .group-toggle .signal-count { margin-left: 8px; font-weight: 400; color: #6b7280; }
-    .company-name { margin-left: 8px; font-weight: 400; color: #374151; }
     /* Newest-first strip of each ticker's latest 10 signal directions
        (B bullish / S bearish / N neutral), to spot which group to open. */
-    .severity-strip { font-family: ui-monospace, monospace; font-weight: 700; letter-spacing: 1px; margin-right: 10px; }
-    .severity-strip .sev-bullish { color: var(--hold); }
-    .severity-strip .sev-bearish { color: var(--sell); }
-    .severity-strip .sev-neutral { color: var(--text-muted); }
+    .severity-strip { display: inline-flex; gap: 2px; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700; }
+    .severity-strip span { display: inline-block; width: 16px; line-height: 18px; text-align: center; border-radius: 3px; }
+    .severity-strip .sev-bullish { color: #fff; background: var(--hold); }
+    .severity-strip .sev-bearish { color: #fff; background: var(--sell); }
+    .severity-strip .sev-neutral { color: var(--text-muted); background: var(--border); }
+    /* One <tbody> per ticker (summary row + its folded detail row), so a
+       column sort moves each group as a unit. Columns are left-aligned
+       (dashboard.css right-aligns by default, which made each row's
+       content start at a different spot). */
+    .demand-table th, .demand-table td { text-align: left; vertical-align: middle; }
+    .demand-table th.num, .demand-table td.num { text-align: right; }
+    .demand-table td.company-name { font-weight: 400; color: #374151; white-space: normal; min-width: 160px; }
+    .demand-table td.reasons { white-space: normal; min-width: 360px; font-weight: 400; color: var(--text-muted); font-size: 13px; }
+    .demand-table .net-pos { color: var(--hold); }
+    .demand-table .net-neg { color: var(--sell); }
+    .demand-table tbody.group:hover > .summary-row > td { background: #f5f3ff; }
+    .detail-row > td { padding: 4px 10px 14px 34px; background: var(--page-bg); }
+    .detail-row table { width: auto; min-width: 60%; }
+    .detail-row th, .detail-row td { text-align: left; font-weight: 400; padding: 4px 12px; }
   </style>
 {% endblock %}
 {% block content %}
@@ -46,49 +59,76 @@
     <p>No signals stored yet — demand_signals_service.py hasn't run in save mode,
        or nothing has cleared a threshold yet.</p>
   {% else %}
+  {# Sort keys: the strip ranks B > N > S position by position, newest first
+     (padded with N to 10), so a descending sort puts BBB… on top. #}
+  {% set dir_rank = {"bullish": "2", "bearish": "0"} %}
+  {% set label_rank = {"bullish": 6, "mild bullish": 5, "neutral": 4, "mixed": 3,
+                       "mild bearish": 2, "bearish": 1, "no data": 0} %}
   <div class="table-wrap">
-  <table>
+  <table class="demand-table">
     <thead>
       <tr>
-        <th>Ticker</th><th>Source</th><th>Signal</th><th>Direction</th>
-        <th>Strength</th><th>Lag (days)</th><th>Date</th>
+        <th data-sort="text">Ticker</th>
+        <th data-sort="text">Company</th>
+        <th data-sort="text" title="Newest on the left. Sorting ranks B over N over S, newest signal first.">Last 10 signals</th>
+        <th data-sort="num" class="num" title="Bullish minus bearish among the last 10 signals">Net</th>
+        <th data-sort="num" title="Composite read, bullish to bearish">Read</th>
+        <th>Why</th>
+        <th data-sort="num" class="num">Signals</th>
+        <th data-sort="text">Latest</th>
       </tr>
     </thead>
-    <tbody>
-      {% for ticker, signals in rows.items() %}
-        {% set summary = summaries[ticker] %}
+    {% for ticker, signals in rows.items() %}
+      {% set summary = summaries[ticker] %}
+      {% set last10 = signals[:10] %}
+      {% set net = (last10|selectattr("direction", "equalto", "bullish")|list|length)
+                 - (last10|selectattr("direction", "equalto", "bearish")|list|length) %}
+      {% set strip_key -%}
+        {%- for s in last10 %}{{ dir_rank.get(s.direction, "1") }}{% endfor -%}
+        {{- "1" * (10 - last10|length) -}}
+      {%- endset %}
+      <tbody class="group">
         <tr class="summary-row group-toggle" data-group="{{ loop.index }}" aria-expanded="false">
-          <td>
+          <td data-sort-value="{{ ticker }}">
             <span class="caret">▸</span><a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
-            {%- if names.get(ticker) %}<span class="company-name">{{ names[ticker] }}</span>{% endif %}
           </td>
-          <td colspan="6">
+          <td class="company-name" data-sort-value="{{ names.get(ticker, '') }}">{{ names.get(ticker, "") }}</td>
+          <td data-sort-value="{{ strip_key }}">
             <span class="severity-strip">
-              {%- for s in signals[:10] -%}
+              {%- for s in last10 -%}
               <span class="sev-{{ s.direction }}" title="{{ s.date }} · {{ s.source }} · {{ s.signal_type }} · {{ s.direction }}">{{ {"bullish": "B", "bearish": "S"}.get(s.direction, "N") }}</span>
               {%- endfor -%}
             </span>
-            <span class="badge badge-{{ summary.label.replace(' ', '_') }}">{{ summary.label }}</span>
-            <span class="summary-reasons">{{ summary.reasons|join('; ') }}</span>
-            <span class="signal-count">({{ signals|length }} signal{{ "s" if signals|length != 1 }})</span>
+          </td>
+          <td class="num {{ 'net-pos' if net > 0 else ('net-neg' if net < 0 else '') }}" data-sort-value="{{ net }}">{{ "%+d"|format(net) if net else "0" }}</td>
+          <td data-sort-value="{{ label_rank.get(summary.label, 0) }}"><span class="badge badge-{{ summary.label.replace(' ', '_') }}">{{ summary.label }}</span></td>
+          <td class="reasons">{{ summary.reasons|join('; ') }}</td>
+          <td class="num" data-sort-value="{{ signals|length }}">{{ signals|length }}</td>
+          <td data-sort-value="{{ signals[0].date }}">{{ signals[0].date }}</td>
+        </tr>
+        <tr class="detail-row" data-group="{{ loop.index }}" hidden>
+          <td colspan="8">
+            <table>
+              <thead>
+                <tr><th>Date</th><th>Source</th><th>Signal</th><th>Direction</th><th>Strength</th><th>Lag (days)</th></tr>
+              </thead>
+              <tbody>
+              {% for s in signals %}
+                <tr>
+                  <td>{{ s.date }}</td>
+                  <td>{{ s.source }}</td>
+                  <td>{{ s.signal_type }}</td>
+                  <td><span class="badge badge-{{ s.direction }}">{{ s.direction }}</span></td>
+                  <td>{{ "%.2f"|format(s.strength) if s.strength is not none else "—" }}</td>
+                  <td>{{ s.lag_days if s.lag_days is not none else "—" }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
           </td>
         </tr>
-        {% set group = loop.index %}
-        {% for s in signals %}
-        <tr class="detail-row" data-group="{{ group }}" hidden>
-          <td>
-            <a href="https://ca.finance.yahoo.com/quote/{{ ticker }}" target="_blank" rel="noopener">{{ ticker }}</a>
-          </td>
-          <td>{{ s.source }}</td>
-          <td>{{ s.signal_type }}</td>
-          <td><span class="badge badge-{{ s.direction }}">{{ s.direction }}</span></td>
-          <td>{{ "%.2f"|format(s.strength) if s.strength is not none else "—" }}</td>
-          <td>{{ s.lag_days if s.lag_days is not none else "—" }}</td>
-          <td>{{ s.date }}</td>
-        </tr>
-        {% endfor %}
-      {% endfor %}
-    </tbody>
+      </tbody>
+    {% endfor %}
   </table>
   </div>
   {% endif %}
@@ -105,5 +145,32 @@
         .forEach((detail) => { detail.hidden = !expand; });
     });
   });
+
+  // Sorts whole ticker groups (one <tbody> each) on the summary row's
+  // data-sort-value, so detail rows stay under their summary. The first
+  // click on a column sorts descending (most bullish / newest / most first).
+  (() => {
+    const table = document.querySelector("table.demand-table");
+    if (!table) return;
+    const headers = Array.from(table.querySelectorAll(":scope > thead th"));
+    headers.forEach((th, colIndex) => {
+      const kind = th.dataset.sort;
+      if (!kind) return;
+      th.classList.add("sortable-col");
+      th.addEventListener("click", () => {
+        const descending = th.dataset.sortDir !== "desc";
+        const groups = Array.from(table.querySelectorAll(":scope > tbody.group"));
+        const key = (group) => group.querySelector("tr.summary-row").children[colIndex].dataset.sortValue || "";
+        groups.sort((a, b) => {
+          const cmp = kind === "num" ? parseFloat(key(a)) - parseFloat(key(b)) : key(a).localeCompare(key(b));
+          return descending ? -cmp : cmp;
+        });
+        headers.forEach((h) => { h.dataset.sortDir = ""; h.classList.remove("sort-asc", "sort-desc"); });
+        th.dataset.sortDir = descending ? "desc" : "asc";
+        th.classList.add(descending ? "sort-desc" : "sort-asc");
+        groups.forEach((group) => table.appendChild(group));
+      });
+    });
+  })();
 </script>
 {% endblock %}

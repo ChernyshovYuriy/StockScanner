@@ -381,9 +381,12 @@ def test_demand_page_folds_signal_rows_under_each_summary(client, monkeypatch):
     html = client.get("/demand").data.decode()
 
     assert html.count('class="summary-row group-toggle"') == 2
+    assert html.count('<tbody class="group">') == 2
+    groups = html.split('<tbody class="group">')[1:]
+    assert groups[0].count("call_put_skew") == 1
+    assert groups[1].count("<td>2026-10-0") == 2
     assert html.count('<tr class="detail-row" data-group="1" hidden>') == 1
-    assert html.count('<tr class="detail-row" data-group="2" hidden>') == 2
-    assert "(2 signals)" in html and "(1 signal)" in html
+    assert html.count('<tr class="detail-row" data-group="2" hidden>') == 1
 
 
 def test_demand_summary_shows_company_name_and_severity_strip(client, monkeypatch):
@@ -398,9 +401,11 @@ def test_demand_summary_shows_company_name_and_severity_strip(client, monkeypatc
 
     html = client.get("/demand").data.decode()
 
-    assert '<span class="company-name">Citigroup Inc</span>' in html
+    assert 'data-sort-value="Citigroup Inc">Citigroup Inc</td>' in html
     strip = html.split('class="severity-strip">')[1].split("</span>\n")[0]
     assert re.sub(r"<[^>]+>", "", strip) == "BSNNNNNNNN"
+    # B > N > S per position, so a descending sort puts the most bullish first.
+    assert 'data-sort-value="2011111111"' in html
 
 
 def test_news_watchlist_volumes_endpoint_returns_fetched_volumes(client, monkeypatch):
