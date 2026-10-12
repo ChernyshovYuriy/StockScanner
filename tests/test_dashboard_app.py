@@ -383,8 +383,9 @@ def test_demand_page_folds_signal_rows_under_each_summary(client, monkeypatch):
     assert html.count('class="summary-row group-toggle"') == 2
     assert html.count('<tbody class="group">') == 2
     groups = html.split('<tbody class="group">')[1:]
-    assert groups[0].count("call_put_skew") == 1
-    assert groups[1].count("<td>2026-10-0") == 2
+    # One Direction badge per raw signal in each group's folded sub-table.
+    assert groups[0].count('<td><span class="badge badge-') == 1
+    assert groups[1].count('<td><span class="badge badge-') == 2
     assert html.count('<tr class="detail-row" data-group="1" hidden>') == 1
     assert html.count('<tr class="detail-row" data-group="2" hidden>') == 1
 
