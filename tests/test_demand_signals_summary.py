@@ -121,3 +121,46 @@ def test_summarize_all_wraps_each_ticker():
     result = summarize_all(by_ticker)
     assert result["AAPL"]["label"] == "mild bullish"
     assert result["MU"]["label"] == "bullish"
+
+
+def test_old_darkpool_rising_superseded_by_newer_plain_reading_is_ignored():
+    # AMZN on the live board: rising on 09-07, plain readings every week since.
+    rows = [
+        _row("finra_darkpool", "darkpool_ratio", "neutral", date="2026-09-14"),
+        _row("finra_darkpool", "darkpool_ratio_rising", "bullish", date="2026-09-07"),
+    ]
+    summary = summarize_ticker(rows)
+    assert summary["label"] == "no data"
+
+
+def test_old_short_volume_trend_superseded_by_newer_one_uses_the_newest():
+    rows = [
+        _row("finra_short_volume", "short_volume_pressure", "bearish", date="2026-10-08"),
+        _row("finra_short_volume", "short_volume_covering", "bullish", date="2026-10-01"),
+    ]
+    summary = summarize_ticker(rows)
+    assert summary["label"] == "bearish"
+    assert not any("stepping back" in r for r in summary["reasons"])
+
+
+def test_old_short_volume_trend_superseded_by_plain_ratio_is_ignored():
+    rows = [
+        _row("finra_short_volume", "short_volume_ratio", "neutral", date="2026-10-09"),
+        _row("finra_short_volume", "short_volume_pressure", "bearish", date="2026-10-08"),
+    ]
+    summary = summarize_ticker(rows)
+    assert summary["label"] == "no data"
+
+
+def test_options_use_only_the_newest_day_newest_first_order():
+    # Rows arrive newest first (the dashboard's ORDER BY date DESC); the
+    # newest skew must win, and an older day's unusual volume must not count.
+    rows = [
+        _row("options_flow", "call_put_skew", "bearish", date="2026-10-09"),
+        _row("options_flow", "unusual_call_volume", "bullish", date="2026-10-08"),
+        _row("options_flow", "call_put_skew", "bullish", date="2026-09-02"),
+    ]
+    summary = summarize_ticker(rows)
+    assert summary["label"] == "mild bearish"
+    assert "today's flow leans puts" in summary["reasons"]
+    assert "unusual call volume today" not in summary["reasons"]

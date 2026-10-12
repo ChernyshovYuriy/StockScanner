@@ -31,6 +31,15 @@ except Exception:
     SHORTVOL_TREND_DAYS = 3
 
 
+def _latest_rows(rows: list, source: str) -> list:
+    """source's rows from its newest date only ([] if it has none)."""
+    source_rows = [r for r in rows if r["source"] == source]
+    if not source_rows:
+        return []
+    latest = max(r["date"] for r in source_rows)
+    return [r for r in source_rows if r["date"] == latest]
+
+
 def summarize_ticker(rows: Iterable[dict]) -> dict:
     """One ticker's rows -> {"label": str, "reasons": [str, ...]}.
 
@@ -48,25 +57,23 @@ def summarize_ticker(rows: Iterable[dict]) -> dict:
 
     insider_buys = [r for r in rows if r["source"] == "edgar_insider"]
 
-    darkpool_rising = None  # most recent darkpool_ratio_rising row, if any
-    for r in rows:
-        if r["source"] == "finra_darkpool" and r["signal_type"] == "darkpool_ratio_rising":
-            if darkpool_rising is None or r["date"] > darkpool_rising["date"]:
-                darkpool_rising = r
+    # Only each source's newest reading counts: a stored history holds many
+    # days, and an old "rising"/"covering" row must not outvote the newer
+    # plain readings that superseded it.
+    darkpool_rising = None  # newest darkpool row, if it's darkpool_ratio_rising
+    for r in _latest_rows(rows, "finra_darkpool"):
+        if r["signal_type"] == "darkpool_ratio_rising":
+            darkpool_rising = r
 
-    shortvol_trend = None  # most recent covering/pressure row, if any
-    for r in rows:
-        if r["source"] == "finra_short_volume" and r["signal_type"] in (
-                "short_volume_covering", "short_volume_pressure"):
-            if shortvol_trend is None or r["date"] > shortvol_trend["date"]:
-                shortvol_trend = r
+    shortvol_trend = None  # newest short-volume row, if it's covering/pressure
+    for r in _latest_rows(rows, "finra_short_volume"):
+        if r["signal_type"] in ("short_volume_covering", "short_volume_pressure"):
+            shortvol_trend = r
 
     skew_row = None
     unusual_call = False
     unusual_put = False
-    for r in rows:
-        if r["source"] != "options_flow":
-            continue
+    for r in _latest_rows(rows, "options_flow"):
         if r["signal_type"] == "call_put_skew":
             skew_row = r
         elif r["signal_type"] == "unusual_call_volume":
