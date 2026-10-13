@@ -24,4 +24,10 @@ Phase 2:
                 volatility; walk-forward out-of-sample predictions scored
                 against both baselines. Results in PLAN.md.
                python -m research.barometer.models [--earnings]   # -> out/barometer_phase2*.csv
+
+Phases 3-4:
+  gate.py       the pre-registered decision gate (logistic / ridge), T4's
+                top-minus-bottom spread, bull/bear breakdown, pooled
+                calibration. Verdict in PLAN.md: only T3 (volatility) passes.
+               python -m research.barometer.gate   # -> out/barometer_gate.csv
 """

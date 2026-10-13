@@ -126,3 +126,42 @@ Preview of the Phase 4 gate (formal check in Phase 3/4): T1 and T2 fail (no
 year-over-year win against the rule), T4 fails, **T3 passes clearly.** The
 practical reading is that for stop-hit and tail odds, the free closed-form rule
 is as good as a fitted model, while volatility forecasts benefit from fitting.
+
+## Phases 3–4: the gate (2026-10-12, `python -m research.barometer.gate`)
+
+The model is logistic regression (ridge for volatility), with no earnings feature.
+Interpretations pinned in `gate.py` before the run: "beats" means lower loss
+that year, and every criterion must hold in at least 3 of 4 test years.
+Significance (HAC t < −2) is reported but not required.
+
+| Gate | Target | Beats base | Beats rule (significant) | AUC ≥ 0.60 | Calibration ≤ 20% | Verdict |
+|---|---|---|---|---|---|---|
+| T1 | Stop hit | 4/4 | 2/4 (0) | 4/4 | 3/4 | **FAIL** |
+| T2 | Up 10% | 4/4 | 2/4 (0) | 4/4 | 0/4 | **FAIL** |
+| T2 | Down 10% | 4/4 | 2/4 (0) | 4/4 | 1/4 | **FAIL** |
+| T3 | Volatility | — | **4/4 (4)** | — | — | **PASS** |
+| T4 | Beat XIU | spread > 1% in 2/4 years: +0.02 / +0.81 / +1.35 / +1.03%; pooled +0.78%, t = 1.40 | | | | **FAIL** |
+
+Details:
+- **T1 breaks down in bear markets.** With XIU below its 200-day average (6.5%
+  of rows), the model is 12% *worse* than the rule. In bull markets it ties
+  the rule (+0.3%). This is the regime-extrapolation weakness seen in the
+  synthetic tests.
+- **Calibration (stop hit, pooled deciles):** the model over-forecasts the
+  riskiest names (68.5% predicted vs 54.7% observed in the top decile). The
+  rule under-forecasts the safest names (7.9% vs 14.5%) but is closer in
+  between.
+- **T4's small spread** comes mainly from low ATR and momentum ranks (the
+  well-known low-volatility and momentum factors). It is positive in all 4
+  years but below the 1% cost bar in 2 of them, and not significant overall.
+- **The gate procedure itself was tested on synthetic worlds:** a world with
+  truly predictable direction passes T4, and pure noise fails T2 and T4. On
+  noise, the model can earn a *small real* stop-hit edge from a better
+  volatility estimate (it also sees 60-day vol), which is why significance
+  is reported next to every win.
+
+**Decision, per the plan:** Phase 5 was conditional on T1 or T2 passing.
+Neither did, so **Phase 5 (core-sleeve filter A/B) does not run on the model.**
+The only target that passed is T3, volatility forecasting. Using the volatility
+rule itself, or the T3 forecast, in the sleeves would be a *new* hypothesis
+outside this plan and would need its own pre-registered test.
