@@ -95,3 +95,34 @@ What this means for Phase 2:
   on +10% in the 2025 rally, because it assumes zero drift and constant
   volatility. Calibration is the clearest place a fitted model can add value.
 - **Beating XIU is unpredictable here, as expected.**
+
+## Phase 2 results (2026-10-12, `python -m research.barometer.models [--earnings]`)
+
+Same walk-forward splits as Phase 1. Skill is the Brier improvement vs. the volatility
+rule (QLIKE for volatility); t is HAC-corrected and date-clustered, negative = model better.
+
+| Target | Logistic skill vs rule (2023 / 24 / 25 / 26) | Best t in the model's favour | GBM | Verdict |
+|---|---|---|---|---|
+| Stop hit | −2.2% / −2.3% / +2.0% / +0.2% | −0.5 | same or worse | **does not beat the rule** |
+| Up 10% | −1.8% / +1.2% / −1.5% / +1.7% | −1.4 | ≈ rule | **does not beat the rule** |
+| Down 10% | −0.8% / −2.4% / +2.9% / +2.3% | −1.3 | worse in 2024 (t = +2.9) | **does not beat the rule** |
+| Beat XIU | about 0, AUC 0.50–0.54 | — | same | **unpredictable** |
+| Volatility (ridge) | **+35% / +52% / +34% / +29%** | **−3.7 to −7.9** | (same ridge) | **beats the rule every year** |
+
+- Models beat the base rate on stop hit and tails (like the rule), but they add
+  **nothing significant over the closed-form rule**. Their calibration is not
+  better either: it is often worse, because linear extrapolation of market
+  features fails in regimes outside the training range. The synthetic tests
+  showed the same pattern (2024, dn10).
+- Gradient boosting never beats logistic regression reliably, so per the plan
+  it is dropped. Before its leaves were sized for overlapping labels, it overfit
+  pure noise (−5 to −8% vs the rule).
+- `days_to_earnings` changes nothing material (all differences within about ±1
+  point), so its mild lookahead is moot. It stays off.
+- In the `fwd_rvol` rows, "logistic" and "gbm" are the same ridge model; the
+  model name only applies to the binary targets.
+
+Preview of the Phase 4 gate (formal check in Phase 3/4): T1 and T2 fail (no
+year-over-year win against the rule), T4 fails, **T3 passes clearly.** The
+practical reading is that for stop-hit and tail odds, the free closed-form rule
+is as good as a fitted model, while volatility forecasts benefit from fitting.

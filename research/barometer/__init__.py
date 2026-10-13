@@ -17,4 +17,11 @@ Phase 1:
   baselines.py  the base rate and the closed-form volatility rule, scored
                 walk-forward (20-session embargo); results in PLAN.md.
                python -m research.barometer.baselines   # -> out/barometer_phase1.csv
+
+Phase 2:
+  models.py     logistic (primary) / gradient boosting (challenger) on
+                per-day-ranked features + the rule's own logit; ridge for
+                volatility; walk-forward out-of-sample predictions scored
+                against both baselines. Results in PLAN.md.
+               python -m research.barometer.models [--earnings]   # -> out/barometer_phase2*.csv
 """
