@@ -10,4 +10,11 @@ Phase 0 (this package so far):
                auto_pipeline.compute_levels() does. CLI:
                python -m research.barometer.dataset                    # build from cache, save, summarise
                python -m research.barometer.dataset --check-lookahead  # real-data truncation proof
+
+Phase 1:
+  metrics.py    Brier/log-loss/skill, AUC, calibration, MSE/QLIKE, and a
+                date-clustered Newey-West t-stat -- shared by every later phase.
+  baselines.py  the base rate and the closed-form volatility rule, scored
+                walk-forward (20-session embargo); results in PLAN.md.
+               python -m research.barometer.baselines   # -> out/barometer_phase1.csv
 """

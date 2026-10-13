@@ -70,3 +70,28 @@ is fewer bad entries, not finding winners.
 - **Live vs panel entry**: the live pipeline enters at pivot × 1.005, but the
   panel uses that day's close. T1 is "would the standard stop survive from
   here", not a replay of actual intents. Phase 5 handles real intents.
+
+## Phase 1 results (2026-10-12, `python -m research.barometer.baselines`)
+
+Walk-forward, base rate vs. volatility rule. Skill is the Brier-score improvement of
+the rule over the base rate; t is HAC-corrected and date-clustered (|t| > 2 is significant).
+
+| Target | Rule skill (2023 / 24 / 25 / 26) | t-stat | Rule AUC | Rule calibration error |
+|---|---|---|---|---|
+| Stop hit | 4.9% / 8.6% / 3.8% / 11.1% | −1.8 / −4.1 / −1.5 / −2.5 | 0.62–0.68 | 6–22% |
+| Up 10% | 3.2% / 2.9% / 8.7% / 0.2% | −3.9 / −2.2 / −3.5 / −0.1 | 0.60–0.71 | 22–46% |
+| Down 10% | 8.0% / 7.9% / 1.9% / 9.3% | −7.3 / −6.1 / −0.4 / −1.8 | 0.70–0.73 | 15–36% |
+| Beat XIU | about 0 (the rule is a constant 0.5) | n.s. | 0.50 | — |
+| Volatility (QLIKE) | 36% / 28% / 47% / 51% | −5.6 / −2.0 / −7.6 / −7.6 | — | — |
+
+What this means for Phase 2:
+- **The volatility rule is the bar to beat, not the base rate.** It already ranks
+  risk usefully (AUC above 0.60 every year) and wins on volatility by a wide margin.
+- **The AUC ≥ 0.60 gate is already met by the rule itself**, so it doesn't
+  separate models from the rule. The binding gate is "beat both baselines in at
+  least 3 of 4 years". The gate is left as written, since it was fixed before
+  any results.
+- **The rule is badly calibrated.** It is mostly off by more than 20%, and by 46%
+  on +10% in the 2025 rally, because it assumes zero drift and constant
+  volatility. Calibration is the clearest place a fitted model can add value.
+- **Beating XIU is unpredictable here, as expected.**
