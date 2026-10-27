@@ -81,8 +81,10 @@ def _print_summary(
     positions: pd.DataFrame,
     trades: pd.DataFrame,
     with_quotes: bool,
+    parked_value: float = 0.0,
 ) -> None:
-    """Print a compact bottom-line summary."""
+    """Print a compact bottom-line summary. parked_value: idle cash parked
+    in an ETF (idle_cash.py), at its last traded price."""
     cost_basis = float(positions["cost"].sum()) if not positions.empty else 0.0
     realised = float(trades["pnl_dollars"].sum()) if not trades.empty else 0.0
 
@@ -90,16 +92,18 @@ def _print_summary(
     print("SUMMARY")
     print("=" * 72)
     print(f"  Cash balance .............. {cash:>14,.2f}")
+    if parked_value:
+        print(f"  Parked idle cash .......... {parked_value:>14,.2f}")
     if with_quotes and not positions.empty:
         market_value = float(positions["market_value"].sum(skipna=True))
         unrealised = float(positions["unrealized_pnl"].sum(skipna=True))
         print(f"  Open positions (at cost) .. {cost_basis:>14,.2f}")
         print(f"  Open positions (market) ... {market_value:>14,.2f}")
-        print(f"  Account value (market) .... {cash + market_value:>14,.2f}")
+        print(f"  Account value (market) .... {cash + parked_value + market_value:>14,.2f}")
         print(f"  Unrealised P&L ............ {unrealised:>14,.2f}")
     else:
         print(f"  Open positions (at cost) .. {cost_basis:>14,.2f}")
-        print(f"  Account value (at cost) ... {cash + cost_basis:>14,.2f}")
+        print(f"  Account value (at cost) ... {cash + parked_value + cost_basis:>14,.2f}")
     print(f"  Open positions ............ {len(positions):>14d}")
     print(f"  Closed trades ............. {len(trades):>14d}")
     print(f"  Realised P&L .............. {realised:>14,.2f}")
@@ -134,7 +138,8 @@ def main() -> None:
     with_quotes = not args.no_quotes
     want = args.section
     if want in (None, "summary"):
-        _print_summary(cash, positions, trades, with_quotes)
+        parked_value = sum(h["shares"] * h["last_price"] for h in db.get_parked().values())
+        _print_summary(cash, positions, trades, with_quotes, parked_value)
     if want in (None, "positions"):
         _print_df("OPEN POSITIONS", positions)
     if want in (None, "transactions"):

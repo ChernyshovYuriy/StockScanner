@@ -19,6 +19,12 @@
       <span class="stat-label">Cash</span>
       <span class="stat-value">{{ "$%.2f"|format(cash) if cash is not none else "—" }}</span>
     </div>
+    {% if parked %}
+    <div class="stat-chip" title="Idle cash parked in {{ parked|map(attribute='ticker')|join(', ') }}: {% for p in parked %}{{ '%g'|format(p.shares) }} @ ${{ '%.2f'|format(p.price) }} ({{ p.price_source }}){% endfor %}">
+      <span class="stat-label">Parked ({{ parked|map(attribute='ticker')|join(', ') }})</span>
+      <span class="stat-value">{{ "$%.2f"|format(parked_value) }}</span>
+    </div>
+    {% endif %}
     <div class="stat-chip">
       <span class="stat-label">Positions Value</span>
       <span class="stat-value">{{ "$%.2f"|format(market_value) if market_value is not none else "—" }}</span>

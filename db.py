@@ -169,6 +169,18 @@ _DDL: list[str] = [
         recorded_at TEXT    NOT NULL
     )
     """,
+    # Idle cash parked in an ETF (core sleeve, see idle_cash.py): one row per
+    # parked ticker. Deliberately NOT a positions row -- the monitor's exit
+    # rules must never apply to it. Its buys/sells are still recorded in
+    # transactions (reason PARK/UNPARK) so cash = initial - buys + sells holds.
+    """
+    CREATE TABLE IF NOT EXISTS parked (
+        ticker     TEXT   PRIMARY KEY,
+        shares     DOUBLE NOT NULL,
+        last_price DOUBLE NOT NULL,
+        updated_at TEXT   NOT NULL
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_trades_ticker        ON trades       (ticker)",
     "CREATE INDEX IF NOT EXISTS idx_trades_sell_date     ON trades       (sell_date)",
     "CREATE INDEX IF NOT EXISTS idx_signals_ticker       ON signals      (ticker)",
@@ -285,6 +297,47 @@ def get_transactions() -> pd.DataFrame:
             "SELECT side, ticker, trade_date, price, shares, amount, pnl_dollars, pnl_pct, reason, recorded_at"
             " FROM transactions ORDER BY trade_date, recorded_at"
         ).df()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PARKED (idle cash held in an ETF -- see idle_cash.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_parked() -> Dict[str, Dict[str, float]]:
+    """Return {ticker: {"shares", "last_price"}} for every parked holding with shares."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT ticker, shares, last_price FROM parked WHERE shares > 0").fetchall()
+    return {t: {"shares": float(s), "last_price": float(p)} for t, s, p in rows}
+
+
+def park_trade(ticker: str, trade_date: str, price: float, shares: float) -> None:
+    """Buy (shares > 0) or sell (shares < 0) the parked ETF at price.
+
+    Updates the holding, records a BUY (reason PARK) or SELL (reason UNPARK)
+    transaction and moves the cash, all in one transaction. Raises
+    ValueError on a sell larger than the holding.
+    """
+    from time_utils import market_now
+    if shares == 0:
+        return
+    ticker = ticker.upper()
+    with _connect() as conn:
+        row = conn.execute("SELECT shares FROM parked WHERE ticker = ?", [ticker]).fetchone()
+        held = float(row[0]) if row else 0.0
+        if held + shares < -1e-9:
+            raise ValueError(f"cannot sell {-shares} parked {ticker}: only {held} held")
+        conn.execute(
+            """
+            INSERT INTO parked (ticker, shares, last_price, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT (ticker) DO UPDATE SET shares = excluded.shares,
+                                               last_price = excluded.last_price,
+                                               updated_at = excluded.updated_at
+            """,
+            [ticker, round(held + shares, 4), round(price, 4), market_now().isoformat()],
+        )
+        _record_transaction(conn, "BUY" if shares > 0 else "SELL", ticker, trade_date, price, abs(shares),
+                            reason="PARK" if shares > 0 else "UNPARK")
+        _adjust_cash(conn, -shares * price)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

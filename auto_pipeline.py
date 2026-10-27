@@ -48,7 +48,8 @@ from colorama import Fore, Style, init
 from tabulate import tabulate
 
 from config import ALERTS_PATH, SCREENER_OUT_PATH, OUT_PATH
-from db import get_cash, init_db, load_signals, save_signals, save_intents
+from db import init_db, load_signals, save_signals, save_intents
+from idle_cash import funds_estimate
 from market_data import DEFAULT_PROVIDER
 from report_html import write_pipeline_report
 from schema_keys import SIGNAL_DB_COLS, SIGNAL_COL_ALERT_SENT, SIGNAL_COL_CONSECUTIVE_SCREENER_DAYS, SIGNAL_COL_DETAIL, \
@@ -80,7 +81,7 @@ class PipelineConfig:
     max_tracked_tickers: int = 40  # cap to avoid excessive API calls
 
     # Entry detection params
-    account_size: float = 0.0  # set from db.get_cash() at runtime
+    account_size: float = 0.0  # set from idle_cash.funds_estimate() (cash + parked) at runtime
     risk_per_trade_pct: float = 1.0
     atr_period: int = 14
     atr_stop_mult: float = 1.5
@@ -739,7 +740,7 @@ def run_pipeline(cfg: PipelineConfig) -> pd.DataFrame:
 
     # ── Resolve account size from funds file if not set ──────────────────────
     if cfg.account_size <= 0:
-        cfg.account_size = get_cash()
+        cfg.account_size = funds_estimate()
         if cfg.account_size <= 0:
             print(
                 f"{Fore.YELLOW}Warning: cash balance is ${cfg.account_size:,.2f} — "
@@ -1215,7 +1216,7 @@ def main():
     if args.account is not None:
         account_size = args.account
     else:
-        account_size = get_cash()
+        account_size = funds_estimate()
         if account_size <= 0:
             print(
                 f"{Fore.YELLOW}Warning: cash balance is ${account_size:,.2f} — "

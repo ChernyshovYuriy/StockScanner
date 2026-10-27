@@ -48,8 +48,10 @@ import pandas as pd
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import CACHE_PATH, LOGS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, ALERTS_PATH
+from config import CACHE_PATH, IDLE_CASH_PARK_TICKER, LOGS_PATH, PositionMonitorMode, REPORT_POSITION_PATH, \
+    ALERTS_PATH
 from db import get_cash, get_open_positions_df, init_db, insert_trade
+from idle_cash import park_excess, parked_shares
 from log_utils import log
 from market_data import DEFAULT_PROVIDER, TodayBar
 from report_html import append_positions_report
@@ -800,6 +802,30 @@ def send_stale_data_alert(stale: List[Dict], title: str = "Position Monitor",
     send_text_email(f"{title}: stale price data ({len(stale)})", "\n".join(lines))
 
 
+def park_idle_cash(rows: List[Dict], dry_run: bool) -> int:
+    """Core sleeve, pre-close only: park the cash above the buffer in
+    IDLE_CASH_PARK_TICKER at its live price (idle_cash.park_excess). Equity
+    values open positions at this run's live price, else at cost. Returns
+    shares bought."""
+    if IDLE_CASH_PARK_TICKER is None:
+        return 0
+    snap = fetch_intraday_snapshot(IDLE_CASH_PARK_TICKER)
+    if snap is None:
+        print(f"  {Fore.YELLOW}No live {IDLE_CASH_PARK_TICKER} quote — idle cash not parked.{Style.RESET_ALL}")
+        return 0
+    marks = {r.get(SIGNAL_COL_TICKER): r.get(POSITION_COL_LAST_CLOSE) for r in rows}
+    held = get_open_positions_df()
+    positions_value = sum(
+        float(sh) * float(marks.get(t) or px) for t, sh, px in zip(held["ticker"], held["shares"], held["entry_price"])
+    )
+    equity = get_cash() + parked_shares() * snap.close + positions_value
+    n = park_excess(snap.close, market_today().date().isoformat(), equity, dry_run=dry_run)
+    if n:
+        print(f"  {Fore.CYAN}{'[DRY RUN] Would park' if dry_run else 'Parked'} idle cash: {n} "
+              f"{IDLE_CASH_PARK_TICKER} @ ${snap.close:.2f}{Style.RESET_ALL}")
+    return n
+
+
 def __run_send_report():
     cfg = SendConfig(
         file=REPORT_POSITION_PATH,
@@ -884,6 +910,8 @@ def main() -> None:
 
     if not positions:
         print("No positions found — nothing to monitor.")
+        if execute_sells:
+            park_idle_cash([], dry_run)
         lock_file.close()
         sys.exit(0)
 
@@ -1002,6 +1030,10 @@ def main() -> None:
                 f"\n  {Fore.YELLOW}⚠  {sell_count} SELL signal(s) detected. "
                 f"Re-run with --execute-sells to act on them.{Style.RESET_ALL}"
             )
+
+    # ── Park idle cash (after the sells, so today's proceeds are included) ───
+    if execute_sells:
+        park_idle_cash(rows, dry_run)
 
     # ── Write standalone position monitor HTML report ────────────────────────
     report_file = str(Path(REPORT_POSITION_PATH))

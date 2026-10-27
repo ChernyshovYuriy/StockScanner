@@ -49,7 +49,7 @@ from conviction_watchlist.entry_screener import refresh_and_save as conviction_r
 from conviction_watchlist.holdings_store import add_holding as conviction_add_holding
 from conviction_watchlist.holdings_store import remove_holding as conviction_remove_holding
 from conviction_watchlist.settings import save_settings as conviction_save_settings
-from dashboard_positions import build_live_positions
+from dashboard_positions import build_live_positions, build_parked_holdings
 from db import get_all_trades, get_cash, get_transactions
 from demand_dashboard_data import build_demand_signals_by_ticker, read_company_names
 from demand_signals.summary import summarize_all
@@ -175,10 +175,12 @@ def create_app() -> Flask:
             rows = _read_with_retry(build_live_positions)
             cash = _read_with_retry(get_cash)
             transactions = _read_with_retry(get_transactions)
+            parked = _read_with_retry(build_parked_holdings)
             error = None
         except (duckdb.Error, OSError):
-            rows, cash, transactions = [], None, None
+            rows, cash, transactions, parked = [], None, None, []
             error = "Database temporarily unavailable — retrying on next refresh."
+        parked_value = sum(p["value"] for p in parked) if parked else None
 
         total_pnl = None
         market_value = None
@@ -196,7 +198,9 @@ def create_app() -> Flask:
                 if isinstance(row.get("last_close"), (int, float)) and isinstance(row.get("shares"), (int, float))
             )
         if cash is not None:
-            total_equity = cash + (market_value or 0.0)
+            # Parked idle cash (idle_cash.py) is part of equity; its PARK/UNPARK
+            # BUY/SELL rows keep _compute_initial_capital()'s ledger identity.
+            total_equity = cash + (market_value or 0.0) + (parked_value or 0.0)
         if cash is not None and transactions is not None:
             initial_capital = _compute_initial_capital(cash, transactions)
         if total_equity is not None and initial_capital:
@@ -207,6 +211,8 @@ def create_app() -> Flask:
             "monitor.html",
             rows=rows,
             cash=cash,
+            parked=parked,
+            parked_value=parked_value,
             total_pnl=total_pnl,
             market_value=market_value,
             initial_capital=initial_capital,

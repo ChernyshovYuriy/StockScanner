@@ -34,7 +34,8 @@ import pandas as pd
 from colorama import Fore, Style, init
 
 from concurrent_utils import acquire_lock
-from config import MAX_POSITIONS, MAX_POSITIONS_PER_SECTOR, RISK_PER_TRADE_PCT, GAP_FILTER_PCT
+from config import (GAP_FILTER_PCT, IDLE_CASH_PARK_TICKER, MAX_POSITIONS, MAX_POSITIONS_PER_SECTOR,
+                    RISK_PER_TRADE_PCT)
 from market_data import DEFAULT_PROVIDER
 from db import (
     get_cash,
@@ -45,6 +46,7 @@ from db import (
     mark_intent_executed,
     mark_intent_skipped,
 )
+from idle_cash import parked_shares, raise_cash
 from log_utils import log
 from sector_lookup import get_sector
 from send_report import send_transaction_email
@@ -200,13 +202,23 @@ def run_virtual_buy(
         actionable.append({"intent_id": intent_id, "ticker": ticker, "row": row})
 
     # ── 2. Read available funds ──────────────────────────────────────────────
-    total_funds = get_cash()
+    # Funds = cash + idle cash parked in IDLE_CASH_PARK_TICKER (idle_cash.py),
+    # valued at a live session quote. Without a quote the holding is left
+    # out (and not sold), so buys are limited to cash.
+    cash = get_cash()
+    held = parked_shares()
+    park_price = fetch_latest_price(IDLE_CASH_PARK_TICKER) if held else None
+    parked_value = held * park_price if park_price else 0.0
+    total_funds = cash + parked_value
     if total_funds <= 0:
         print(f"{Fore.YELLOW}Available funds is ${total_funds:,.2f} — nothing to buy.{Style.RESET_ALL}")
         _skip_unprocessed([item["intent_id"] for item in actionable], "no_funds", dry_run)
         return
 
     print(f"  Total funds  : ${total_funds:,.2f}")
+    if held:
+        print(f"    cash ${cash:,.2f} + parked {held:g} {IDLE_CASH_PARK_TICKER} "
+              + (f"@ ${park_price:.2f} = ${parked_value:,.2f}" if park_price else "(no quote — not counted)"))
 
     if not actionable:
         print(f"{Fore.YELLOW}No actionable pending intents — nothing to buy.{Style.RESET_ALL}")
@@ -388,6 +400,15 @@ def run_virtual_buy(
         log(service, run_id, "completed", bought=0, skipped=skipped_count)
         return
 
+    # Sell parked shares first, so cash covers today's buys (one netted sale).
+    needed = sum(r[POSITION_COL_SHARES] * r[POSITION_COL_ENTRY_PRICE] for r in buy_records)
+    held_df = get_open_positions_df()
+    open_cost = float((held_df["entry_price"] * held_df["shares"]).sum())
+    unparked = raise_cash(needed, park_price, today.isoformat(), total_funds + open_cost, dry_run=dry_run)
+    if unparked:
+        print(f"{Fore.CYAN}{'[DRY RUN] Would sell' if dry_run else 'Sold'} {unparked} parked "
+              f"{IDLE_CASH_PARK_TICKER} @ ${park_price:.2f} to fund the buys{Style.RESET_ALL}")
+
     if dry_run:
         print(f"{Fore.CYAN}[DRY RUN] Would insert {len(buy_records)} position(s) into database{Style.RESET_ALL}")
     else:
@@ -435,7 +456,7 @@ def run_virtual_buy(
         cash_after=remaining,
         open_positions_count=len(get_open_positions_df()),
     )
-    log(service, run_id, "completed", bought=len(buy_records), skipped=skipped_count)
+    log(service, run_id, "completed", bought=len(buy_records), skipped=skipped_count, unparked=unparked)
 
 
 if __name__ == "__main__":

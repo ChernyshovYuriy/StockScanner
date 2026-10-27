@@ -23,6 +23,7 @@ from typing import Dict, List
 import pandas as pd
 
 from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS
+from db import get_parked
 from position_monitor import (
     LOOKBACK_DAYS_BEFORE_ENTRY,
     MIN_BARS_REQUIRED,
@@ -48,6 +49,7 @@ from time_utils import is_market_open
 
 _cache_lock = threading.Lock()
 _cache: Dict[str, object] = {"ts": 0.0, "rows": None}
+_parked_cache: Dict[str, object] = {"ts": 0.0, "rows": None}
 
 
 def _best_effort_price(ticker: str, df: pd.DataFrame, use_intraday: bool) -> tuple[float, str] | None:
@@ -138,4 +140,25 @@ def build_live_positions() -> List[Dict]:
         rows = _build_live_positions()
         _cache["rows"] = rows
         _cache["ts"] = now
+        return rows
+
+
+def build_parked_holdings() -> List[Dict]:
+    """Idle cash parked in an ETF (idle_cash.py), one dict per holding:
+    ticker, shares, price, value, price_source. Valued at a live 5-min
+    snapshot while the market is open, else at its last traded price.
+    TTL-cached like build_live_positions(). Read-only."""
+    with _cache_lock:
+        now = time.monotonic()
+        if _parked_cache["rows"] is not None and now - _parked_cache["ts"] < DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS:
+            return _parked_cache["rows"]
+        rows = []
+        use_intraday = is_market_open()
+        for ticker, h in get_parked().items():
+            snap = fetch_intraday_snapshot(ticker) if use_intraday else None
+            price, source = (snap.close, "5m-intraday") if snap is not None else (h["last_price"], "last-trade")
+            rows.append({"ticker": ticker, "shares": h["shares"], "price": price,
+                         "value": h["shares"] * price, "price_source": source})
+        _parked_cache["rows"] = rows
+        _parked_cache["ts"] = now
         return rows

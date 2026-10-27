@@ -46,6 +46,19 @@ GAP_FILTER_PCT = None
 # account in 2026-08.
 MAX_POSITIONS_PER_SECTOR = 2
 
+# Idle-cash parking (core sleeve only, see idle_cash.py). Uninvested cash is
+# held in this ticker instead of sitting at 0%: virtual_buy.py sizes from
+# cash + the parked holding's market value and sells just enough of it to
+# fund the morning's buys; position_monitor.py's pre-close run parks the
+# excess back once it is above IDLE_CASH_MIN_TRADE_PCT of equity, keeping
+# IDLE_CASH_BUFFER_PCT in cash. None disables parking (cash stays cash).
+# Backtest (reports/idle_cash/03_matrix, 2022-10→2026-10, 16 folds): +8.9
+# pts/yr over leaving the cash idle (14/16 folds, significant), though still
+# behind holding XIU outright.
+IDLE_CASH_PARK_TICKER = "XIU.TO"
+IDLE_CASH_BUFFER_PCT = 1.0
+IDLE_CASH_MIN_TRADE_PCT = 3.0
+
 
 class PositionMonitorMode(Enum):
     PRE_CLOSE = 1
