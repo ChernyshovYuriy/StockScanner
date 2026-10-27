@@ -465,6 +465,20 @@ class LiveDataProvider(MarketDataProvider):
         return yf.Ticker(ticker).get_shares_full(start=start, end=end)
 
     # ------------------------------------------------------------------
+    # get_dividends() — cash dividends per share by ex-date
+    # ------------------------------------------------------------------
+    def get_dividends(self, ticker: str) -> pd.Series:
+        """Return yfinance's cash-dividend history for ticker (amount per
+        share, indexed by tz-aware ex-date; empty when it pays none). Used by
+        analysis/trade_vs_xiu.py to put live paper trades, which are priced
+        on raw quotes with no dividends credited, on the same total-return
+        basis as the XIU leg they are compared with. Raises on failure like
+        get_info(); callers own their own try/except.
+
+        Live-only: never called by the backtester."""
+        return yf.Ticker(ticker).dividends
+
+    # ------------------------------------------------------------------
     # download_bars() — generic single-ticker period/interval fetch
     # ------------------------------------------------------------------
     def download_bars(self, ticker: str, period: str, interval: str) -> pd.DataFrame:

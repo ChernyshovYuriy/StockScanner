@@ -52,6 +52,7 @@ class OpenPosition:
     entry_price: float
     shares:      int       # whole shares only — matches virtual_buy.py rule
     stop_price:  Optional[float] = None  # planned exit stop carried from the buy intent
+    pattern:     Optional[str] = None    # setup type from the buy intent (trade-log analysis only)
 
     @property
     def cost_basis(self) -> float:
@@ -77,6 +78,10 @@ class ClosedTrade:
     shares:      int
     pnl:         float       # (sell_price - entry_price) * shares
     pnl_pct:     float       # (sell_price / entry_price - 1) * 100
+    # Trade-log analysis only (never read by the simulation):
+    pattern:     Optional[str] = None    # setup type from the buy intent
+    stop_price:  Optional[float] = None  # planned stop carried from the buy intent
+    exit_reason: Optional[str] = None    # exit rule(s) that fired
 
     @property
     def holding_days(self) -> int:
@@ -137,6 +142,7 @@ class PortfolioState:
         price:      float,
         shares:     int,
         stop_price: Optional[float] = None,
+        pattern:    Optional[str] = None,
     ) -> None:
         """
         Open a new position.
@@ -151,6 +157,7 @@ class PortfolioState:
         price      : execution price per share
         shares     : number of whole shares  (must be > 0)
         stop_price : planned exit stop carried from the buy intent (optional)
+        pattern    : setup type from the buy intent (optional, trade log only)
         """
         if shares <= 0:
             raise ValueError(f"shares must be > 0, got {shares}")
@@ -174,6 +181,7 @@ class PortfolioState:
             entry_price=float(price),
             shares=int(shares),
             stop_price=float(stop_price) if stop_price is not None else None,
+            pattern=pattern,
         )
 
     def sell(
@@ -181,6 +189,7 @@ class PortfolioState:
         ticker:    str,
         sell_date: date,
         price:     float,
+        reason:    Optional[str] = None,
     ) -> ClosedTrade:
         """
         Close an open position at price.
@@ -192,6 +201,7 @@ class PortfolioState:
         ticker    : must match an open position
         sell_date : trade date
         price     : execution price per share
+        reason    : exit rule(s) that fired (optional, trade log only)
 
         Returns
         -------
@@ -222,6 +232,9 @@ class PortfolioState:
             # sign-sensitive code (pnl < 0 / pnl > 0) never sees a false zero.
             pnl         = round(pnl, 4) or 0.0,
             pnl_pct     = round(pnl_pct, 4) or 0.0,
+            pattern     = pos.pattern,
+            stop_price  = pos.stop_price,
+            exit_reason = reason,
         )
         self._trade_log.append(trade)
         return trade

@@ -223,10 +223,14 @@ class BacktestResults:
             cfg: BacktestConfig,
             day_logs: List[DayLog],
             trades: List[ClosedTrade],
+            open_positions: Optional[Dict[str, OpenPosition]] = None,
     ):
         self.cfg = cfg
         self.day_logs = day_logs
         self.trades = trades
+        # Positions still held on the last simulated day (marked to market in
+        # the equity curve, absent from trades) — analysis only.
+        self.open_positions = open_positions or {}
 
     # ── DataFrames ────────────────────────────────────────────────────────────
 
@@ -249,6 +253,7 @@ class BacktestResults:
             return pd.DataFrame(columns=[
                 "ticker", "entry_date", "sell_date", "entry_price",
                 "sell_price", "shares", "pnl", "pnl_pct", "holding_days",
+                "pattern", "stop_price", "exit_reason",
             ])
         return pd.DataFrame([
             {
@@ -261,6 +266,9 @@ class BacktestResults:
                 "pnl": round(t.pnl, 2),
                 "pnl_pct": round(t.pnl_pct, 2),
                 "holding_days": t.holding_days,
+                "pattern": t.pattern,
+                "stop_price": t.stop_price,
+                "exit_reason": t.exit_reason,
             }
             for t in self.trades
         ])
@@ -886,7 +894,8 @@ def _execute_buys(
         cost = price * shares
         if cost > portfolio.cash:
             continue
-        portfolio.buy(ticker, buy_date, price, shares, stop_price=intent.get("stop"))
+        portfolio.buy(ticker, buy_date, price, shares, stop_price=intent.get("stop"),
+                      pattern=intent.get("pattern"))
         bought.append(ticker)
 
     return bought
@@ -932,7 +941,7 @@ def _run_monitor_step(
             # Force a flat exit via the same no-fresh-price fallback already
             # used below, rather than holding a position with no real data.
             sell_price = _day_close_price(ticker, provider, sim_date) or pos.entry_price
-            portfolio.sell(ticker, sim_date.date(), sell_price)
+            portfolio.sell(ticker, sim_date.date(), sell_price, reason="STALE_DATA")
             sold.append(ticker)
             continue
 
@@ -950,7 +959,7 @@ def _run_monitor_step(
             sell_price = _day_close_price(ticker, provider, sim_date)
             if sell_price is None or sell_price <= 0:
                 sell_price = pos.entry_price  # fallback: flat exit
-            portfolio.sell(ticker, sim_date.date(), sell_price)
+            portfolio.sell(ticker, sim_date.date(), sell_price, reason=result.get("reason"))
             sold.append(ticker)
 
     return sold
@@ -1105,7 +1114,8 @@ class BacktestRunner:
         if verbose:
             print()
 
-        return BacktestResults(cfg=cfg, day_logs=day_logs, trades=all_trades)
+        return BacktestResults(cfg=cfg, day_logs=day_logs, trades=all_trades,
+                               open_positions=dict(portfolio.open_positions))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
