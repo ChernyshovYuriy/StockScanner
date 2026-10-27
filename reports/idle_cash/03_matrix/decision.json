@@ -1,0 +1,97 @@
+{
+  "rule1_phase1_mean_excess_pct": {
+    "realistic": -0.41169830371024596,
+    "adverse": -0.6124724945663717
+  },
+  "rule1_pass": false,
+  "realistic": {
+    "rule2": {
+      "B-D": false,
+      "C-E": false
+    },
+    "candidates": [],
+    "rule3": {},
+    "rule3_t": {
+      "A": -0.5818739428889527,
+      "B": -0.4591841493557751,
+      "C": -0.8857497584158417
+    }
+  },
+  "adverse": {
+    "rule2": {
+      "B-D": false,
+      "C-E": false
+    },
+    "candidates": [],
+    "rule3": {},
+    "rule3_t": {
+      "A": -1.0162051497114886,
+      "B": -1.0552855016140563,
+      "C": -1.387716163862408
+    }
+  },
+  "chosen": null,
+  "rule4_pass": false,
+  "keep_swing_layer": false,
+  "otherwise": {
+    "E_calmar": 1.0007880668149198,
+    "D_calmar": 1.6698463234333647,
+    "E_max_dd": -12.824474994939338,
+    "D_max_dd": -11.565073777816837,
+    "E_beats_D": false
+  },
+  "recommendation": "hold XIU (D)",
+  "trade_check": {
+    "realistic": {
+      "A": {
+        "trades": 275,
+        "open_at_end": 110,
+        "skipped_buys": 0
+      },
+      "B": {
+        "trades": 275,
+        "open_at_end": 110,
+        "skipped_buys": 0
+      },
+      "C": {
+        "trades": 275,
+        "open_at_end": 110,
+        "skipped_buys": 0
+      }
+    },
+    "adverse": {
+      "A": {
+        "trades": 272,
+        "open_at_end": 111,
+        "skipped_buys": 0
+      },
+      "B": {
+        "trades": 272,
+        "open_at_end": 111,
+        "skipped_buys": 0
+      },
+      "C": {
+        "trades": 272,
+        "open_at_end": 111,
+        "skipped_buys": 0
+      }
+    },
+    "zero": {
+      "A": {
+        "trades": 271,
+        "open_at_end": 111,
+        "skipped_buys": 0
+      },
+      "B": {
+        "trades": 271,
+        "open_at_end": 111,
+        "skipped_buys": 0
+      },
+      "C": {
+        "trades": 271,
+        "open_at_end": 111,
+        "skipped_buys": 0
+      }
+    }
+  }
+}

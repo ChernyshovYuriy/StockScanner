@@ -17,10 +17,17 @@ no sector cap (no offline sector map for ~950 tickers) and top_n_buys=3.
 Usage:
     python analysis/run_walk_forward_trades.py                 # Phase 1 baseline -> 01_trade_vs_xiu/
     python analysis/run_walk_forward_trades.py off all_on ...  # Phase 2 variants -> 02_baseline/<variant>/
+    python analysis/run_walk_forward_trades.py realistic_A ... # Phase 3 runs -> 03_matrix/runs/<variant>/
 
 Phase 2 variants (VARIANTS below) switch on the BacktestConfig flags one at a
 time and all together; "off" is the Phase 1 config and must reproduce it.
 Cash yield uses CASH.TO's daily total return from ref/xiu_cash_daily.csv.
+
+Phase 3 runs (PHASE3_VARIANTS) are <cost scenario>_<A|B|C>: the Phase 2
+all_on config with idle cash in cash (A), always in XIU (B) or in XIU above
+its 200-day (C), under realistic / adverse / zero costs -- see
+reports/idle_cash/03_matrix/DECISION_RULES.md. They also write
+backtest_idle.csv (the real account's daily log).
 
 Outputs (reports/idle_cash/01_trade_vs_xiu/, or 02_baseline/<variant>/):
     backtest_trades.csv   one row per closed trade, with fold number
@@ -76,6 +83,17 @@ VARIANTS = {
     "conservative": CONSERVATIVE,
     "conservative_gap": {**CONSERVATIVE, "gap_fills": True},
     "all_on": {**COSTS, **YIELD, **CONSERVATIVE, "gap_fills": True},
+}
+PHASE3_DIR = ROOT / "reports" / "idle_cash" / "03_matrix" / "runs"
+COST_SCENARIOS = {
+    "realistic": dict(costs_enabled=True, commission_per_order=0.0, stock_spread_bps=10.0, xiu_spread_bps=2.0),
+    "adverse": dict(costs_enabled=True, commission_per_order=0.0, stock_spread_bps=20.0, xiu_spread_bps=4.0),
+    "zero": dict(costs_enabled=False),
+}
+IDLE_MODES = {"A": "cash", "B": "xiu_always", "C": "xiu_gated"}
+PHASE3_VARIANTS = {
+    f"{scen}_{vid}": {**YIELD, **CONSERVATIVE, "gap_fills": True, **costs, "idle_cash_mode": mode}
+    for scen, costs in COST_SCENARIOS.items() for vid, mode in IDLE_MODES.items()
 }
 
 
@@ -143,10 +161,10 @@ def main(variants: list[str]) -> None:
 
     cash_returns = _cash_returns()
     for variant in variants or [None]:
-        overrides = dict(VARIANTS[variant]) if variant else {}
+        overrides = dict({**VARIANTS, **PHASE3_VARIANTS}[variant]) if variant else {}
         if overrides.get("cash_yield_source") == "cash_etf":
             overrides["cash_yield_returns"] = cash_returns
-        out_dir = PHASE2_DIR / variant if variant else OUT_DIR
+        out_dir = (PHASE3_DIR if variant in PHASE3_VARIANTS else PHASE2_DIR) / variant if variant else OUT_DIR
         print(f"\n== {variant or 'phase1'} -> {out_dir.relative_to(ROOT)}", flush=True)
         _run_folds({**base, **overrides}, days, sub_cache, provider, out_dir)
 
@@ -155,7 +173,7 @@ def _run_folds(base: dict, days: list, sub_cache, provider, out_dir: Path) -> No
     out_dir.mkdir(parents=True, exist_ok=True)
     n = len(days)
     bounds = [round(i * n / N_FOLDS) for i in range(N_FOLDS + 1)]
-    trades, equity, folds, open_rows = [], [], [], []
+    trades, equity, folds, open_rows, idle = [], [], [], [], []
     for f, (s, e) in enumerate(zip(bounds[:-1], bounds[1:]), 1):
         cfg = BacktestConfig(start_date=str(days[s]), end_date=str(days[e - 1]) if e < n else END,
                              _screener_cache=sub_cache(s, e - s), **base)
@@ -165,6 +183,8 @@ def _run_folds(base: dict, days: list, sub_cache, provider, out_dir: Path) -> No
         eq = res.equity_curve_df().assign(fold=f)
         trades.append(tl)
         equity.append(eq)
+        if res.idle_log is not None:
+            idle.append(res.idle_log.assign(fold=f))
         mark_day = pd.Timestamp(eq["date"].iloc[-1])
         for pos in res.open_positions.values():
             bars = provider.get(pos.ticker, as_of=mark_day)
@@ -184,6 +204,8 @@ def _run_folds(base: dict, days: list, sub_cache, provider, out_dir: Path) -> No
         pd.concat(equity).to_csv(out_dir / "backtest_equity.csv", index=False)
         pd.DataFrame(folds).to_csv(out_dir / "backtest_folds.csv", index=False)
         pd.DataFrame(open_rows).to_csv(out_dir / "backtest_open.csv", index=False)
+        if idle:
+            pd.concat(idle).to_csv(out_dir / "backtest_idle.csv", index=False)
 
     fdf = pd.DataFrame(folds)
     compounded = ((1 + fdf.ret_pct / 100).prod() - 1) * 100
@@ -192,7 +214,7 @@ def _run_folds(base: dict, days: list, sub_cache, provider, out_dir: Path) -> No
 
 
 if __name__ == "__main__":
-    unknown = [v for v in sys.argv[1:] if v not in VARIANTS]
+    unknown = [v for v in sys.argv[1:] if v not in VARIANTS and v not in PHASE3_VARIANTS]
     if unknown:
-        sys.exit(f"Unknown variant(s) {unknown}; choose from {list(VARIANTS)}")
+        sys.exit(f"Unknown variant(s) {unknown}; choose from {list(VARIANTS) + list(PHASE3_VARIANTS)}")
     main(sys.argv[1:])

@@ -54,6 +54,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import warnings
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -222,6 +223,23 @@ class BacktestConfig:
     # resting stop fills at the open (realistic) instead of at the stop level.
     gap_fills: bool = False
 
+    # ── Idle-cash plan, Phase 3 (reports/idle_cash/03_matrix/DECISION_RULES.md).
+    #    Default "cash" is the pre-existing behaviour. ─────────────────────────
+    # Where uninvested money sits. "cash": in cash (earning cash_yield_source,
+    # if set). "xiu_always": parked in the benchmark (XIU). "xiu_gated":
+    # parked in the benchmark only while its prior close is >= its 200-day
+    # SMA, otherwise cash. In both XIU modes the swing book is still sized
+    # from PortfolioState.cash, which acts as a shadow ledger exactly as in
+    # "cash" mode; the real account (_IdleCashAccount) funds stock buys by
+    # selling XIU at the open and parks exit proceeds at the close.
+    idle_cash_mode: str = "cash"
+    # Spread/slippage per side on XIU fills (costs_enabled only).
+    xiu_spread_bps: float = 2.0
+    # Real cash kept back as a buffer, and the smallest excess worth
+    # parking, both as % of the prior close's real equity.
+    idle_buffer_pct: float = 1.0
+    idle_min_trade_pct: float = 3.0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULT CONTAINER
@@ -233,11 +251,12 @@ class DayLog:
     sim_date: date
     cash: float
     open_value: float  # mark-to-market of open positions at day close
-    total_equity: float  # cash + open_value
+    total_equity: float  # cash + open_value + xiu_value
     realized_pnl: float
     open_tickers: List[str]
     buys_today: List[str]  # tickers bought on this day's D+1 open
     sells_today: List[str]  # tickers sold on this day
+    xiu_value: float = 0.0  # parked benchmark shares at day close (idle_cash_mode != "cash")
 
 
 class BacktestResults:
@@ -254,6 +273,7 @@ class BacktestResults:
             open_positions: Optional[Dict[str, OpenPosition]] = None,
             costs: float = 0.0,
             cash_yield: float = 0.0,
+            idle_log: Optional[pd.DataFrame] = None,
     ):
         self.cfg = cfg
         self.day_logs = day_logs
@@ -264,6 +284,9 @@ class BacktestResults:
         # Totals from BacktestConfig.costs_enabled / .cash_yield_source (0.0 when off).
         self.costs = costs
         self.cash_yield = cash_yield
+        # Real-account daily log from BacktestConfig.idle_cash_mode != "cash"
+        # (_IdleCashAccount.log); None in "cash" mode.
+        self.idle_log = idle_log
 
     # ── DataFrames ────────────────────────────────────────────────────────────
 
@@ -273,6 +296,7 @@ class BacktestResults:
                 "date": d.sim_date,
                 "cash": round(d.cash, 2),
                 "open_value": round(d.open_value, 2),
+                "xiu_value": round(d.xiu_value, 2),
                 "total_equity": round(d.total_equity, 2),
                 "realized_pnl": round(d.realized_pnl, 2),
                 "open_count": len(d.open_tickers),
@@ -804,6 +828,110 @@ def _is_market_in_uptrend(
         return True  # fail open — do not block trades on data errors
 
 
+class _IdleCashAccount:
+    """
+    The real account when cfg.idle_cash_mode parks idle money in the
+    benchmark: actual cash plus whole benchmark shares. Stock flows come in
+    from the shadow ledger (PortfolioState.cash) as amounts; this class only
+    decides how they are funded. Per day: begin_morning() at the open,
+    can_fund()/reserve() per stock buy, settle_morning() nets the morning
+    into one order, receive() takes the close's sale proceeds, and
+    end_of_day() parks the excess at the close and accrues cash yield.
+    See reports/idle_cash/03_matrix/DECISION_RULES.md for the rules.
+    """
+
+    def __init__(self, cash: float, cfg: BacktestConfig):
+        self.cfg = cfg
+        self.cash = cash
+        self.shares = 0
+        self.costs = 0.0
+        self.cash_yield = 0.0
+        self.traded = 0.0          # XIU notional traded
+        self.skipped_buys = 0      # stock buys the real account couldn't fund
+        self.log: List[Dict] = []
+        self._mark = None          # last price the XIU shares were marked at
+        self._day: Dict = {}
+
+    def _spread(self) -> float:
+        return self.cfg.xiu_spread_bps / 1e4 if self.cfg.costs_enabled else 0.0
+
+    def _commission(self) -> float:
+        return self.cfg.commission_per_order if self.cfg.costs_enabled else 0.0
+
+    def _mark_to(self, price: float) -> None:
+        if self._mark is not None:
+            self._day["xiu_pnl"] += self.shares * (price - self._mark)
+        self._mark = price
+
+    def _trade(self, shares: int, price: float) -> None:
+        """Buy (shares > 0) or sell (shares < 0) at price, paying the spread and commission."""
+        if shares == 0:
+            return
+        fill = price * (1 + self._spread()) if shares > 0 else price * (1 - self._spread())
+        cost = abs(shares) * abs(fill - price) + self._commission()
+        self.cash -= shares * fill + self._commission()
+        self.shares += shares
+        self.costs += cost
+        self.traded += abs(shares) * price
+        self._day["xiu_costs"] += cost
+        self._day["xiu_traded"] += abs(shares) * price
+
+    def begin_morning(self, day: date, open_price: Optional[float], park_ok: bool, equity_prev: float) -> None:
+        self._day = dict(date=day, park_ok=park_ok, xiu_pnl=0.0, xiu_costs=0.0, xiu_traded=0.0, cash_yield=0.0)
+        self._open = open_price
+        self._park_ok = park_ok
+        self._equity_prev = equity_prev
+        self._reserved = 0.0
+        if open_price is not None:
+            self._mark_to(open_price)
+
+    def can_fund(self, amount: float) -> bool:
+        avail = self.cash - self._reserved
+        if self.shares and self._open is not None:
+            avail += self.shares * self._open * (1 - self._spread()) - self._commission()
+        return avail >= amount
+
+    def reserve(self, amount: float) -> None:
+        self._reserved += amount
+
+    def settle_morning(self) -> None:
+        """One netted benchmark order at the open, then pay for the morning's stock buys."""
+        px = self._open
+        buffer = self.cfg.idle_buffer_pct / 100 * self._equity_prev
+        after = self.cash - self._reserved
+        if px is not None and px > 0:
+            if not self._park_ok and self.shares:
+                self._trade(-self.shares, px)
+            elif after < 0 and self.shares:
+                need = -after + buffer + self._commission()
+                self._trade(-min(self.shares, int(math.ceil(need / (px * (1 - self._spread()))))), px)
+            elif self._park_ok and after - buffer > self.cfg.idle_min_trade_pct / 100 * self._equity_prev:
+                self._trade(int((after - buffer - self._commission()) / (px * (1 + self._spread()))), px)
+        self.cash -= self._reserved
+        self._reserved = 0.0
+
+    def receive(self, amount: float) -> None:
+        self.cash += amount
+
+    def end_of_day(self, close_price: Optional[float], cash_return: float, stock_value: float) -> float:
+        """Park the excess at the close, accrue yield on the cash left; return the XIU value."""
+        if close_price is not None and close_price > 0:
+            self._mark_to(close_price)
+            equity = self.cash + stock_value + self.shares * close_price
+            buffer = self.cfg.idle_buffer_pct / 100 * equity
+            excess = self.cash - buffer
+            if self._park_ok and excess > self.cfg.idle_min_trade_pct / 100 * equity:
+                self._trade(int((excess - self._commission()) / (close_price * (1 + self._spread()))), close_price)
+        if cash_return and self.cash > 0:
+            y = self.cash * cash_return
+            self.cash += y
+            self.cash_yield += y
+            self._day["cash_yield"] = y
+        xiu_value = self.shares * (self._mark or 0.0)
+        self.log.append({**self._day, "cash": self.cash, "xiu_shares": self.shares, "xiu_value": xiu_value})
+        return xiu_value
+
+
 def _execute_buys(
         intents: List[Dict],
         portfolio: PortfolioState,
@@ -811,6 +939,7 @@ def _execute_buys(
         after: pd.Timestamp,  # D's last bar timestamp — buy at next bar's open
         buy_date: date,
         cfg: BacktestConfig,
+        idle: Optional[_IdleCashAccount] = None,
 ) -> List[str]:
     """
     Execute buy intents at the D+1 open price.
@@ -829,6 +958,8 @@ def _execute_buys(
     positions; lower-priority candidates in other sectors fill the slot.
     If cfg.regime_filter is True, buys are blocked when benchmark is below
     its 200-day SMA.  Sells and position management are never blocked.
+    With an idle account (cfg.idle_cash_mode != "cash"), sizing still comes
+    from portfolio.cash; a buy the real account can't fund is skipped.
 
     Returns list of tickers actually bought.
     """
@@ -931,6 +1062,11 @@ def _execute_buys(
         cost = price * shares
         if cost + commission > portfolio.cash:
             continue
+        if idle is not None:
+            if not idle.can_fund(cost + commission):
+                idle.skipped_buys += 1
+                continue
+            idle.reserve(cost + commission)
         portfolio.buy(ticker, buy_date, price, shares, stop_price=intent.get("stop"),
                       pattern=intent.get("pattern"))
         if cfg.costs_enabled:
@@ -1083,6 +1219,9 @@ class BacktestRunner:
             raise ValueError(f"cash_yield_source must be 'none' or 'cash_etf', got {cfg.cash_yield_source!r}")
         if cfg.same_bar_rule not in ("current", "conservative"):
             raise ValueError(f"same_bar_rule must be 'current' or 'conservative', got {cfg.same_bar_rule!r}")
+        if cfg.idle_cash_mode not in ("cash", "xiu_always", "xiu_gated"):
+            raise ValueError(f"idle_cash_mode must be 'cash', 'xiu_always' or 'xiu_gated', "
+                             f"got {cfg.idle_cash_mode!r}")
 
         # ── 1. Pre-load all historical data once ─────────────────────────────
         if cfg._provider is not None:
@@ -1102,6 +1241,7 @@ class BacktestRunner:
 
         # ── 2. Initialise state ───────────────────────────────────────────────
         portfolio = PortfolioState(initial_cash=cfg.initial_cash)
+        idle = _IdleCashAccount(cfg.initial_cash, cfg) if cfg.idle_cash_mode != "cash" else None
         from schema_keys import SIGNAL_DB_COLS
         signal_db = pd.DataFrame(columns=SIGNAL_DB_COLS)  # in-memory signal history
         day_logs: List[DayLog] = []
@@ -1133,6 +1273,14 @@ class BacktestRunner:
                       f"open={len(portfolio.open_positions)}  "
                       f"trades={len(all_trades)}")
 
+            # ── 3a0. Real account: open the day at the benchmark's open ───────
+            if idle is not None:
+                prior_close_ts = sim_ts - pd.Timedelta(days=1)
+                park_ok = (cfg.idle_cash_mode == "xiu_always"
+                           or _is_market_in_uptrend(cfg.benchmark, provider, prior_close_ts))
+                idle.begin_morning(day, _next_open_price(cfg.benchmark, provider, prior_close_ts), park_ok,
+                                   day_logs[-1].total_equity if day_logs else cfg.initial_cash)
+
             # ── 3a. Execute pending buy intents from yesterday ────────────────
             if pending_intents:
                 set_backtest_clock(
@@ -1150,6 +1298,7 @@ class BacktestRunner:
                     after=prev_ts,
                     buy_date=day,
                     cfg=cfg,
+                    idle=idle,
                 )
                 if verbose and bought:
                     print(f"    -> BUY  {bought}")
@@ -1162,7 +1311,12 @@ class BacktestRunner:
                          tzinfo=TSX_TZ)
             )
 
+            if idle is not None:
+                idle.settle_morning()
+            shadow_before = portfolio.cash
             sold = _run_monitor_step(portfolio, provider, sim_ts, cfg, cfg.exit_params)
+            if idle is not None:
+                idle.receive(portfolio.cash - shadow_before)
             if verbose and sold:
                 print(f"    -> SELL {sold}")
 
@@ -1196,21 +1350,30 @@ class BacktestRunner:
                 print(f"    -> SIGNAL confirmed={confirmed}")
 
             # ── 3e. Cash yield on today's closing cash, then log equity ───────
+            #       In an idle_cash_mode, portfolio.cash is the shadow ledger
+            #       (yield included, as in "cash" mode) and the real account
+            #       parks its excess and accrues its own yield.
+            r = 0.0
             if cfg.cash_yield_source == "cash_etf" and cfg.cash_yield_returns:
                 r = cfg.cash_yield_returns.get(day, 0.0)
                 if r and portfolio.cash > 0:
                     portfolio.add_cash_yield(portfolio.cash * r)
 
             open_val = _mark_to_market(portfolio.open_positions, provider, sim_ts)
+            cash_now, xiu_val = portfolio.cash, 0.0
+            if idle is not None:
+                xiu_val = idle.end_of_day(_day_close_price(cfg.benchmark, provider, sim_ts), r, open_val)
+                cash_now = idle.cash
             day_logs.append(DayLog(
                 sim_date=day,
-                cash=portfolio.cash,
+                cash=cash_now,
                 open_value=open_val,
-                total_equity=portfolio.cash + open_val,
+                total_equity=cash_now + open_val + xiu_val,
                 realized_pnl=portfolio.realized_pnl,
                 open_tickers=list(portfolio.open_positions.keys()),
                 buys_today=[],
                 sells_today=sold,
+                xiu_value=xiu_val,
             ))
 
         # ── 4. Restore live clock ─────────────────────────────────────────────
@@ -1221,7 +1384,10 @@ class BacktestRunner:
 
         return BacktestResults(cfg=cfg, day_logs=day_logs, trades=all_trades,
                                open_positions=dict(portfolio.open_positions),
-                               costs=portfolio.costs, cash_yield=portfolio.cash_yield)
+                               costs=portfolio.costs + (idle.costs if idle else 0.0),
+                               cash_yield=idle.cash_yield if idle else portfolio.cash_yield,
+                               idle_log=(pd.DataFrame(idle.log).assign(skipped_buys=idle.skipped_buys)
+                                         if idle else None))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
