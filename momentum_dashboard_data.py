@@ -33,9 +33,11 @@ from position_monitor import (
     LOOKBACK_DAYS_BEFORE_ENTRY,
     MIN_BARS_REQUIRED,
     Position,
+    check_stale_data,
     compute_signals,
     fetch_intraday_snapshot,
     load_or_fetch_data,
+    stale_no_data_row,
 )
 from schema_keys import (
     POSITION_COL_ENTRY_DATE,
@@ -159,6 +161,10 @@ def _build_momentum_positions() -> List[Dict]:
             continue
 
         today_bar = fetch_intraday_snapshot(pos.ticker) if use_intraday else None
+        stale_rec = check_stale_data(pos, df, today_bar)
+        if stale_rec is not None:
+            rows.append(_no_data_row(pos, stale_no_data_row(stale_rec)[POSITION_COL_REASON], use_intraday, df))
+            continue
         result = compute_signals(
             pos, df, today_bar=today_bar, exit_params=MOMENTUM_EXIT_PARAMS, planned_stop=pos.stop_price,
         )

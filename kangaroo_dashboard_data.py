@@ -23,7 +23,14 @@ import pandas as pd
 
 from config import DASHBOARD_SNAPSHOT_CACHE_TTL_SECONDS, KANGAROO_DB_PATH, KANGAROO_MAX_HOLD_DAYS
 from kangaroo_monitor import KangarooPosition, compute_kangaroo_signal
-from position_monitor import LOOKBACK_DAYS_BEFORE_ENTRY, MIN_BARS_REQUIRED, fetch_intraday_snapshot, load_or_fetch_data
+from position_monitor import (
+    LOOKBACK_DAYS_BEFORE_ENTRY,
+    MIN_BARS_REQUIRED,
+    check_stale_data,
+    fetch_intraday_snapshot,
+    load_or_fetch_data,
+    stale_no_data_row,
+)
 from schema_keys import (
     POSITION_COL_ENTRY_DATE,
     POSITION_COL_ENTRY_PRICE,
@@ -121,6 +128,10 @@ def _build_kangaroo_positions() -> List[Dict]:
             continue
 
         today_bar = fetch_intraday_snapshot(pos.ticker) if use_intraday else None
+        stale_rec = check_stale_data(pos, df, today_bar)
+        if stale_rec is not None:
+            rows.append(_no_data_row(pos, stale_no_data_row(stale_rec)[POSITION_COL_REASON]))
+            continue
         rows.append(compute_kangaroo_signal(pos, df, today_bar=today_bar, max_hold_days=KANGAROO_MAX_HOLD_DAYS))
 
     return rows

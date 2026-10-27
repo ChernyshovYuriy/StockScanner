@@ -14,6 +14,7 @@ import pytest
 import dashboard_positions
 import db as db_module
 from db import init_db, insert_position, set_cash
+from time_utils import market_today
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +36,9 @@ def reset_cache():
 
 
 def _fake_df(n: int = 40) -> pd.DataFrame:
-    idx = pd.bdate_range(start="2026-01-01", periods=n)
+    # Ends today: a last bar older than the previous trading day is flagged
+    # NO_DATA (stale) before compute_signals() is ever reached.
+    idx = pd.bdate_range(end=market_today().date(), periods=n)
     close = pd.Series([100.0 + i * 0.5 for i in range(n)], index=idx)
     return pd.DataFrame({
         "Open": close,
