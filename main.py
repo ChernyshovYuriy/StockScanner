@@ -12,6 +12,7 @@ from config import ALERTS_PATH, CAN_TICKERS_URL, SCREENER_OUT_PATH, REPORT_PATH
 from log_utils import log
 from market_data import DEFAULT_PROVIDER
 from send_report import SendConfig, send_report
+from time_utils import last_trading_day_on_or_before, market_today
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REGIME FILTER
@@ -124,6 +125,16 @@ if __name__ == "__main__":
 
     log(service, run_id, "start", lock_file=str(lock_path))
     try:
+        # TSX holiday: the timer fires Mon-Fri regardless. A holiday run re-scores
+        # the previous session's bars, and its save_intents() deletes that
+        # session's still-PENDING intents (virtual_buy rightly kept them for the
+        # next open), erasing their history (seen 2026-10-12, Thanksgiving).
+        today = market_today().date()
+        if last_trading_day_on_or_before(today) != today:
+            print(f"{Fore.YELLOW}{today.isoformat()} is not a TSX trading day — pipeline skipped.{Style.RESET_ALL}")
+            log(service, run_id, "skip_non_trading_day", date=today.isoformat())
+            sys.exit(0)
+
         print(f"\n{'=' * 65}")
         print(f"  {Fore.YELLOW}🇨🇦  TSX Swing Trading System — Daily Run{Style.RESET_ALL}")
         print(f"{'=' * 65}\n")

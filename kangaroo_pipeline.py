@@ -57,7 +57,7 @@ from position_monitor import trading_days_since_entry
 from research.kangaroo_tail.batch import load_tickers
 from research.kangaroo_tail.detector import detect_kangaroo_tail
 from research.kangaroo_tail.types import TailConfig
-from time_utils import market_today
+from time_utils import last_trading_day_on_or_before, market_today
 
 init(autoreset=True)
 
@@ -155,6 +155,15 @@ def main() -> None:
 
     log(service, run_id, "start", lock_file=str(lock_path))
     try:
+        # TSX holiday: the timer fires Mon-Fri regardless. A holiday run only
+        # re-scans the previous session's bars and rewrites the pending queue
+        # (save_intents()) for nothing new — skip it, same as main.py.
+        today = market_today().date()
+        if last_trading_day_on_or_before(today) != today:
+            print(f"{Fore.YELLOW}{today.isoformat()} is not a TSX trading day — scan skipped.{Style.RESET_ALL}")
+            log(service, run_id, "skip_non_trading_day", date=today.isoformat())
+            sys.exit(0)
+
         print(f"\n{'=' * 65}")
         print(f"  {Fore.YELLOW}🦘  Kangaroo Tail Sleeve — Daily Scan{Style.RESET_ALL}")
         print(f"{'=' * 65}\n")

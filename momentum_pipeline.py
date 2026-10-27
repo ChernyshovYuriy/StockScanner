@@ -47,6 +47,7 @@ from db import get_cash, init_db, set_cash
 from log_utils import log
 from send_report import SendConfig, send_report
 from swing_tickers import Thresholds, UniverseBuilderConfig, read_tickers, run_universe_builder
+from time_utils import last_trading_day_on_or_before, market_today
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +154,15 @@ if __name__ == "__main__":
 
     log(service, run_id, "start", lock_file=str(lock_path))
     try:
+        # TSX holiday: the timer fires Mon-Fri regardless, and a holiday run's
+        # save_intents() deletes the previous session's still-PENDING intents
+        # (same bug as main.py, seen there 2026-10-12).
+        today = market_today().date()
+        if last_trading_day_on_or_before(today) != today:
+            print(f"{Fore.YELLOW}{today.isoformat()} is not a TSX trading day — pipeline skipped.{Style.RESET_ALL}")
+            log(service, run_id, "skip_non_trading_day", date=today.isoformat())
+            sys.exit(0)
+
         print(f"\n{'=' * 65}")
         print(f"  {Fore.YELLOW}🚀  Momentum Sleeve — Daily Run{Style.RESET_ALL}")
         print(f"{'=' * 65}\n")

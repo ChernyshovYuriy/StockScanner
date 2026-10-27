@@ -43,6 +43,7 @@ def db(tmp_path):
 def offline(monkeypatch):
     monkeypatch.setattr("virtual_buy.send_transaction_email", lambda **_: None)
     monkeypatch.setattr("position_monitor.send_transaction_email", lambda **_: None)
+    monkeypatch.setattr("position_monitor.send_text_email", lambda subject, body: None)
     monkeypatch.setattr("virtual_buy.get_sector", lambda ticker: "Unknown")
 
 
@@ -265,3 +266,57 @@ def test_pre_close_still_sells_on_todays_bar(monkeypatch, tmp_path):
     _run_pre_close(monkeypatch, tmp_path, last_bar_day="2026-05-14")
     assert get_open_positions() == []
     assert get_cash() == pytest.approx(1_000.0 + 10 * 30.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stale price data — a ticker that stopped trading on Yahoo (SES.TO, 2026-09)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _capture_alerts(monkeypatch) -> list:
+    sent = []
+    monkeypatch.setattr(pm, "send_text_email", lambda subject, body: sent.append((subject, body)))
+    return sent
+
+
+def test_stale_data_is_flagged_no_data_and_alerted(monkeypatch, tmp_path):
+    sent = _capture_alerts(monkeypatch)
+    _run_pre_close(monkeypatch, tmp_path, last_bar_day="2026-05-08")
+    assert len(get_open_positions()) == 1
+    assert get_cash() == pytest.approx(1_000.0)
+    log = pd.read_csv(tmp_path / "position_monitor_20260514.csv")
+    assert log.loc[0, "status"] == "NO_DATA"
+    assert "2026-05-08" in log.loc[0, "reason"]
+    assert len(sent) == 1
+    assert "RY.TO" in sent[0][1] and "2026-05-08" in sent[0][1]
+
+
+def test_previous_sessions_bar_is_not_stale(monkeypatch, tmp_path):
+    sent = _capture_alerts(monkeypatch)
+    _run_pre_close(monkeypatch, tmp_path, last_bar_day="2026-05-13")
+    log = pd.read_csv(tmp_path / "position_monitor_20260514.csv")
+    assert log.loc[0, "status"] == "SELL"  # evaluated normally; the sell is held back as yesterday's price
+    assert sent == []
+
+
+def test_stale_data_alert_not_sent_on_dry_run(monkeypatch, tmp_path):
+    sent = _capture_alerts(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["position_monitor.py", "--mode", "pre-close", "--dry-run"])
+    days = pd.bdate_range(end="2026-05-08", periods=60)
+    df = pd.DataFrame({"Open": 40.0, "High": 40.5, "Low": 39.5, "Close": 40.0, "Volume": 1_000}, index=days)
+    insert_position("RY.TO", days[50].date().isoformat(), 40.0, 10, stop_price=37.0)
+
+    class _Lock:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(pm, "acquire_lock", lambda service: (tmp_path / "lock", _Lock()))
+    monkeypatch.setattr(pm, "init_db", lambda: None)
+    monkeypatch.setattr(pm, "log", lambda *a, **k: None)
+    monkeypatch.setattr(pm, "is_market_open", lambda: True)
+    monkeypatch.setattr(pm, "fetch_intraday_snapshot", lambda t: None)
+    monkeypatch.setattr(pm, "load_or_fetch_data", lambda t, start: df)
+    monkeypatch.setattr(pm, "LOGS_PATH", tmp_path)
+    monkeypatch.setattr(pm, "_write_position_report", lambda **k: None)
+    monkeypatch.setattr(pm, "__run_send_report", lambda: None)
+    pm.main()
+    assert sent == []
