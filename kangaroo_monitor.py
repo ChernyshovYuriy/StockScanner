@@ -61,10 +61,13 @@ from position_monitor import (
     LOGS_PATH,
     LOOKBACK_DAYS_BEFORE_ENTRY,
     MIN_BARS_REQUIRED,
+    check_stale_data,
     drop_stale_sell_rows,
     execute_virtual_sells,
     fetch_intraday_snapshot,
     load_or_fetch_data,
+    send_stale_data_alert,
+    stale_no_data_row,
     trading_days_since_entry,
 )
 from report_html import append_positions_report
@@ -265,6 +268,7 @@ def main() -> None:
     LOGS_PATH.mkdir(parents=True, exist_ok=True)
 
     rows: List[Dict] = []
+    stale: List[Dict] = []
     for pos in positions:
         print(f"  {Fore.CYAN}{pos.ticker:<14}{Style.RESET_ALL}", end=" ", flush=True)
         start = (pd.Timestamp(pos.entry_date) - pd.Timedelta(days=LOOKBACK_DAYS_BEFORE_ENTRY)).date()
@@ -291,6 +295,13 @@ def main() -> None:
                 print(f"{Fore.CYAN}[live low={today_bar.low:.2f} high={today_bar.high:.2f} "
                       f"close={today_bar.close:.2f}]{Style.RESET_ALL} ", end="")
 
+        stale_rec = check_stale_data(pos, df, today_bar)
+        if stale_rec is not None:
+            print(f"{Fore.RED}stale data (last bar {stale_rec['last_bar']}){Style.RESET_ALL}")
+            rows.append(stale_no_data_row(stale_rec))
+            stale.append(stale_rec)
+            continue
+
         result = compute_kangaroo_signal(pos, df, today_bar=today_bar)
         status = result.get(POSITION_COL_STATUS, "")
         color = Fore.RED if status == "SELL" else Fore.GREEN
@@ -298,6 +309,10 @@ def main() -> None:
               f"stop={result.get('stop_price', '?')}  target={result.get('target_price', '?')}  "
               f"{result.get(POSITION_COL_REASON, '')}")
         rows.append(result)
+
+    if stale and not dry_run:
+        send_stale_data_alert(stale, title="Kangaroo Monitor",
+                              sell_cmd="python manual_sell.py TICKER --sleeve kangaroo --price X")
 
     out_df = pd.DataFrame(rows)
     if "status" in out_df.columns:

@@ -55,7 +55,9 @@ def _regime(label, composite=0):
 
 
 def _dummy_df():
-    idx = pd.date_range("2026-01-01", periods=30, freq="D")
+    # Ends today: a last bar older than the previous trading day is flagged
+    # NO_DATA (stale) before compute_signals() is ever reached.
+    idx = pd.date_range(end=market_today().date(), periods=30, freq="D")
     return pd.DataFrame({"High": 11.0, "Low": 9.5, "Close": 10.0}, index=idx)
 
 

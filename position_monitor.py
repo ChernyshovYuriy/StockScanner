@@ -749,10 +749,38 @@ def _write_position_report(report_file: str, out_df: pd.DataFrame,
     print(f"Wrote position monitor HTML report → {path.resolve()}")
 
 
-def _send_stale_data_alert(stale: List[Dict]) -> None:
+def check_stale_data(pos, df: pd.DataFrame, today_bar: Optional[TodayBar]) -> Optional[Dict]:
+    """
+    Return a stale-position record when pos has no live snapshot and its last
+    daily bar is older than the previous trading day, else None.
+
+    A ticker that stopped trading on Yahoo (delisted, moved exchange) is still
+    served from the CSV cache, so it read HOLD on a weeks-old bar that no stop
+    or time stop could ever fire on (SES.TO: frozen at 2026-09-04 for 7
+    weeks). Callers record it as NO_DATA (stale_no_data_row()) and alert
+    (send_stale_data_alert()) instead. Shared by every sleeve's monitor.
+    """
+    if today_bar is not None:
+        return None
+    last_bar_day = df.index[-1].date()
+    if last_bar_day >= previous_trading_day(market_today().date()):
+        return None
+    return {"ticker": pos.ticker, "last_bar": last_bar_day, "entry_date": pos.entry_date,
+            "shares": pos.shares, "last_close": float(df["Close"].iloc[-1])}
+
+
+def stale_no_data_row(stale_rec: Dict) -> Dict:
+    """The monitor-table row for a check_stale_data() record."""
+    return {SIGNAL_COL_TICKER: stale_rec["ticker"], POSITION_COL_STATUS: "NO_DATA",
+            POSITION_COL_REASON: f"Stale data: last bar {stale_rec['last_bar']}"}
+
+
+def send_stale_data_alert(stale: List[Dict], title: str = "Position Monitor",
+                          sell_cmd: str = "python manual_sell.py TICKER --price X") -> None:
     """Email the positions whose price data has stopped updating. Sent on
     every run until each one is resolved, since none of its exit rules can
-    fire in the meantime."""
+    fire in the meantime. title/sell_cmd name the sleeve (subject prefix and
+    its manual_sell.py invocation)."""
     lines = [
         f"{len(stale)} open position(s) have no fresh price data, so no stop, "
         "trailing stop or time stop can fire on them:",
@@ -767,9 +795,9 @@ def _send_stale_data_alert(stale: List[Dict]) -> None:
         "",
         "If the ticker no longer trades on Yahoo (delisted, moved exchange), close it",
         "at a real price from another source:",
-        "  python manual_sell.py TICKER --price X",
+        f"  {sell_cmd}",
     ]
-    send_text_email(f"Position Monitor: stale price data ({len(stale)})", "\n".join(lines))
+    send_text_email(f"{title}: stale price data ({len(stale)})", "\n".join(lines))
 
 
 def __run_send_report():
@@ -901,20 +929,12 @@ def main() -> None:
                     end="",
                 )
 
-        # A ticker that stopped trading on Yahoo (delisted, moved exchange) is
-        # still served from the CSV cache, so it read HOLD on a weeks-old bar
-        # that no stop or time stop could ever fire on (SES.TO: frozen at
-        # 2026-09-04 for 7 weeks). Flag it NO_DATA and alert instead.
-        if today_bar is None:
-            last_bar_day = df.index[-1].date()
-            if last_bar_day < previous_trading_day(market_today().date()):
-                print(f"{Fore.RED}stale data (last bar {last_bar_day}){Style.RESET_ALL}")
-                rows.append({SIGNAL_COL_TICKER: pos.ticker, POSITION_COL_STATUS: "NO_DATA",
-                             POSITION_COL_REASON: f"Stale data: last bar {last_bar_day}"})
-                stale.append({"ticker": pos.ticker, "last_bar": last_bar_day,
-                              "entry_date": pos.entry_date, "shares": pos.shares,
-                              "last_close": float(df["Close"].iloc[-1])})
-                continue
+        stale_rec = check_stale_data(pos, df, today_bar)
+        if stale_rec is not None:
+            print(f"{Fore.RED}stale data (last bar {stale_rec['last_bar']}){Style.RESET_ALL}")
+            rows.append(stale_no_data_row(stale_rec))
+            stale.append(stale_rec)
+            continue
 
         result = compute_signals(pos, df, today_bar=today_bar, planned_stop=pos.stop_price)
 
@@ -930,7 +950,7 @@ def main() -> None:
         rows.append(result)
 
     if stale and not dry_run:
-        _send_stale_data_alert(stale)
+        send_stale_data_alert(stale)
 
     # ── Build output DataFrame ────────────────────────────────────────────────
     out_df = pd.DataFrame(rows)
