@@ -110,6 +110,10 @@ class PortfolioState:
         self._realized_pnl:  float                     = 0.0
         self._open:          Dict[str, OpenPosition]   = {}
         self._trade_log:     List[ClosedTrade]         = []
+        # Backtest cost / cash-yield accounting (BacktestConfig.costs_enabled,
+        # .cash_yield_source) — both stay 0.0 unless those flags are on.
+        self._costs:         float                     = 0.0
+        self._cash_yield:    float                     = 0.0
 
     # ── read-only properties ───────────────────────────────────────────────
 
@@ -122,6 +126,17 @@ class PortfolioState:
     def realized_pnl(self) -> float:
         """Cumulative realised profit/loss across all closed trades."""
         return self._realized_pnl
+
+    @property
+    def costs(self) -> float:
+        """Cumulative trading costs: commissions plus the spread/slippage
+        already embedded in fill prices (see record_cost())."""
+        return self._costs
+
+    @property
+    def cash_yield(self) -> float:
+        """Cumulative interest credited on uninvested cash."""
+        return self._cash_yield
 
     @property
     def open_positions(self) -> Dict[str, OpenPosition]:
@@ -238,6 +253,21 @@ class PortfolioState:
         )
         self._trade_log.append(trade)
         return trade
+
+    def record_cost(self, amount: float, deduct_from_cash: bool) -> None:
+        """Add a trading cost to the running total. deduct_from_cash=True
+        for a commission (paid separately); False for spread/slippage, which
+        is already in the fill price and so only needs counting."""
+        if amount < 0:
+            raise ValueError(f"cost must be >= 0, got {amount}")
+        if deduct_from_cash:
+            self._cash -= amount
+        self._costs += amount
+
+    def add_cash_yield(self, amount: float) -> None:
+        """Credit interest earned on uninvested cash."""
+        self._cash += amount
+        self._cash_yield += amount
 
     # ── snapshot / restore ────────────────────────────────────────────────
 

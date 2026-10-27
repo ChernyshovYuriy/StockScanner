@@ -194,6 +194,34 @@ class BacktestConfig:
     #              per-slot cap stays constant as the book fills)
     sizing_basis: str = "cash"
 
+    # ── Idle-cash plan, Phase 2 (reports/idle_cash/). Every default below is
+    #    the pre-existing behaviour. ──────────────────────────────────────────
+    # Trading costs on every stock fill: spread/slippage moves the fill price
+    # against the trade by stock_spread_bps (buys higher, sells lower), and a
+    # flat commission_per_order is paid from cash on each buy and each sell.
+    costs_enabled: bool = False
+    commission_per_order: float = 0.0
+    stock_spread_bps: float = 10.0
+
+    # Interest on uninvested cash. "none": cash earns nothing. "cash_etf":
+    # each simulated day, cash grows by that day's return in
+    # cash_yield_returns (date -> daily total return, e.g. CASH.TO's
+    # adjusted-close change); a day missing from the map earns nothing.
+    cash_yield_source: str = "none"
+    cash_yield_returns: Optional[Dict[date, float]] = field(default=None, repr=False)
+
+    # Exit ordering within a bar. "current": every exit is decided on the
+    # day's close and filled there (stop_trigger="close"). "conservative":
+    # the stop is a resting order at the level computed from bars BEFORE
+    # today (so today's high can't arm or raise it); it fills first whenever
+    # today's low reaches it, and the close-based rules (giveback, time stop,
+    # close below the stop) apply only if it didn't.
+    same_bar_rule: str = "current"
+
+    # "conservative" same_bar_rule only: an open that gaps through the
+    # resting stop fills at the open (realistic) instead of at the stop level.
+    gap_fills: bool = False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULT CONTAINER
@@ -224,6 +252,8 @@ class BacktestResults:
             day_logs: List[DayLog],
             trades: List[ClosedTrade],
             open_positions: Optional[Dict[str, OpenPosition]] = None,
+            costs: float = 0.0,
+            cash_yield: float = 0.0,
     ):
         self.cfg = cfg
         self.day_logs = day_logs
@@ -231,6 +261,9 @@ class BacktestResults:
         # Positions still held on the last simulated day (marked to market in
         # the equity curve, absent from trades) — analysis only.
         self.open_positions = open_positions or {}
+        # Totals from BacktestConfig.costs_enabled / .cash_yield_source (0.0 when off).
+        self.costs = costs
+        self.cash_yield = cash_yield
 
     # ── DataFrames ────────────────────────────────────────────────────────────
 
@@ -868,6 +901,10 @@ def _execute_buys(
             planned = intent.get("entry", 0.0)
             if planned and planned > 0 and price > planned * (1 + cfg.gap_filter_pct / 100):
                 continue
+        open_price = price
+        commission = cfg.commission_per_order if cfg.costs_enabled else 0.0
+        if cfg.costs_enabled:
+            price = open_price * (1 + cfg.stock_spread_bps / 1e4)   # pay the spread
         if cfg.sizing == "live":
             planned_entry = float(intent.get("entry") or 0.0)
             planned_stop = float(intent.get("stop") or 0.0)
@@ -886,16 +923,19 @@ def _execute_buys(
                 shares = int(max_position_value / price)
             # With an equity base the per-slot cap can exceed remaining cash;
             # never overdraw (live equivalent: bound by available funds).
-            shares = min(shares, int(portfolio.cash / price))
+            shares = min(shares, int((portfolio.cash - commission) / price))
         else:
             shares = int(allocation / price)
         if shares <= 0:
             continue
         cost = price * shares
-        if cost > portfolio.cash:
+        if cost + commission > portfolio.cash:
             continue
         portfolio.buy(ticker, buy_date, price, shares, stop_price=intent.get("stop"),
                       pattern=intent.get("pattern"))
+        if cfg.costs_enabled:
+            portfolio.record_cost((price - open_price) * shares, deduct_from_cash=False)
+            portfolio.record_cost(commission, deduct_from_cash=True)
         bought.append(ticker)
 
     return bought
@@ -916,11 +956,26 @@ def _run_monitor_step(
     Run position_monitor.compute_signals on each open position using
     data up to sim_date.  Execute sells at today's close price.
 
+    With cfg.same_bar_rule == "conservative", a resting stop is checked
+    first (see _resting_stop_fill); the close-based rules run only for a
+    position it didn't take out.
+
     Returns list of tickers sold.
     """
     from position_monitor import compute_signals, Position
 
     sold = []
+
+    def _sell(ticker: str, price: float, reason: Optional[str]) -> None:
+        if cfg.costs_enabled:
+            shares = portfolio.open_positions[ticker].shares
+            fill = price * (1 - cfg.stock_spread_bps / 1e4)   # receive less: the spread
+            portfolio.sell(ticker, sim_date.date(), fill, reason=reason)
+            portfolio.record_cost((price - fill) * shares, deduct_from_cash=False)
+            portfolio.record_cost(cfg.commission_per_order, deduct_from_cash=True)
+        else:
+            portfolio.sell(ticker, sim_date.date(), price, reason=reason)
+        sold.append(ticker)
 
     for ticker, pos in list(portfolio.open_positions.items()):
         try:
@@ -941,8 +996,7 @@ def _run_monitor_step(
             # Force a flat exit via the same no-fresh-price fallback already
             # used below, rather than holding a position with no real data.
             sell_price = _day_close_price(ticker, provider, sim_date) or pos.entry_price
-            portfolio.sell(ticker, sim_date.date(), sell_price, reason="STALE_DATA")
-            sold.append(ticker)
+            _sell(ticker, sell_price, "STALE_DATA")
             continue
 
         df.index = pd.to_datetime(df.index).tz_localize(None)
@@ -953,16 +1007,58 @@ def _run_monitor_step(
             shares=float(pos.shares),
         )
 
+        if cfg.same_bar_rule == "conservative":
+            hit = _resting_stop_fill(pm_pos, df, sim_date, exit_params, pos.stop_price, cfg.gap_fills)
+            if hit is not None:
+                _sell(ticker, *hit)
+                continue
+
         result = compute_signals(pm_pos, df, exit_params=exit_params,
                                  planned_stop=pos.stop_price)  # no today_bar
         if result.get("status") == "SELL":
             sell_price = _day_close_price(ticker, provider, sim_date)
             if sell_price is None or sell_price <= 0:
                 sell_price = pos.entry_price  # fallback: flat exit
-            portfolio.sell(ticker, sim_date.date(), sell_price, reason=result.get("reason"))
-            sold.append(ticker)
+            _sell(ticker, sell_price, result.get("reason"))
 
     return sold
+
+
+def _resting_stop_fill(
+        pm_pos,
+        df: pd.DataFrame,
+        sim_date: pd.Timestamp,
+        exit_params: Optional["ExitParams"],
+        planned_stop: Optional[float],
+        gap_fills: bool,
+) -> Optional[Tuple[float, str]]:
+    """
+    Conservative same-bar rule: the stop as a resting order placed before
+    today's session. Its level comes from compute_signals() on the bars
+    BEFORE today only — so today's high can't arm the chandelier or raise
+    the stop, and today's close can't arm the giveback — or, when there are
+    no post-entry bars yet (bought this morning), from the planned stop.
+    If today's low reaches it, return (fill price, reason): the stop level,
+    or the open when gap_fills is on and the open is already below it.
+    None if there's no bar for today or the stop wasn't reached.
+    """
+    from position_monitor import compute_signals
+
+    if df.index[-1].normalize() != pd.Timestamp(sim_date).normalize():
+        return None
+    prior = df.iloc[:-1]
+    level = compute_signals(pm_pos, prior, exit_params=exit_params,
+                            planned_stop=planned_stop).get("stop_price") if len(prior) else None
+    if level is None:
+        level = planned_stop
+    if level is None:
+        return None
+    bar = df.iloc[-1]
+    if float(bar["Low"]) > level:
+        return None
+    open_ = float(bar["Open"])
+    fill = open_ if gap_fills and open_ < level else float(level)
+    return fill, f"STOP_RESTING(low {float(bar['Low']):.2f} <= stop {level:.2f})"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -983,6 +1079,10 @@ class BacktestRunner:
 
     def run(self, verbose: bool = True) -> BacktestResults:
         cfg = self.cfg
+        if cfg.cash_yield_source not in ("none", "cash_etf"):
+            raise ValueError(f"cash_yield_source must be 'none' or 'cash_etf', got {cfg.cash_yield_source!r}")
+        if cfg.same_bar_rule not in ("current", "conservative"):
+            raise ValueError(f"same_bar_rule must be 'current' or 'conservative', got {cfg.same_bar_rule!r}")
 
         # ── 1. Pre-load all historical data once ─────────────────────────────
         if cfg._provider is not None:
@@ -1095,7 +1195,12 @@ class BacktestRunner:
                 confirmed = [intent["ticker"] for intent in new_intents]
                 print(f"    -> SIGNAL confirmed={confirmed}")
 
-            # ── 3e. Log equity ────────────────────────────────────────────────
+            # ── 3e. Cash yield on today's closing cash, then log equity ───────
+            if cfg.cash_yield_source == "cash_etf" and cfg.cash_yield_returns:
+                r = cfg.cash_yield_returns.get(day, 0.0)
+                if r and portfolio.cash > 0:
+                    portfolio.add_cash_yield(portfolio.cash * r)
+
             open_val = _mark_to_market(portfolio.open_positions, provider, sim_ts)
             day_logs.append(DayLog(
                 sim_date=day,
@@ -1115,7 +1220,8 @@ class BacktestRunner:
             print()
 
         return BacktestResults(cfg=cfg, day_logs=day_logs, trades=all_trades,
-                               open_positions=dict(portfolio.open_positions))
+                               open_positions=dict(portfolio.open_positions),
+                               costs=portfolio.costs, cash_yield=portfolio.cash_yield)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

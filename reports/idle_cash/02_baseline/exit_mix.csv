@@ -1,0 +1,5 @@
+exit_reason,off,costs,yield,conservative,conservative_gap,all_on
+STOP_HIT,93,93,93,0,0,0
+GIVEBACK,92,91,92,83,83,83
+TIME_STOP,69,74,69,60,60,65
+STOP_RESTING,0,0,0,128,128,127
