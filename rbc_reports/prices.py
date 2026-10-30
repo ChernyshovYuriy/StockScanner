@@ -133,6 +133,11 @@ def resolve_symbols(conn, limit: int | None = RBC_RESOLVE_MAX_PER_RUN, retry: bo
                     if _is_rate_limit(exc):
                         raise YahooRateLimited(f"{cand}: {exc}") from exc
                     continue
+                # A Canadian Depositary Receipt (HON.TO: Honeywell, priced in
+                # CAD at ~1/20th of a share) is quoteType ETF -- a different
+                # price series, so only a real share listing counts.
+                if info.get("quoteType", "EQUITY") != "EQUITY":
+                    continue
                 names = [info.get("longName"), info.get("shortName")]
                 if any(n and names_match(company, n) for n in names):
                     found = (cand, next(n for n in names if n), info.get("currency"))

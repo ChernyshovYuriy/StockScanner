@@ -493,6 +493,14 @@ def test_resolve_symbols_verifies_company_name(db_path):
     assert calls == []
 
 
+def test_resolve_symbols_skips_depositary_receipts(db_path):
+    info = {"WCC": {"longName": "WESCO International, Inc.", "quoteType": "ETF"},
+            "WCC.TO": {"longName": "WESCO International, Inc.", "quoteType": "EQUITY"}}
+    conn = store.connect(db_path)
+    prices.resolve_symbols(conn, info_fn=lambda s: info.get(s, {}), pacer=_NoPace())
+    assert conn.execute("SELECT yahoo_symbol FROM symbol_map WHERE symbol='WCC'").fetchone() == ("WCC.TO",)
+
+
 def test_resolve_symbols_records_misses_and_stops_on_rate_limit(db_path):
     class YFRateLimitError(Exception):
         pass
