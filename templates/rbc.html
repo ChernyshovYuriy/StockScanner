@@ -54,6 +54,10 @@
       border-radius: 3px; padding: 0 5px; text-decoration: none; }
     .rbc-theme b.bull { color: var(--hold); font-weight: 600; margin-left: 4px; }
     .rbc-theme b.bear { color: var(--sell); font-weight: 600; margin-left: 2px; }
+    .rbc-num { text-align: right !important; white-space: nowrap; }
+    .rbc-up { color: var(--hold); }
+    .rbc-down { color: var(--sell); }
+    .rbc-price { font-size: 13px; margin: 4px 0 10px; }
   </style>
 {% endblock %}
 {% block content %}
@@ -104,6 +108,51 @@
     <button class="rbc-btn-plain" type="submit">Fetch new digests (Gmail + folder)</button>
   </form>
 
+  {% macro pct(v, signed=True) %}{% if v is none %}—{% else %}<span class="{{ 'rbc-up' if v > 0 else 'rbc-down' if v < 0 }}">{{ '%+.1f'|format(v * 100) if signed else '%.0f'|format(v * 100) }}%</span>{% endif %}{% endmacro %}
+
+  {% if not ticker and (candidates_all or candidates_unpriced) %}
+  <div class="rbc-section">
+    <h2>Candidates — bullish notes, last {{ candidate_days }} days
+      {% if show_all_candidates %}(all {{ candidates_all }}){% else %}(≥{{ '%.0f'|format(candidate_dip_pct * 100) }}% off the 52-week high: {{ candidates|length }} of {{ candidates_all }}){% endif %}</h2>
+    <p class="rbc-note">Stocks with a bullish (or upgrade / PT raise / initiation / beat) company note, with where the price
+      stands. "Turning up" = close above a rising 20-day average. "Since note" = from the last close before RBC published.
+      Prices refresh once per trading day (19:30 run). A research list, not a signal — nothing here is validated yet.
+      {% if candidates_unpriced %}{{ candidates_unpriced }} more without a price (no North-American listing found, or not looked up yet).{% endif %}
+      {% if show_all_candidates %}<a href="{{ url_for('rbc', days=days or 'all') }}">Only beaten-down</a>{% else %}<a href="{{ url_for('rbc', days=days or 'all', cand='all') }}">Show all</a>{% endif %}</p>
+    {% if candidates %}
+    <table class="rbc-table">
+      <thead><tr><th class="rbc-tight">Ticker</th><th>Latest bullish note</th><th class="rbc-num">Notes</th>
+        <th class="rbc-num">Close</th><th class="rbc-num">Off 52w high</th><th class="rbc-num">52w range</th>
+        <th class="rbc-num">20 days</th><th class="rbc-num">Since note</th><th class="rbc-tight">Trend</th></tr></thead>
+      <tbody>
+      {% for c in candidates %}
+        <tr>
+          <td><a href="{{ url_for('rbc', ticker=c.symbol) }}">{{ c.symbol }}</a><br><span class="rbc-exch">{{ c.yahoo_symbol }}</span></td>
+          <td><div class="rbc-report">
+            <span class="rbc-company">{{ c.company }}</span>{% if c.headline %} — {{ c.headline }}{% endif %}
+            {% if c.link %} <a href="{{ c.link }}" target="_blank" rel="noopener">open ↗</a>{% endif %}
+            <div class="rbc-labels"><span class="rbc-exch">{{ c.date }}</span>
+              {% if c.tone %}<span class="badge badge-{{ c.tone }}">{{ c.tone }}</span>{% endif %}
+              {% if c.action and c.action != 'none' %}<span class="rbc-label">{{ c.action|replace('_', ' ') }}</span>{% endif %}
+              {% if c.rating %}<span class="rbc-label">{{ c.rating }}</span>{% endif %}</div>
+          </div></td>
+          <td class="rbc-num">{{ c.notes }}</td>
+          <td class="rbc-num">{{ '%.2f'|format(c.close) }} <span class="rbc-exch">{{ c.currency or '' }}</span><br><span class="rbc-exch">{{ c.as_of }}</span></td>
+          <td class="rbc-num">{{ pct(c.pct_off_high) }}</td>
+          <td class="rbc-num">{{ pct(c.range_pos, signed=False) }}</td>
+          <td class="rbc-num">{{ pct(c.ret_20d) }}</td>
+          <td class="rbc-num">{{ pct(c.since_note) }}</td>
+          <td>{% if c.turning_up %}<span class="badge badge-bullish">turning up</span>{% elif not c.above_sma50 %}<span class="badge badge-bearish">below 50d</span>{% else %}<span class="badge badge-neutral">above 50d</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="rbc-note">None right now{% if not show_all_candidates %} — no bullish-note stock is that far off its high{% endif %}.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if themes and not ticker %}
   <div class="rbc-section">
     <h2>Themes {% if days %}(last {{ days }} day{{ 's' if days != 1 }}){% else %}(all time){% endif %}</h2>
@@ -136,6 +185,12 @@
       {% if ticker %}{{ ticker }} — every RBC report ({{ total_reports }}){% else %}Reports ({{ total_reports }}){% endif %}
       {% if truncated %}<span class="rbc-note">— newest {{ reports|length }} shown</span>{% endif %}
     </h2>
+    {% if ticker_price %}{% set p = ticker_price %}
+    <p class="rbc-price"><b>{{ p.yahoo_symbol }}</b> {{ '%.2f'|format(p.close) }} {{ p.currency or '' }} ({{ p.as_of }}) ·
+      {{ pct(p.pct_off_high) }} off 52-week high · {{ pct(p.range_pos, signed=False) }} of 52-week range ·
+      20 days {{ pct(p.ret_20d) }} ·
+      {% if p.turning_up %}turning up{% elif p.above_sma50 %}above 50-day average{% else %}below 50-day average{% endif %}</p>
+    {% endif %}
     {% if reports %}
     <table class="rbc-table">
       <thead><tr><th class="rbc-tight">When (ET)</th><th>Report</th><th class="rbc-tight">Tickers</th><th class="rbc-tight">Analysts</th></tr></thead>

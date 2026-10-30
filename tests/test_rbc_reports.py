@@ -442,3 +442,176 @@ def test_state_db_without_tag_table_reads_untagged(db_path):
     s = build_rbc_state(days=None, db_path=db_path)
     assert not s["tagged"] and len(s["reports"]) == 4 and s["themes"] == []
     assert build_rbc_state(days=None, tone="bullish", db_path=db_path)["reports"] == []
+
+
+# ── prices (step 3; fake Yahoo, never the network) ─────────────────────────
+
+import pandas as pd
+
+from rbc_reports import prices
+
+
+class _NoPace:
+    def wait(self, n=1):
+        pass
+
+
+def test_names_match():
+    assert prices.names_match("Goldman Sachs Group Inc.", "The Goldman Sachs Group, Inc.")
+    assert prices.names_match("Bausch + Lomb", "Bausch + Lomb Corporation")
+    assert prices.names_match("Toronto-Dominion Bank", "The Toronto-Dominion Bank")
+    assert not prices.names_match("Loblaw Companies Limited", "Loews Corporation")
+    assert not prices.names_match("First Horizon Corporation", "First Industrial Realty Trust, Inc.")
+    assert not prices.names_match("", "Anything")
+
+
+def test_yahoo_candidates():
+    assert prices.yahoo_candidates("GS", "") == ["GS", "GS.TO", "GS.V"]
+    assert prices.yahoo_candidates("GS", "US") == ["GS"]
+    assert prices.yahoo_candidates("CTC.A", "CN") == ["CTC-A.TO", "CTC-A.V"]
+    assert prices.yahoo_candidates("AV.", "") == ["AV", "AV.TO", "AV.V"]
+    assert prices.yahoo_candidates("ANTO", "LN") == []
+
+
+def test_resolve_symbols_verifies_company_name(db_path):
+    names = {"WCC": "WESCO International, Inc.", "LTH": "Life Time Group Holdings, Inc.",
+             "GS": "Loews-ish Unrelated Corp", "GS.TO": "Goldman Sachs Group Inc."}
+    calls = []
+
+    def info(sym):
+        calls.append(sym)
+        if sym not in names:
+            raise KeyError(sym)
+        return {"longName": names[sym], "currency": "CAD" if sym.endswith(".TO") else "USD"}
+    conn = store.connect(db_path)
+    r = prices.resolve_symbols(conn, info_fn=info, pacer=_NoPace())
+    assert r == {"checked": 2, "resolved": 2, "stopped": False}       # LTH's note is a 4-ticker list
+    got = dict(conn.execute("SELECT symbol, yahoo_symbol FROM symbol_map").fetchall())
+    assert got == {"WCC": "WCC", "GS": "GS.TO"}
+    calls.clear()
+    assert prices.resolve_symbols(conn, info_fn=info, pacer=_NoPace())["checked"] == 0
+    assert calls == []
+
+
+def test_resolve_symbols_records_misses_and_stops_on_rate_limit(db_path):
+    class YFRateLimitError(Exception):
+        pass
+
+    def limited(sym):
+        raise YFRateLimitError("Too Many Requests")
+    conn = store.connect(db_path)
+    assert prices.resolve_symbols(conn, info_fn=limited, pacer=_NoPace())["stopped"]
+    assert conn.execute("SELECT COUNT(*) FROM symbol_map").fetchone()[0] == 0
+    r = prices.resolve_symbols(conn, info_fn=lambda s: {}, pacer=_NoPace())
+    assert r["checked"] == 2 and r["resolved"] == 0
+    assert prices.resolve_symbols(conn, info_fn=lambda s: {}, pacer=_NoPace())["checked"] == 0
+    assert prices.resolve_symbols(conn, info_fn=lambda s: {}, pacer=_NoPace(), retry=True)["checked"] == 2
+
+
+def _bars(closes, end="2026-10-29"):
+    idx = pd.bdate_range(end=end, periods=len(closes))
+    return pd.DataFrame({"Close": closes}, index=idx)
+
+
+def test_price_context_dip_and_turning_up():
+    # A year falling from 100 to 60, then a 25-day bounce to 70.
+    closes = [100 - 40 * i / 229 for i in range(230)] + [60 + 10 * i / 24 for i in range(25)]
+    ctx = prices.price_context(_bars(closes))
+    assert ctx["close"] == 70 and ctx["low_52w"] == 60
+    assert ctx["pct_off_high"] < -0.2 and 0 < ctx["range_pos"] < 0.5
+    assert ctx["turning_up"] == 1 and ctx["ret_20d"] > 0
+    falling = prices.price_context(_bars([100 - i * 0.2 for i in range(255)]))
+    assert falling["turning_up"] == 0 and falling["above_sma50"] == 0
+    assert prices.price_context(_bars([10.0] * 30)) is None
+
+
+def test_base_close_uses_last_close_before_publication():
+    df = _bars([1.0, 2.0, 3.0], end="2026-10-29")          # 27th, 28th, 29th
+    assert prices.base_close(df, "2026-10-29T18:24") == ("2026-10-29", 3.0)
+    assert prices.base_close(df, "2026-10-29T05:00") == ("2026-10-28", 2.0)
+    assert prices.base_close(df, "2026-10-01T05:00") is None
+
+
+def _priced_db(db_path):
+    """SAMPLE with tags + a symbol map: WCC bullish (beaten down, turning
+    up), GS bullish upgrade (near its high), LTH bearish, A4 unresolved."""
+    _tag(db_path, {
+        "A1": {"action": "results_beat", "tone": "bullish", "theme": "industrials"},
+        "A2": {"action": "pt_cut", "tone": "bearish", "theme": "restaurants_leisure"},
+        "A3": {"action": "upgrade", "tone": "neutral", "theme": "banks"},
+    })
+    conn = store.connect(db_path)
+    for sym, ys, company in (("WCC", "WCC", "WESCO International, Inc."),
+                             ("GS", "GS", "Goldman Sachs Group Inc."),
+                             ("LTH", "LTH", "Life Time Group Holdings, Inc.")):
+        store.save_symbol(conn, sym, "", company, ys, sym, "USD", "2026-10-29")
+    return conn
+
+
+def test_sync_prices_writes_context_and_base_close(db_path):
+    conn = _priced_db(db_path)
+    dip = [100 - 40 * i / 229 for i in range(230)] + [60 + 10 * i / 24 for i in range(25)]
+    bars = {"WCC": _bars(dip), "GS": _bars([50 + i * 0.1 for i in range(255)])}
+    synced = []
+    r = prices.sync_prices(conn, now=datetime(2026, 10, 29, 19, 30), pacer=_NoPace(), cache_conn=object(),
+                           sync_fn=lambda chunk, *a, **k: synced.extend(chunk),
+                           load_fn=lambda syms, *a, **k: {s: bars[s] for s in syms if s in bars})
+    assert sorted(synced) == ["GS", "WCC"]                  # bearish LTH not fetched
+    assert r == {"symbols": 2, "with_context": 2, "stopped": False}
+    assert dict(conn.execute("SELECT yahoo_symbol, turning_up FROM price_context").fetchall()) == {
+        "WCC": 1, "GS": 1}
+    base = conn.execute("SELECT base_date, base_close FROM report_prices WHERE yahoo_symbol='WCC'").fetchone()
+    assert base == ("2026-10-29", 70.0)                     # 6:24pm note -> that day's close
+
+
+def test_sync_prices_stops_when_a_chunk_gets_no_bars(db_path):
+    conn = _priced_db(db_path)
+    r = prices.sync_prices(conn, now=datetime(2026, 10, 29, 19, 30), pacer=_NoPace(), cache_conn=object(),
+                           sync_fn=lambda *a, **k: None, load_fn=lambda *a, **k: {})
+    assert r["stopped"] and r["with_context"] == 0
+
+
+def test_due_today_once_per_trading_day(db_path):
+    conn = store.connect(db_path)
+    fri = datetime(2026, 10, 30, 19, 30)
+    assert prices.due_today(conn, now=fri)
+    store.set_meta(conn, "prices_last_run", "2026-10-30")
+    assert not prices.due_today(conn, now=fri)
+    assert not prices.due_today(conn, now=datetime(2026, 10, 31, 19, 30))   # Saturday
+    assert prices.due_today(conn, now=datetime(2026, 11, 2, 19, 30))        # Monday
+
+
+def test_state_candidates(db_path):
+    conn = _priced_db(db_path)
+    store.save_price_context(conn, {
+        "WCC": {"as_of": "2026-10-29", "close": 70.0, "high_52w": 100.0, "low_52w": 60.0,
+                "pct_off_high": -0.3, "range_pos": 0.25, "ret_20d": 0.1, "above_sma50": 1, "turning_up": 1},
+        "GS": {"as_of": "2026-10-29", "close": 75.0, "high_52w": 76.0, "low_52w": 50.0,
+               "pct_off_high": -0.013, "range_pos": 0.96, "ret_20d": 0.04, "above_sma50": 1, "turning_up": 0},
+    }, "2026-10-29T19:40")
+    store.save_report_prices(conn, [(k, "WCC", "2026-10-29", 50.0) for (k,) in conn.execute(
+        "SELECT report_key FROM reports WHERE title LIKE 'WESCO%'")])
+    conn.close()
+    s = build_rbc_state(days=7, db_path=db_path, now=_NOW)
+    assert [c["symbol"] for c in s["candidates"]] == ["WCC"]           # GS too close to its high
+    wcc = s["candidates"][0]
+    assert wcc["turning_up"] and round(wcc["since_note"], 2) == 0.4 and wcc["tone"] == "bullish"
+    assert s["candidates_all"] == 2 and s["candidates_unpriced"] == 0
+    s = build_rbc_state(days=7, db_path=db_path, now=_NOW, show_all_candidates=True)
+    assert [c["symbol"] for c in s["candidates"]] == ["WCC", "GS"]     # most beaten-down first
+    t = build_rbc_state(ticker="WCC", db_path=db_path, now=_NOW)
+    assert t["ticker_price"]["pct_off_high"] == -0.3
+
+
+def test_same_symbol_for_two_companies_maps_separately(tmp_path):
+    page = _digest([
+        _item("6:00pm ET", "Cullen/Frost Bankers, Inc. - 3Q beat", "CFR", "A", link_id="C1", border=False),
+        _item("5:00pm ET", "Compagnie Financiere Richemont SA - H1 preview", "CFR", "B", link_id="C2"),
+    ], shown=2, total=2)
+    conn = store.connect(tmp_path / "x.db")
+    store.save_digest(conn, parse_digest(page), "x.html", "2026-10-29T19:30")
+    info = {"CFR": {"longName": "Cullen/Frost Bankers, Inc.", "currency": "USD"}}
+    r = prices.resolve_symbols(conn, info_fn=lambda s: info.get(s, {}), pacer=_NoPace())
+    assert r == {"checked": 2, "resolved": 1, "stopped": False}
+    assert dict(conn.execute("SELECT company, yahoo_symbol FROM symbol_map").fetchall()) == {
+        "Cullen/Frost Bankers, Inc.": "CFR", "Compagnie Financiere Richemont SA": None}

@@ -18,7 +18,9 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import RBC_REPORTS_DB_PATH
+from config import RBC_CANDIDATE_DAYS, RBC_CANDIDATE_DIP_PCT, RBC_REPORTS_DB_PATH
+from rbc_reports import store
+from rbc_reports.prices import POSITIVE_ACTIONS
 from rbc_reports.tagger import ACTIONS, REPORT_TYPES, THEMES, TONES
 
 FEED_LIMIT = 500
@@ -27,7 +29,7 @@ TOP_TICKERS = 25
 # digest whose list is a peer list (often alphabetical), not its subject --
 # kept out of the "Most covered" ranking. On the first 13 digests: 847
 # reports had 1 ticker, 62 had 2, and 3+ were sector notes/morning digests.
-COMPANY_NOTE_MAX_TICKERS = 2
+COMPANY_NOTE_MAX_TICKERS = store.COMPANY_NOTE_MAX_TICKERS
 # Filter dropdown choices -- the tagger's own vocabularies, so a filter can
 # never offer a value it doesn't produce.
 TAG_FILTERS = {"tone": TONES, "action": ACTIONS, "theme": THEMES, "report_type": REPORT_TYPES}
@@ -44,6 +46,7 @@ def _connect(db_path):
 
 def _empty_state(days, ticker, query, tags):
     return {"reports": [], "digests": [], "top_tickers": [], "themes": [], "days": days,
+            "candidates": [], "candidates_all": 0, "candidates_unpriced": 0, "ticker_price": None,
             "ticker": ticker, "query": query, "tags": tags, "total_reports": 0, "truncated": False,
             "tagged": False, "untagged": 0}
 
@@ -65,7 +68,7 @@ def _tag_filters(tone, action, theme, report_type) -> dict:
 def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str | None = None,
                     db_path=RBC_REPORTS_DB_PATH, now: datetime | None = None,
                     tone: str | None = None, action: str | None = None, theme: str | None = None,
-                    report_type: str | None = None) -> dict:
+                    report_type: str | None = None, show_all_candidates: bool = False) -> dict:
     """Feed rows for the last `days` days (None = all), optionally only one
     ticker symbol's reports or those matching a free-text `query` (company,
     headline, view or analyst). A ticker view ignores `days` -- it's that
@@ -154,6 +157,9 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
                 "SELECT COUNT(*) FROM reports r WHERE NOT EXISTS "
                 "(SELECT 1 FROM report_tags g WHERE g.report_key = r.report_key)").fetchone()[0]
 
+        cands = _candidates(conn, now, show_all_candidates)
+        ticker_price = _ticker_price(conn, ticker) if ticker else None
+
         digests = conn.execute(
             "SELECT as_of, subscription, shown, total FROM digests "
             + ("WHERE as_of >= ? " if since else "")
@@ -181,5 +187,76 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
                    for t, n, b, x in themes if t != "other"],
         "days": days, "ticker": ticker, "query": query, "tags": tags,
         "total_reports": total, "truncated": total > len(reports),
-        "tagged": tagged, "untagged": untagged,
+        "tagged": tagged, "untagged": untagged, "ticker_price": ticker_price, **cands,
     }
+
+
+def _has_table(conn, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        (name,)).fetchone() is not None
+
+
+def _candidates(conn, now, show_all: bool) -> dict:
+    """The Candidates table (step 3): one row per stock with a bullish or
+    positive-action company note in the last RBC_CANDIDATE_DAYS -- its
+    latest such note, how many there were, and its price context (see
+    rbc_reports/prices.py). By default only stocks at least
+    RBC_CANDIDATE_DIP_PCT off their 52-week high; show_all keeps every
+    priced one. Most beaten-down first."""
+    empty = {"candidates": [], "candidates_all": 0, "candidates_unpriced": 0,
+             "candidate_days": RBC_CANDIDATE_DAYS, "candidate_dip_pct": RBC_CANDIDATE_DIP_PCT,
+             "show_all_candidates": show_all}
+    if not all(_has_table(conn, t) for t in ("report_tags", "symbol_map", "price_context")):
+        return empty
+    since = ((now or datetime.now()) - timedelta(days=RBC_CANDIDATE_DAYS)).strftime("%Y-%m-%dT%H:%M")
+    marks = ",".join("?" * len(POSITIVE_ACTIONS))
+    rows = conn.execute(
+        "SELECT t.symbol, m.yahoo_symbol, m.currency, r.published_at, r.company, r.headline, "
+        "r.link, g.tone, g.action, g.rating, p.close, p.as_of, p.pct_off_high, p.range_pos, "
+        "p.ret_20d, p.above_sma50, p.turning_up, rp.base_close FROM reports r "
+        "JOIN report_tags g ON g.report_key = r.report_key "
+        "JOIN report_tickers t ON t.report_key = r.report_key AND t.position = 0 "
+        "LEFT JOIN symbol_map m ON m.symbol = t.symbol AND m.exchange = t.exchange "
+        "AND m.company = r.company "
+        "LEFT JOIN price_context p ON p.yahoo_symbol = m.yahoo_symbol "
+        "LEFT JOIN report_prices rp ON rp.report_key = r.report_key "
+        f"WHERE r.published_at >= ? AND r.{store.COMPANY_NOTE_SQL} "
+        f"AND (g.tone = 'bullish' OR g.action IN ({marks})) ORDER BY r.published_at DESC",
+        [since, *POSITIVE_ACTIONS]).fetchall()
+    by_symbol: dict = {}
+    for (sym, ys, cur, published, company, headline, link, tone, action, rating, close, as_of,
+         off_high, range_pos, ret20, above50, turning, base) in rows:
+        c = by_symbol.get((sym, company))
+        if c:
+            c["notes"] += 1
+            continue
+        by_symbol[(sym, company)] = {
+            "symbol": sym, "yahoo_symbol": ys, "currency": cur, "published_at": published,
+            "date": published[:10], "company": company, "headline": headline, "link": link,
+            "tone": tone, "action": action, "rating": rating, "notes": 1, "close": close,
+            "as_of": as_of, "pct_off_high": off_high, "range_pos": range_pos, "ret_20d": ret20,
+            "above_sma50": bool(above50), "turning_up": bool(turning),
+            "since_note": (close / base - 1) if close and base else None,
+        }
+    priced = [c for c in by_symbol.values() if c["close"] is not None]
+    shown = priced if show_all else [
+        c for c in priced if c["pct_off_high"] is not None and c["pct_off_high"] <= -RBC_CANDIDATE_DIP_PCT]
+    shown.sort(key=lambda c: (c["pct_off_high"] is None, c["pct_off_high"] or 0))
+    return {**empty, "candidates": shown, "candidates_all": len(priced),
+            "candidates_unpriced": len(by_symbol) - len(priced)}
+
+
+def _ticker_price(conn, ticker: str) -> dict | None:
+    """Price context for a ticker timeline's header, if prices.py has it."""
+    if not _has_table(conn, "price_context"):
+        return None
+    row = conn.execute(
+        "SELECT m.yahoo_symbol, m.currency, p.close, p.as_of, p.pct_off_high, p.range_pos, "
+        "p.ret_20d, p.above_sma50, p.turning_up FROM symbol_map m "
+        "JOIN price_context p ON p.yahoo_symbol = m.yahoo_symbol WHERE m.symbol = ? "
+        "ORDER BY p.updated_at DESC LIMIT 1", (ticker,)).fetchone()
+    if not row:
+        return None
+    keys = ("yahoo_symbol", "currency", "close", "as_of", "pct_off_high", "range_pos", "ret_20d",
+            "above_sma50", "turning_up")
+    return dict(zip(keys, row))

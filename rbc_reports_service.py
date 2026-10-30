@@ -7,11 +7,13 @@ config.RBC_REPORTS_DIR (rbc_reports/gmail_fetch.py, read-only on the
 mailbox), then parses every digest in that folder into
 data/rbc_reports.db (rbc_reports/ingest.py), then labels every new
 report with an LLM (rbc_reports/tagger.py; skipped if OPENAI_API_KEY is
-unset). No capital, no positions, no
-email of its own. Scheduled via stockscanner-rbc-reports.timer (19:30 and
+unset), then -- once per trading day -- refreshes the price context of the
+stocks behind bullish notes (rbc_reports/prices.py). No capital, no
+positions, no email of its own. Scheduled via stockscanner-rbc-reports.timer (19:30 and
 23:30 daily -- the digest is sent ~19:01 ET; the second run catches a late
 one). The /rbc dashboard tab's "Fetch new digests" button runs the same
-run_collector().
+run_collector(), minus the price step (minutes of paced Yahoo requests --
+too slow for a button; the next timer run does it).
 
   python rbc_reports_service.py              # fetch + ingest
   python rbc_reports_service.py --dry-run    # list what would be fetched, write nothing
@@ -26,13 +28,16 @@ from concurrent_utils import acquire_lock
 from config import RBC_GMAIL_FETCH_DAYS, RBC_REPORTS_DIR
 from log_utils import log
 from rbc_reports.gmail_fetch import fetch_digests
+from rbc_reports import prices
 from rbc_reports.ingest import ingest_dir
 from rbc_reports.tagger import tag_untagged
 
 
-def run_collector(run_id, dry_run=False) -> dict:
+def run_collector(run_id, dry_run=False, with_prices=True) -> dict:
     """Returns {"fetch": fetch_digests() result, "ingest": ingest_dir()
-    result or None, "tags": tag_untagged() result or None}. An
+    result or None, "tags": tag_untagged() result or None, "prices":
+    prices.run() result or None (not due today, dry run, or
+    with_prices=False)}. An
     unconfigured Gmail still ingests whatever is already in the folder.
     The first run (no fetched digest in the folder yet) backfills every
     RBC digest in the mailbox; later runs look back RBC_GMAIL_FETCH_DAYS."""
@@ -53,11 +58,20 @@ def run_collector(run_id, dry_run=False) -> dict:
         tags = tag_untagged(dry_run=dry_run)
         log("rbc_reports", run_id, "tagged", configured=tags["configured"],
             pending=tags["pending"], tagged=tags["tagged"])
+    priced = None
+    if ingested is not None and with_prices and not dry_run:
+        try:
+            priced = prices.run()
+        except Exception as e:   # e.g. market_cache.db locked by another job
+            log("rbc_reports", run_id, "prices_error", error=str(e))
+        if priced is not None:
+            log("rbc_reports", run_id, "prices", **priced["resolve"], **{
+                f"sync_{k}": v for k, v in priced["sync"].items()})
     if dry_run:
         print(fetched)
         print(ingested)
         print(tags)
-    return {"fetch": fetched, "ingest": ingested, "tags": tags}
+    return {"fetch": fetched, "ingest": ingested, "tags": tags, "prices": priced}
 
 
 def _build_parser() -> argparse.ArgumentParser:

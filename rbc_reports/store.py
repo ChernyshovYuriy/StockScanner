@@ -14,6 +14,11 @@ email saved twice under two filenames -- never duplicates a row.
 subscription name (several alerts can all arrive at ~7pm) and keeps its
 shown/total counts (a digest only lists the first 100 reports).
 `report_tags` holds tagger.py's LLM labels, one row per tagged report.
+`symbol_map` / `price_context` / `report_prices` are prices.py's (step 3):
+an RBC symbol's Yahoo listing (NULL = none found), each symbol's latest
+price context, and each note's base close. symbol_map is keyed on the
+company name RBC printed too: a bare symbol can name two companies (CFR
+is Cullen/Frost in the US and Richemont in Switzerland).
 """
 from __future__ import annotations
 
@@ -24,6 +29,14 @@ try:
     from config import RBC_REPORTS_DB_PATH as DB_PATH
 except Exception:
     DB_PATH = Path(__file__).resolve().parent.parent / "rbc_reports.db"
+
+# A report listing more tickers than this is a sector note or a daily
+# digest whose list is a peer list, not its subject (see
+# rbc_dashboard_data.py) -- a "company note" lists at most this many, and
+# its first-listed ticker is its subject.
+COMPANY_NOTE_MAX_TICKERS = 2
+COMPANY_NOTE_SQL = (f"report_key IN (SELECT report_key FROM report_tickers GROUP BY report_key "
+                    f"HAVING COUNT(*) <= {COMPANY_NOTE_MAX_TICKERS})")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS digests (
@@ -68,6 +81,39 @@ CREATE TABLE IF NOT EXISTS report_tags (
     theme TEXT,
     model TEXT,
     tagged_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS symbol_map (
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL,
+    yahoo_symbol TEXT,
+    yahoo_name TEXT,
+    currency TEXT,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, exchange, company)
+);
+CREATE TABLE IF NOT EXISTS price_context (
+    yahoo_symbol TEXT PRIMARY KEY,
+    as_of TEXT NOT NULL,
+    close REAL,
+    high_52w REAL,
+    low_52w REAL,
+    pct_off_high REAL,
+    range_pos REAL,
+    ret_20d REAL,
+    above_sma50 INTEGER,
+    turning_up INTEGER,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS report_prices (
+    report_key TEXT PRIMARY KEY,
+    yahoo_symbol TEXT NOT NULL,
+    base_date TEXT NOT NULL,
+    base_close REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 """
 
@@ -148,3 +194,74 @@ def save_tags(conn, labels: dict, model: str, tagged_at: str, commit: bool = Tru
     if commit:
         conn.commit()
     return len(labels)
+
+
+def unresolved_subjects(conn, retry: bool = False, limit: int | None = None) -> list:
+    """[(symbol, exchange, company)] -- company notes' subjects (ticker +
+    the company name RBC printed) not yet looked up (also the misses,
+    with retry=True), most recently covered first."""
+    known = ("SELECT 1 FROM symbol_map m WHERE m.symbol = t.symbol AND m.exchange = t.exchange "
+             "AND m.company = r.company" + (" AND m.yahoo_symbol IS NOT NULL" if retry else ""))
+    sql = ("SELECT t.symbol, t.exchange, r.company, MAX(r.published_at) last FROM report_tickers t "
+           "JOIN reports r ON r.report_key = t.report_key "
+           f"WHERE t.position = 0 AND t.{COMPANY_NOTE_SQL} AND r.company IS NOT NULL "
+           f"AND NOT EXISTS ({known}) GROUP BY t.symbol, t.exchange, r.company ORDER BY last DESC")
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return [(sym, exch, company) for sym, exch, company, _ in conn.execute(sql)]
+
+
+def save_symbol(conn, symbol, exchange, company, yahoo_symbol, yahoo_name, currency, checked_at,
+                commit: bool = True):
+    conn.execute(
+        "INSERT OR REPLACE INTO symbol_map(symbol, exchange, company, yahoo_symbol, yahoo_name, "
+        "currency, checked_at) VALUES(?,?,?,?,?,?,?)",
+        (symbol, exchange, company, yahoo_symbol, yahoo_name, currency, checked_at))
+    if commit:
+        conn.commit()
+
+
+def price_window_notes(conn, since: str, positive_actions) -> list:
+    """[(report_key, yahoo_symbol, published_at)] -- company notes since
+    `since` tagged bullish or with a positive action, whose subject has a
+    Yahoo listing."""
+    marks = ",".join("?" * len(positive_actions))
+    return conn.execute(
+        "SELECT r.report_key, m.yahoo_symbol, r.published_at FROM reports r "
+        "JOIN report_tags g ON g.report_key = r.report_key "
+        "JOIN report_tickers t ON t.report_key = r.report_key AND t.position = 0 "
+        "JOIN symbol_map m ON m.symbol = t.symbol AND m.exchange = t.exchange "
+        "AND m.company = r.company "
+        f"WHERE r.published_at >= ? AND r.{COMPANY_NOTE_SQL} AND m.yahoo_symbol IS NOT NULL "
+        f"AND (g.tone = 'bullish' OR g.action IN ({marks})) ORDER BY r.published_at",
+        [since, *positive_actions]).fetchall()
+
+
+def save_price_context(conn, contexts: dict, updated_at: str, commit: bool = True):
+    conn.executemany(
+        "INSERT OR REPLACE INTO price_context(yahoo_symbol, as_of, close, high_52w, low_52w, "
+        "pct_off_high, range_pos, ret_20d, above_sma50, turning_up, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        [(ys, c["as_of"], c["close"], c["high_52w"], c["low_52w"], c["pct_off_high"],
+          c["range_pos"], c["ret_20d"], c["above_sma50"], c["turning_up"], updated_at)
+         for ys, c in contexts.items()])
+    if commit:
+        conn.commit()
+
+
+def save_report_prices(conn, rows: list, commit: bool = True):
+    """rows: [(report_key, yahoo_symbol, base_date, base_close)]."""
+    conn.executemany("INSERT OR REPLACE INTO report_prices(report_key, yahoo_symbol, base_date, "
+                     "base_close) VALUES(?,?,?,?)", rows)
+    if commit:
+        conn.commit()
+
+
+def get_meta(conn, key: str):
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_meta(conn, key: str, value: str):
+    conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
+    conn.commit()

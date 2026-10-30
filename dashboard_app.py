@@ -690,7 +690,8 @@ def create_app() -> Flask:
             state = _read_with_retry(lambda: build_rbc_state(
                 days=days, ticker=request.args.get("ticker"), query=request.args.get("q"),
                 tone=request.args.get("tone"), action=request.args.get("action"),
-                theme=request.args.get("theme"), report_type=request.args.get("type")))
+                theme=request.args.get("theme"), report_type=request.args.get("type"),
+                show_all_candidates=request.args.get("cand") == "all"))
             error = request.args.get("error")
         except (sqlite3.Error, OSError):
             state = build_rbc_state(days=days, db_path=Path("/nonexistent"))
@@ -705,7 +706,7 @@ def create_app() -> Flask:
         -- the same run as the scheduled rbc_reports_service.py (both
         steps idempotent)."""
         try:
-            r = rbc_run_collector(uuid.uuid4().hex)
+            r = rbc_run_collector(uuid.uuid4().hex, with_prices=False)
         except Exception as e:
             return redirect(url_for("rbc", error=f"Fetch failed: {e}"))
         f, i = r["fetch"], r["ingest"]

@@ -475,6 +475,25 @@ def test_rbc_page_shows_tags_and_filters(client, monkeypatch, tmp_path):
     assert b"Themes" in resp.data
 
 
+def test_rbc_page_shows_candidates(client, monkeypatch, tmp_path):
+    import rbc_dashboard_data
+    from test_rbc_reports import _priced_db
+    path = _rbc_db(tmp_path)
+    conn = _priced_db(path)
+    from rbc_reports import store as rbc_store
+    rbc_store.save_price_context(conn, {"WCC": {
+        "as_of": "2026-10-29", "close": 70.0, "high_52w": 100.0, "low_52w": 60.0, "pct_off_high": -0.3,
+        "range_pos": 0.25, "ret_20d": 0.1, "above_sma50": 1, "turning_up": 1}}, "2026-10-29T19:40")
+    conn.close()
+    monkeypatch.setattr("dashboard_app.build_rbc_state", lambda **kw: rbc_dashboard_data.build_rbc_state(
+        db_path=path, now=__import__("datetime").datetime(2026, 10, 29, 20, 0), **kw))
+    resp = client.get("/rbc?days=all")
+    assert resp.status_code == 200
+    assert b"Candidates" in resp.data and b"turning up" in resp.data and b"-30.0%" in resp.data
+    resp = client.get("/rbc?ticker=WCC")
+    assert b"off 52-week high" in resp.data
+
+
 def test_rbc_page_renders_with_no_db(client, monkeypatch, tmp_path):
     import rbc_dashboard_data
     monkeypatch.setattr("dashboard_app.build_rbc_state",
@@ -485,7 +504,7 @@ def test_rbc_page_renders_with_no_db(client, monkeypatch, tmp_path):
 
 
 def test_rbc_fetch_button_reports_result(client, monkeypatch):
-    monkeypatch.setattr("dashboard_app.rbc_run_collector", lambda run_id: {
+    monkeypatch.setattr("dashboard_app.rbc_run_collector", lambda run_id, **kw: {
         "fetch": {"configured": True, "messages": 3, "saved": ["a.html"], "existing": 2, "skipped": 0},
         "ingest": {"digests": 3, "reports_new": 99, "reports_seen": 300, "files": 3, "skipped": []}})
     resp = client.post("/rbc/ingest")
@@ -494,7 +513,7 @@ def test_rbc_fetch_button_reports_result(client, monkeypatch):
 
 
 def test_rbc_fetch_button_reports_unconfigured_gmail(client, monkeypatch):
-    monkeypatch.setattr("dashboard_app.rbc_run_collector", lambda run_id: {
+    monkeypatch.setattr("dashboard_app.rbc_run_collector", lambda run_id, **kw: {
         "fetch": {"configured": False, "messages": 0, "saved": [], "existing": 0, "skipped": 0},
         "ingest": None})
     resp = client.post("/rbc/ingest")

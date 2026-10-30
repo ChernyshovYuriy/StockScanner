@@ -493,3 +493,20 @@ RBC_TAG_MODEL = "gpt-5-mini"
 RBC_TAG_REASONING_EFFORT = "low"
 RBC_TAG_BATCH_SIZE = 20
 RBC_TAG_WORKERS = 4
+# Step 3 (rbc_reports/prices.py): price context for the stocks of bullish
+# or positive-action company notes from the last RBC_PRICE_WINDOW_DAYS,
+# refreshed once per trading day. Yahoo requests are paced at
+# RBC_YAHOO_PER_SECOND (the repo's bulk-job ceiling, see the 2026-10-06
+# block), bars fetched RBC_YAHOO_CHUNK symbols at a time; at most
+# RBC_RESOLVE_MAX_PER_RUN new symbols are mapped to a Yahoo listing per run
+# (`python -m rbc_reports.prices --all` does the rest).
+RBC_PRICE_WINDOW_DAYS = 30
+RBC_YAHOO_PER_SECOND = 0.4
+RBC_YAHOO_CHUNK = 10
+RBC_RESOLVE_MAX_PER_RUN = 100
+# The /rbc Candidates table: a bullish or positive-action company note from
+# the last RBC_CANDIDATE_DAYS on a stock at least RBC_CANDIDATE_DIP_PCT off
+# its 52-week high -- the same 20% dip conviction_watchlist/ uses for its
+# buy candidates. ("Show all" on the tab drops the dip condition.)
+RBC_CANDIDATE_DAYS = 14
+RBC_CANDIDATE_DIP_PCT = 0.20
