@@ -227,6 +227,52 @@ def test_candidate_below_min_price_dry_run_leaves_no_trace(tmp_path, monkeypatch
     assert store.seeded_guids(conn) == set()
 
 
+def _inbox_item(conn, guid, ticker, created_at):
+    return store.seed_inbox_item(
+        conn, guid=guid, ticker=ticker, company="Co", category="x", materiality="high",
+        summary="s", source_link="l", flagged_at=created_at[:10], flag_price=2.0,
+        created_at=created_at)
+
+
+def test_stale_inbox_items_are_pruned_but_watching_items_kept(tmp_path):
+    conn = store.connect(tmp_path / "nw.db")
+    old = _inbox_item(conn, "g1", "OLD.V", "2026-09-13T09:00:00-04:00")
+    fresh = _inbox_item(conn, "g2", "NEW.V", "2026-09-16T09:00:00-04:00")
+    watched = _inbox_item(conn, "g3", "WAT.V", "2026-09-01T09:00:00-04:00")
+    store.set_status(conn, watched, "watching", "2026-09-02")
+    store.mark_guid_processed(conn, "g1", "2026-09-13T09:00:00-04:00")
+
+    pruned = news_watchlist_service.prune_stale_inbox("run1", conn)
+
+    assert [p["id"] for p in pruned] == [old]
+    assert [i["id"] for i in store.list_by_status(conn, "inbox")] == [fresh]
+    assert [i["id"] for i in store.list_by_status(conn, "watching")] == [watched]
+    assert "g1" in store.seeded_guids(conn)
+
+
+def test_prune_dry_run_deletes_nothing(tmp_path):
+    conn = store.connect(tmp_path / "nw.db")
+    _inbox_item(conn, "g1", "OLD.V", "2026-09-13T09:00:00-04:00")
+
+    pruned = news_watchlist_service.prune_stale_inbox("run1", conn, dry_run=True)
+
+    assert len(pruned) == 1
+    assert len(store.list_by_status(conn, "inbox")) == 1
+
+
+def test_seed_mode_prunes_stale_inbox_items(tmp_path):
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g9", "NEW.V")
+    conn = store.connect(tmp_path / "nw.db")
+    _inbox_item(conn, "g1", "OLD.V", "2026-09-13T09:00:00-04:00")
+
+    news_watchlist_service.run_collector(
+        "run1", mode="seed", conn=conn, press_release_db_path=pr_db,
+        price_fetcher=_fake_price({"NEW.V": 0.12}))
+
+    assert [i["ticker"] for i in store.list_by_status(conn, "inbox")] == ["NEW.V"]
+
+
 def test_candidate_within_max_age_is_still_seeded(tmp_path):
     pr_db = tmp_path / "pr.db"
     _seed_parsed_release(pr_db, "g1", "OMI.V", pubdate="Wed, 16 Sep 2026 08:36:00 GMT")

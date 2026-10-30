@@ -53,7 +53,7 @@ import argparse
 import sqlite3
 import sys
 import uuid
-from datetime import date, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 from concurrent_utils import acquire_lock
@@ -222,6 +222,34 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
     return seeded
 
 
+def prune_stale_inbox(run_id, conn, dry_run=False) -> list[dict]:
+    """Delete every still-unreviewed ('inbox') item whose latest catalyst
+    (created_at -- moved forward by update_inbox_item() on a fresh
+    release) is older than NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS -- an
+    un-triaged week-old catalyst has nothing left to follow, same
+    reasoning as seed_inbox()'s own staleness skip. 'watching' items are
+    never pruned (human-confirmed, tracked for day-to-month follow-
+    through). The guid stays in seeded_release_guids, so a pruned item is
+    never re-seeded. Returns the pruned items."""
+    now_dt = market_now()
+    cutoff = now_dt - timedelta(days=NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS)
+    pruned = []
+    for item in store.list_by_status(conn, "inbox"):
+        try:
+            created = datetime.fromisoformat(item["created_at"])
+        except (TypeError, ValueError):
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=now_dt.tzinfo)
+        if created < cutoff:
+            log("news_watchlist", run_id, "inbox_item_pruned", ticker=item["ticker"],
+                created_at=item["created_at"])
+            if not dry_run:
+                store.delete_item(conn, item["id"])
+            pruned.append(item)
+    return pruned
+
+
 def update_watching_prices(run_id, conn, price_fetcher, dry_run=False) -> list[dict]:
     """Append today's price to every status='watching' item. Returns the
     list of items actually priced this run."""
@@ -372,6 +400,9 @@ def run_collector(run_id, mode="both", dry_run=False, conn=None, press_release_d
     bar_fetcher = bar_fetcher or _download_bars
 
     if mode in ("seed", "both"):
+        pruned = prune_stale_inbox(run_id, conn, dry_run=dry_run)
+        if dry_run and pruned:
+            print(f"Would prune {len(pruned)} stale inbox item(s): {[p['ticker'] for p in pruned]}")
         seeded = seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=dry_run)
         log("news_watchlist", run_id, "seeded", count=len(seeded))
         if seeded:
