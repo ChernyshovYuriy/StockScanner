@@ -20,6 +20,7 @@ from pathlib import Path
 
 from config import RBC_CANDIDATE_DAYS, RBC_CANDIDATE_DIP_PCT, RBC_REPORTS_DB_PATH
 from rbc_reports import store
+from rbc_reports import outcomes
 from rbc_reports.prices import POSITIVE_ACTIONS
 from rbc_reports.tagger import ACTIONS, REPORT_TYPES, THEMES, TONES
 
@@ -47,6 +48,8 @@ def _connect(db_path):
 def _empty_state(days, ticker, query, tags):
     return {"reports": [], "digests": [], "top_tickers": [], "themes": [], "days": days,
             "candidates": [], "candidates_all": 0, "candidates_unpriced": 0, "ticker_price": None,
+            "track_record": [], "track_horizons": outcomes.HORIZONS, "track_events": 0,
+            "track_first": None,
             "ticker": ticker, "query": query, "tags": tags, "total_reports": 0, "truncated": False,
             "tagged": False, "untagged": 0}
 
@@ -158,6 +161,7 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
                 "(SELECT 1 FROM report_tags g WHERE g.report_key = r.report_key)").fetchone()[0]
 
         cands = _candidates(conn, now, show_all_candidates)
+        track = _track_record(conn)
         ticker_price = _ticker_price(conn, ticker) if ticker else None
 
         digests = conn.execute(
@@ -187,8 +191,37 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
                    for t, n, b, x in themes if t != "other"],
         "days": days, "ticker": ticker, "query": query, "tags": tags,
         "total_reports": total, "truncated": total > len(reports),
-        "tagged": tagged, "untagged": untagged, "ticker_price": ticker_price, **cands,
+        "tagged": tagged, "untagged": untagged, "ticker_price": ticker_price, **cands, **track,
     }
+
+
+def _track_record(conn) -> dict:
+    """Step 5: every scored note grouped by outcomes.GROUPS -- see
+    rbc_reports/outcomes.py for the entry rule and the benchmarks."""
+    empty = {"track_record": [], "track_horizons": outcomes.HORIZONS, "track_events": 0,
+             "track_first": None}
+    if not all(_has_table(conn, t) for t in ("note_outcomes", "report_tags")):
+        return empty
+    marks = ",".join("?" * len(POSITIVE_ACTIONS))
+    cols = ", ".join(f"o.ret_{h}, o.bench_{h}" for h in outcomes.HORIZONS)
+    rows = conn.execute(
+        f"SELECT o.yahoo_symbol, o.entry_date, r.published_at, g.tone, "
+        f"(g.tone = 'bullish' OR g.action IN ({marks})), o.off_high, o.turning_up, {cols} "
+        "FROM note_outcomes o JOIN reports r ON r.report_key = o.report_key "
+        "JOIN report_tags g ON g.report_key = o.report_key", list(POSITIVE_ACTIONS)).fetchall()
+    if not rows:
+        return empty
+    events = []
+    for row in rows:
+        e = {"yahoo_symbol": row[0], "entry_date": row[1], "published_at": row[2], "tone": row[3],
+             "bullish": bool(row[4]), "off_high": row[5], "turning_up": row[6]}
+        for j, h in enumerate(outcomes.HORIZONS):
+            e[f"ret_{h}"], e[f"bench_{h}"] = row[7 + 2 * j], row[8 + 2 * j]
+        events.append(e)
+    groups = outcomes.summarize(events)
+    return {"track_record": groups, "track_horizons": outcomes.HORIZONS,
+            "track_events": len({(e["yahoo_symbol"], e["entry_date"]) for e in events}),
+            "track_first": min(e["entry_date"] for e in events)}
 
 
 def _has_table(conn, name: str) -> bool:

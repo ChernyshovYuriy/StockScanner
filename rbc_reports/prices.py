@@ -19,9 +19,10 @@ Three parts, all run once per trading day by rbc_reports_service.py:
    trades North America. Stored in `symbol_map`, never re-checked (a miss
    too, unless --retry).
 2. sync_prices() -- daily bars for every resolved subject ticker of a
-   bullish or positive-action company note in the last
-   RBC_PRICE_WINDOW_DAYS, through market_data_cache.py's DuckDB cache
-   (data/market_cache.db -- topped up, not re-fetched).
+   company note in the last RBC_OUTCOME_WINDOW_DAYS (plus the SPY/XIU.TO
+   benchmarks), through market_data_cache.py's DuckDB cache
+   (data/market_cache.db -- topped up, not re-fetched). The same bars
+   score each note's forward return (outcomes.py, step 5).
 3. price_context() -- per symbol: last close, 52-week high/low, % off the
    high, position in the 52-week range, 20-day return, close vs its
    50-day SMA, and "turning up" (close above a rising 20-day SMA). Stored
@@ -46,7 +47,7 @@ import re
 import time
 from datetime import datetime, timedelta
 
-from config import (RBC_PRICE_WINDOW_DAYS, RBC_RESOLVE_MAX_PER_RUN, RBC_YAHOO_CHUNK,
+from config import (RBC_OUTCOME_WINDOW_DAYS, RBC_RESOLVE_MAX_PER_RUN, RBC_YAHOO_CHUNK,
                     RBC_YAHOO_PER_SECOND)
 from rbc_reports import store
 from time_utils import last_trading_day_on_or_before, market_now
@@ -197,20 +198,23 @@ def base_close(df, published_at: str):
 def sync_prices(conn, now: datetime | None = None, sync_fn=None, load_fn=None,
                 pacer=None, cache_conn=None) -> dict:
     """Tops up bars for every resolved symbol in the window, then writes
-    price_context and report_prices. Returns {"symbols", "with_context",
-    "stopped"}. sync_fn/load_fn/cache_conn are test seams over
+    price_context, report_prices and note_outcomes. Returns {"symbols",
+    "with_context", "scored", "stopped"}. sync_fn/load_fn/cache_conn are test seams over
     market_data_cache.sync_tickers/load_from_cache (cache_conn=None: each
     call opens and closes its own DuckDB connection, so the cache's writer
     lock is never held between chunks)."""
     import market_data_cache as mdc
+    from rbc_reports import outcomes
 
     now = now or market_now()
-    since = (now - timedelta(days=RBC_PRICE_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M")
-    notes = store.price_window_notes(conn, since, POSITIVE_ACTIONS)
+    since = (now - timedelta(days=RBC_OUTCOME_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M")
+    notes = store.company_notes_since(conn, since)
     symbols = sorted({ys for _, ys, _ in notes})
-    result = {"symbols": len(symbols), "with_context": 0, "stopped": False}
+    result = {"symbols": len(symbols), "with_context": 0, "scored": 0, "stopped": False}
     if not symbols:
         return result
+    symbols = [outcomes.BENCHMARK_US, outcomes.BENCHMARK_CA] + [
+        s for s in symbols if s not in (outcomes.BENCHMARK_US, outcomes.BENCHMARK_CA)]
     sync_fn = sync_fn or mdc.sync_tickers
     load_fn = load_fn or mdc.load_from_cache
     pacer = pacer or _Pacer(RBC_YAHOO_PER_SECOND)
@@ -246,10 +250,13 @@ def sync_prices(conn, now: datetime | None = None, sync_fn=None, load_fn=None,
         b = base_close(df, published) if df is not None and not df.empty else None
         if b:
             bases.append((key, ys, *b))
+    scored = outcomes.score_notes(notes, bars)
     store.save_price_context(conn, contexts, now.isoformat(), commit=False)
     store.save_report_prices(conn, bases, commit=False)
+    store.save_outcomes(conn, scored, now.isoformat(), commit=False)
     conn.commit()
     result["with_context"] = len(contexts)
+    result["scored"] = len(scored)
     return result
 
 

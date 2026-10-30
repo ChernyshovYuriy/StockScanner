@@ -494,6 +494,24 @@ def test_rbc_page_shows_candidates(client, monkeypatch, tmp_path):
     assert b"off 52-week high" in resp.data
 
 
+def test_rbc_page_shows_track_record(client, monkeypatch, tmp_path):
+    import rbc_dashboard_data
+    from test_rbc_reports import _priced_db
+    from rbc_reports import store as rbc_store
+    path = _rbc_db(tmp_path)
+    conn = _priced_db(path)
+    key = conn.execute("SELECT report_key FROM reports WHERE title LIKE 'WESCO%'").fetchone()[0]
+    rbc_store.save_outcomes(conn, {key: {
+        "yahoo_symbol": "WCC", "benchmark": "SPY", "entry_date": "2026-10-30", "entry_close": 10.0,
+        "off_high": -0.3, "turning_up": 1, "ret_5": 0.05, "bench_5": 0.01, "ret_20": None, "bench_20": None,
+        "ret_60": None, "bench_60": None}}, "2026-10-30T19:40")
+    conn.close()
+    monkeypatch.setattr("dashboard_app.build_rbc_state",
+                        lambda **kw: rbc_dashboard_data.build_rbc_state(db_path=path, **kw))
+    resp = client.get("/rbc?days=all")
+    assert b"Track record" in resp.data and b"+4.0%" in resp.data
+
+
 def test_rbc_page_renders_with_no_db(client, monkeypatch, tmp_path):
     import rbc_dashboard_data
     monkeypatch.setattr("dashboard_app.build_rbc_state",

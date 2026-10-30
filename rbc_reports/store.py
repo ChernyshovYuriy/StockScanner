@@ -18,7 +18,8 @@ shown/total counts (a digest only lists the first 100 reports).
 an RBC symbol's Yahoo listing (NULL = none found), each symbol's latest
 price context, and each note's base close. symbol_map is keyed on the
 company name RBC printed too: a bare symbol can name two companies (CFR
-is Cullen/Frost in the US and Richemont in Switzerland).
+is Cullen/Frost in the US and Richemont in Switzerland). `note_outcomes`
+is outcomes.py's (step 5): each note's entry and forward returns.
 """
 from __future__ import annotations
 
@@ -110,6 +111,19 @@ CREATE TABLE IF NOT EXISTS report_prices (
     yahoo_symbol TEXT NOT NULL,
     base_date TEXT NOT NULL,
     base_close REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS note_outcomes (
+    report_key TEXT PRIMARY KEY,
+    yahoo_symbol TEXT NOT NULL,
+    benchmark TEXT NOT NULL,
+    entry_date TEXT NOT NULL,
+    entry_close REAL NOT NULL,
+    off_high REAL,
+    turning_up INTEGER,
+    ret_5 REAL, bench_5 REAL,
+    ret_20 REAL, bench_20 REAL,
+    ret_60 REAL, bench_60 REAL,
+    updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -221,20 +235,16 @@ def save_symbol(conn, symbol, exchange, company, yahoo_symbol, yahoo_name, curre
         conn.commit()
 
 
-def price_window_notes(conn, since: str, positive_actions) -> list:
+def company_notes_since(conn, since: str) -> list:
     """[(report_key, yahoo_symbol, published_at)] -- company notes since
-    `since` tagged bullish or with a positive action, whose subject has a
-    Yahoo listing."""
-    marks = ",".join("?" * len(positive_actions))
+    `since` whose subject has a Yahoo listing, whatever their tone."""
     return conn.execute(
         "SELECT r.report_key, m.yahoo_symbol, r.published_at FROM reports r "
-        "JOIN report_tags g ON g.report_key = r.report_key "
         "JOIN report_tickers t ON t.report_key = r.report_key AND t.position = 0 "
         "JOIN symbol_map m ON m.symbol = t.symbol AND m.exchange = t.exchange "
         "AND m.company = r.company "
         f"WHERE r.published_at >= ? AND r.{COMPANY_NOTE_SQL} AND m.yahoo_symbol IS NOT NULL "
-        f"AND (g.tone = 'bullish' OR g.action IN ({marks})) ORDER BY r.published_at",
-        [since, *positive_actions]).fetchall()
+        "ORDER BY r.published_at", [since]).fetchall()
 
 
 def save_price_context(conn, contexts: dict, updated_at: str, commit: bool = True):
@@ -265,3 +275,17 @@ def get_meta(conn, key: str):
 def set_meta(conn, key: str, value: str):
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
     conn.commit()
+
+
+def save_outcomes(conn, outcomes: dict, updated_at: str, commit: bool = True):
+    """outcomes: {report_key: outcomes.compute_outcome() + yahoo_symbol,
+    benchmark}. Replaces each row (a horizon fills in as it elapses)."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO note_outcomes(report_key, yahoo_symbol, benchmark, entry_date, "
+        "entry_close, off_high, turning_up, ret_5, bench_5, ret_20, bench_20, ret_60, bench_60, "
+        "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(k, o["yahoo_symbol"], o["benchmark"], o["entry_date"], o["entry_close"], o["off_high"],
+          o["turning_up"], o["ret_5"], o["bench_5"], o["ret_20"], o["bench_20"], o["ret_60"],
+          o["bench_60"], updated_at) for k, o in outcomes.items()])
+    if commit:
+        conn.commit()

@@ -564,8 +564,10 @@ def test_sync_prices_writes_context_and_base_close(db_path):
     r = prices.sync_prices(conn, now=datetime(2026, 10, 29, 19, 30), pacer=_NoPace(), cache_conn=object(),
                            sync_fn=lambda chunk, *a, **k: synced.extend(chunk),
                            load_fn=lambda syms, *a, **k: {s: bars[s] for s in syms if s in bars})
-    assert sorted(synced) == ["GS", "WCC"]                  # bearish LTH not fetched
-    assert r == {"symbols": 2, "with_context": 2, "stopped": False}
+    assert sorted(synced) == ["GS", "SPY", "WCC", "XIU.TO"]  # + benchmarks; LTH's 4-ticker list isn't a company note
+    # WCC's 6:24pm note enters at the next session's close (not in the bars yet);
+    # GS's previous-evening note enters at the 29th's close.
+    assert r == {"symbols": 2, "with_context": 2, "scored": 1, "stopped": False}
     assert dict(conn.execute("SELECT yahoo_symbol, turning_up FROM price_context").fetchall()) == {
         "WCC": 1, "GS": 1}
     base = conn.execute("SELECT base_date, base_close FROM report_prices WHERE yahoo_symbol='WCC'").fetchone()
@@ -623,3 +625,77 @@ def test_same_symbol_for_two_companies_maps_separately(tmp_path):
     assert r == {"checked": 2, "resolved": 1, "stopped": False}
     assert dict(conn.execute("SELECT company, yahoo_symbol FROM symbol_map").fetchall()) == {
         "Cullen/Frost Bankers, Inc.": "CFR", "Compagnie Financiere Richemont SA": None}
+
+
+
+# ── outcomes (step 5) ─────────────────────────────────────────────────────
+
+from rbc_reports import outcomes
+
+
+def test_entry_is_first_tradeable_close():
+    df = _bars([1.0, 2.0, 3.0], end="2026-10-29")          # 27th, 28th, 29th
+    assert outcomes.entry_index(df, "2026-10-27T18:24") == 1   # evening -> next session
+    assert outcomes.entry_index(df, "2026-10-27T05:00") == 0   # pre-open -> that day
+    assert outcomes.entry_index(df, "2026-10-29T19:00") is None
+
+
+def test_compute_outcome_returns_vs_benchmark_and_unfilled_horizons():
+    closes = [100.0] * 100 + [100 + i for i in range(1, 31)]    # flat, then +1/day
+    df = _bars(closes)
+    bench = _bars([200.0] * 120 + [202.0] * 10)
+    published = df.index[99].strftime("%Y-%m-%dT18:00")       # evening of the last flat day
+    o = outcomes.compute_outcome(df, bench, published)
+    assert o["entry_date"] == df.index[100].strftime("%Y-%m-%d") and o["entry_close"] == 101.0
+    assert o["ret_5"] == round(106 / 101 - 1, 4) and o["bench_5"] == 0.0
+    assert o["ret_20"] == round(121 / 101 - 1, 4) and o["bench_20"] == 0.01
+    assert o["ret_60"] is None and o["bench_60"] is None
+    assert o["off_high"] == 0.0                                 # judged from bars up to entry only
+
+
+def test_benchmark_for():
+    assert outcomes.benchmark_for("GS") == "SPY"
+    assert outcomes.benchmark_for("CS.TO") == "XIU.TO"
+
+
+def _event(sym, day, bullish, tone, off_high, turning, r20, b20, published=None):
+    return {"yahoo_symbol": sym, "entry_date": day, "published_at": published or day + "T18:00",
+            "bullish": bullish, "tone": tone, "off_high": off_high, "turning_up": turning,
+            "ret_5": None, "bench_5": None, "ret_20": r20, "bench_20": b20, "ret_60": None, "bench_60": None}
+
+
+def test_summarize_groups_and_dedups():
+    events = [
+        _event("A", "2026-09-01", True, "bullish", -0.3, 1, 0.10, 0.02),
+        _event("A", "2026-09-01", True, "bullish", -0.3, 1, 0.10, 0.02, "2026-09-01T19:00"),  # same trade
+        _event("B", "2026-09-02", True, "bullish", -0.25, 0, -0.05, 0.01),
+        _event("C", "2026-09-02", True, "neutral", -0.05, 1, 0.03, 0.01),   # positive action, near high
+        _event("D", "2026-09-03", False, "bearish", -0.4, 0, -0.08, 0.0),
+    ]
+    rows = {r["label"]: r for r in outcomes.summarize(events)}
+    rule = rows["Bullish, beaten down, turning up (the Candidates rule)"]
+    assert rule["events"] == 1 and rule["by_horizon"][20]["n"] == 1
+    assert round(rule["by_horizon"][20]["avg_excess"], 4) == 0.08
+    assert rows["Bullish, beaten down"]["by_horizon"][20]["hit_rate"] == 0.5
+    assert rows["Bullish, not beaten down"]["events"] == 1
+    assert rows["All bullish"]["events"] == 3
+    assert rows["Bearish"]["by_horizon"][20]["avg_excess"] == -0.08
+    assert rows["Neutral"]["events"] == 0
+    assert rule["by_horizon"][5] is None
+
+
+def test_state_track_record(db_path):
+    conn = _priced_db(db_path)
+    keys = {t[:5]: k for k, t in conn.execute("SELECT report_key, title FROM reports")}
+    base = {"benchmark": "SPY", "entry_close": 10.0, "ret_5": 0.02, "bench_5": 0.01,
+            "ret_20": None, "bench_20": None, "ret_60": None, "bench_60": None}
+    store.save_outcomes(conn, {
+        keys["WESCO"]: {**base, "yahoo_symbol": "WCC", "entry_date": "2026-10-30", "off_high": -0.3, "turning_up": 1},
+        keys["Goldm"]: {**base, "yahoo_symbol": "GS", "entry_date": "2026-10-29", "off_high": -0.01, "turning_up": 0},
+    }, "2026-10-30T19:40")
+    conn.close()
+    s = build_rbc_state(days=7, db_path=db_path, now=_NOW)
+    rows = {r["label"]: r for r in s["track_record"]}
+    assert s["track_events"] == 2 and s["track_first"] == "2026-10-29"
+    assert rows["Bullish, beaten down, turning up (the Candidates rule)"]["by_horizon"][5]["n"] == 1
+    assert rows["All bullish"]["by_horizon"][5]["n"] == 2       # GS: neutral tone but an upgrade

@@ -153,6 +153,32 @@
   </div>
   {% endif %}
 
+  {% if track_record and not ticker %}
+  <div class="rbc-section">
+    <h2>Track record — how the stocks did after RBC's notes</h2>
+    <p class="rbc-note">{{ track_events }} company notes on priced stocks since {{ track_first }}, one per stock per day.
+      Entry = the first close you could trade after the note (next session's close for an evening note); the stock's state
+      (off its high, turning up) is judged from prices up to that day only. "vs market" = return minus SPY (US) or XIU (Canada)
+      over the same days; "beat" = share that beat it. Horizons in trading days; a cell fills in once that many days have passed.
+      <b>Small samples are noise</b> — read this once the 20-day column has a few hundred notes, months from now.</p>
+    <table class="rbc-table" style="width:auto">
+      <thead><tr><th>Group</th>
+        {% for h in track_horizons %}<th class="rbc-num">{{ h }}d: n</th><th class="rbc-num">vs market</th><th class="rbc-num">beat</th>{% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for g in track_record %}
+        <tr><td>{{ g.label }}</td>
+          {% for h in track_horizons %}{% set c = g.by_horizon[h] %}
+            {% if c %}<td class="rbc-num">{{ c.n }}</td><td class="rbc-num">{{ pct(c.avg_excess) }}</td><td class="rbc-num">{{ '%.0f'|format(c.hit_rate * 100) }}%</td>
+            {% else %}<td class="rbc-num">—</td><td></td><td></td>{% endif %}
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
   {% if themes and not ticker %}
   <div class="rbc-section">
     <h2>Themes {% if days %}(last {{ days }} day{{ 's' if days != 1 }}){% else %}(all time){% endif %}</h2>
