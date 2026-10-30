@@ -10,6 +10,11 @@ an item from an earlier day), then holds (in order) the source ("| RBC Capital M
 ("Company - headline"), a ResearchViewer link, an optional "Our view: ..."
 teaser, and three 198px-wide cells: tickers, analysts, PDF size.
 
+The raw email writes its inline styles loosely ("padding-top:7px; \n
+font-family: Arial"); Gmail's saved-page copy compacts them. Every style
+attribute is whitespace-stripped first (_compact_styles) so both forms
+match the same patterns.
+
 An item time without a date belongs to the digest's own day, unless it is
 later than the digest's "as of" time (sent ~7pm ET, covering the reports
 since the previous one) -- then it is from the previous evening.
@@ -40,6 +45,7 @@ _LINK_RE = re.compile(r'href="(https://www\.rbcinsight\.com/WM/share/ResearchVie
 _VIEW_RE = re.compile(r"padding-top:2px[^>]*>\s*<font[^>]*>(.*?)</font>", re.S)
 _CELL_RE = re.compile(r'<td width="198"[^>]*>\s*<font[^>]*>(.*?)</font>', re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
+_STYLE_RE = re.compile(r'style="([^"]*)"')
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,10 @@ def _text(fragment: str) -> str:
     return " ".join(html.unescape(_TAG_RE.sub(" ", fragment)).split())
 
 
+def _compact_styles(page: str) -> str:
+    return _STYLE_RE.sub(lambda m: 'style="' + re.sub(r"\s+", "", m.group(1)) + '"', page)
+
+
 def _parse_time(day: datetime, hhmm: str) -> datetime:
     t = datetime.strptime(hhmm, "%I:%M%p")
     return day.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
@@ -104,6 +114,7 @@ def is_digest(page: str) -> bool:
 
 def parse_digest(page: str) -> Digest:
     """Raises ValueError if the page has no "as of" header (not a digest)."""
+    page = _compact_styles(page)
     text = _text(page)
     m = _AS_OF_RE.search(text)
     if not m:

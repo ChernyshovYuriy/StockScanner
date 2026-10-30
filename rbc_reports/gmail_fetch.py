@@ -66,9 +66,20 @@ def digest_filename(as_of: str, subscription: str) -> str:
 
 
 def _html_body(raw: bytes) -> str | None:
+    """The digest's HTML part. Decoded from its raw bytes rather than via
+    get_content(): RBC's HTML part declares no MIME charset (only a
+    <meta charset=utf-8> inside the HTML), and get_content() then falls
+    back to ASCII, turning every curly quote into replacement characters."""
     msg = email.message_from_bytes(raw, policy=policy.default)
     part = msg.get_body(preferencelist=("html",))
-    return part.get_content() if part is not None else None
+    if part is None:
+        return None
+    body = part.get_payload(decode=True) or b""
+    charset = part.get_content_charset() or "utf-8"
+    try:
+        return body.decode(charset, errors="replace")
+    except LookupError:
+        return body.decode("utf-8", errors="replace")
 
 
 def fetch_digests(days: int | None = RBC_GMAIL_FETCH_DAYS, folder: Path = RBC_REPORTS_DIR,

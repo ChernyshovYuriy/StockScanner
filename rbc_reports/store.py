@@ -64,13 +64,24 @@ CREATE INDEX IF NOT EXISTS idx_report_tickers_symbol ON report_tickers(symbol);
 def connect(db_path=DB_PATH):
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.executescript(_SCHEMA)
+    # One transaction for the whole schema: run as separate statements,
+    # each CREATE commits (and fsyncs) on its own, which took ~7s on the
+    # Pi's SD card.
+    conn.executescript("BEGIN;" + _SCHEMA + "COMMIT;")
     return conn
 
 
-def save_digest(conn, digest, source_file: str, ingested_at: str) -> int:
+def ingested_files(conn) -> set:
+    """Source filenames already ingested -- ingest.py skips re-parsing
+    them (a digest file never changes once saved)."""
+    return {r[0] for r in conn.execute("SELECT source_file FROM digests WHERE source_file IS NOT NULL")}
+
+
+def save_digest(conn, digest, source_file: str, ingested_at: str, commit: bool = True) -> int:
     """Upserts the digest row and inserts every not-yet-stored report.
-    Returns how many reports were new."""
+    Returns how many reports were new. commit=False leaves the commit to
+    the caller -- ingest.py commits once per run, since each commit costs
+    1-5s on the Pi's SD card."""
     conn.execute(
         "INSERT INTO digests(as_of, subscription, shown, total, source_file, ingested_at) "
         "VALUES(?,?,?,?,?,?) ON CONFLICT(as_of, subscription) DO UPDATE SET "
@@ -93,5 +104,6 @@ def save_digest(conn, digest, source_file: str, ingested_at: str) -> int:
                 "VALUES(?,?,?,?)",
                 [(it.key, sym, exch, pos) for pos, (sym, exch) in enumerate(it.tickers)],
             )
-    conn.commit()
+    if commit:
+        conn.commit()
     return new

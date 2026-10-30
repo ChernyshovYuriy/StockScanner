@@ -2,9 +2,10 @@
 rbc_reports/ingest.py
 =====================
 Parses every saved digest (*.html) in config.RBC_REPORTS_DIR into
-data/rbc_reports.db. Idempotent -- a report already stored is skipped, so
-re-running over the whole folder is safe (13 digests parse in well under
-a second). Non-digest HTML files are skipped with a note.
+data/rbc_reports.db. Idempotent -- a file already ingested (by name) is
+not re-read, and a report already stored is skipped, so re-running over
+the whole folder is safe and cheap. Non-digest HTML files are skipped
+with a note.
 
   python -m rbc_reports.ingest                  # ingest RBC_REPORTS_DIR
   python -m rbc_reports.ingest --dir PATH       # another folder
@@ -22,13 +23,20 @@ from time_utils import market_now
 
 
 def ingest_dir(folder: Path, conn=None, dry_run: bool = False) -> dict:
-    """Returns {"files", "digests", "reports_seen", "reports_new", "skipped"}."""
-    stats = {"files": 0, "digests": 0, "reports_seen": 0, "reports_new": 0, "skipped": []}
+    """Returns {"files", "digests", "reports_seen", "reports_new",
+    "already", "skipped"} -- `already` counts files ingested on an earlier
+    run (not re-read)."""
+    stats = {"files": 0, "digests": 0, "reports_seen": 0, "reports_new": 0, "already": 0, "skipped": []}
+    done = set()
     if not dry_run:
         conn = conn or store.connect()
+        done = store.ingested_files(conn)
     now = market_now().isoformat()
     for path in sorted(Path(folder).glob("*.html")):
         stats["files"] += 1
+        if path.name in done:
+            stats["already"] += 1
+            continue
         page = path.read_text(encoding="utf-8", errors="replace")
         if not is_digest(page):
             stats["skipped"].append(path.name)
@@ -41,7 +49,9 @@ def ingest_dir(folder: Path, conn=None, dry_run: bool = False) -> dict:
         stats["digests"] += 1
         stats["reports_seen"] += len(digest.items)
         if not dry_run:
-            stats["reports_new"] += store.save_digest(conn, digest, path.name, now)
+            stats["reports_new"] += store.save_digest(conn, digest, path.name, now, commit=False)
+    if not dry_run:
+        conn.commit()
     return stats
 
 

@@ -89,6 +89,17 @@ def test_parse_digest_item_fields():
     assert first.pdf_size == "PDF - 310k"
 
 
+def test_raw_email_style_formatting_parses_the_same():
+    """The original email (what gmail_fetch reads) writes styles with
+    spaces and line breaks; Gmail's saved page compacts them."""
+    import re
+    loose = re.sub(r'style="([^"]*)"',
+                   lambda m: 'style="' + m.group(1).replace(";", "; \n\t\t").replace(":", ": ") + '"',
+                   SAMPLE)
+    assert loose != SAMPLE
+    assert parse_digest(loose).items == parse_digest(SAMPLE).items
+
+
 def test_item_without_view_has_none():
     assert parse_digest(SAMPLE).items[1].view is None
 
@@ -137,6 +148,16 @@ def test_ingest_dir_skips_non_digest_files(tmp_path):
     s = ingest_dir(folder, conn=conn)
     assert (s["files"], s["digests"], s["reports_new"]) == (2, 1, 4)
     assert s["skipped"] == ["other.html"]
+
+
+def test_ingest_dir_skips_files_already_ingested(tmp_path):
+    folder = tmp_path / "reports"
+    folder.mkdir()
+    (folder / "digest.html").write_text(SAMPLE)
+    conn = store.connect(tmp_path / "rbc.db")
+    ingest_dir(folder, conn=conn)
+    s = ingest_dir(folder, conn=conn)
+    assert (s["already"], s["digests"], s["reports_new"]) == (1, 0, 0)
 
 
 def test_ingest_dir_dry_run_writes_nothing(tmp_path):
@@ -264,6 +285,16 @@ def test_fetch_saves_new_digests_read_only(tmp_path, gmail_creds):
     # the saved file parses back to the same digest
     saved = (tmp_path / r["saved"][1]).read_text()
     assert len(parse_digest(saved).items) == 4
+
+
+def test_html_part_without_charset_is_decoded_as_utf8():
+    """RBC's HTML part has no MIME charset; its body is UTF-8."""
+    raw = (b"From: alerts@insight.rbc.com\r\nMIME-Version: 1.0\r\n"
+           b'Content-Type: multipart/alternative; boundary="b"\r\n\r\n'
+           b"--b\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\nx\r\n"
+           b"--b\r\nContent-Type: text/html\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+           + "<p>Athabasca\u2019s FY\u201927</p>".encode("utf-8") + b"\r\n--b--\r\n")
+    assert gmail_fetch._html_body(raw) == "<p>Athabasca\u2019s FY\u201927</p>"
 
 
 def test_fetch_skips_already_saved_and_all_has_no_since(tmp_path, gmail_creds):

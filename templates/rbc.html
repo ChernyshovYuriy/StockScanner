@@ -128,7 +128,10 @@
   {% if digests %}
   <div class="rbc-section">
     <h2>Digests</h2>
-    <p class="rbc-note">Each digest email lists only the first 100 reports of the day; the rest need an RBC Insight login.</p>
+    <p class="rbc-note">RBC caps each digest email at 100 reports — the full email (not just Gmail's
+      "[Message clipped]" preview) ends with RBC's own footer, e.g. "100 of 238 Reports. Please login to Insight to see
+      all of the research for this alert." "Missed" is the reports beyond that cap; splitting the alert into narrower
+      ones keeps each under it.</p>
     <table class="rbc-table" style="width:auto">
       <thead><tr><th>Date</th><th>Alert</th><th>In email</th><th>Published</th><th>Missed</th></tr></thead>
       <tbody>
