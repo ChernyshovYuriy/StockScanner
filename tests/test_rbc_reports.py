@@ -70,6 +70,7 @@ SAMPLE = _digest([
 def test_parse_digest_reads_header_counts_and_every_item():
     d = parse_digest(SAMPLE)
     assert d.as_of == "2026-10-29T19:01"
+    assert d.subscription == "RBC Capital Markets - All Reports"
     assert (d.shown, d.total) == (4, 9)
     assert [i.company for i in d.items] == [
         "WESCO International, Inc.", "Life Time Group Holdings, Inc.",
@@ -165,7 +166,8 @@ def test_state_feed_is_newest_first_with_tickers(db_path):
     assert [r["published_at"] for r in s["reports"]] == [
         "2026-10-29T18:24", "2026-10-29T17:17", "2026-10-28T20:05", "2026-10-25T19:33"]
     assert [t["symbol"] for t in s["reports"][1]["tickers"]] == ["LTH", "AW", "BROS", "CAVA"]
-    assert s["digests"] == [{"date": "2026-10-29", "shown": 4, "total": 9, "missed": 5}]
+    assert s["digests"] == [{"date": "2026-10-29", "subscription": "RBC Capital Markets - All Reports",
+                             "shown": 4, "total": 9, "missed": 5}]
 
 
 def test_state_days_window(db_path):
@@ -192,3 +194,95 @@ def test_state_top_tickers(db_path):
 def test_state_missing_db_is_empty(tmp_path):
     s = build_rbc_state(db_path=tmp_path / "nope.db")
     assert s["reports"] == [] and s["digests"] == []
+
+
+# ── gmail_fetch (fake IMAP, never the real mailbox) ───────────────────────
+
+from email.message import EmailMessage
+
+from rbc_reports import gmail_fetch
+
+
+def _raw_email(html_body):
+    msg = EmailMessage()
+    msg["From"] = "alerts@insight.rbc.com"
+    msg["Subject"] = "RBC Insight Alert - Subscription: RBC Capital Markets - All Reports"
+    msg.set_content("plain part")
+    msg.add_alternative(html_body, subtype="html")
+    return msg.as_bytes()
+
+
+class _FakeIMAP:
+    """Records calls; serves `messages` (id -> raw bytes)."""
+    def __init__(self, messages):
+        self.messages, self.calls = messages, []
+
+    def __call__(self, host):
+        self.calls.append(("connect", host))
+        return self
+
+    def login(self, user, pw):
+        self.calls.append(("login", user))
+
+    def select(self, mailbox, readonly=False):
+        self.calls.append(("select", mailbox, readonly))
+        return "OK", [b"3"]
+
+    def search(self, charset, criteria):
+        self.calls.append(("search", criteria))
+        return "OK", [b" ".join(self.messages)]
+
+    def fetch(self, msg_id, spec):
+        self.calls.append(("fetch", msg_id, spec))
+        return "OK", [(b"1 (BODY[] {n}", self.messages[msg_id]), b")"]
+
+    def logout(self):
+        self.calls.append(("logout",))
+
+
+@pytest.fixture
+def gmail_creds(monkeypatch):
+    monkeypatch.setattr(gmail_fetch, "GMAIL_USER", "me@gmail.com")
+    monkeypatch.setattr(gmail_fetch, "GMAIL_APP_PASSWORD", "app-pass")
+
+
+def test_fetch_saves_new_digests_read_only(tmp_path, gmail_creds):
+    other = SAMPLE.replace("29 October 2026 07:01pm", "28 October 2026 07:01pm")
+    fake = _FakeIMAP({b"1": _raw_email(SAMPLE), b"2": _raw_email(other),
+                      b"3": _raw_email("<html>not a digest</html>")})
+    r = gmail_fetch.fetch_digests(days=7, folder=tmp_path, imap_factory=fake)
+    assert r["messages"] == 3 and r["skipped"] == 1
+    assert sorted(r["saved"]) == [
+        "rbc_digest_20261028_1901_rbc-capital-markets-all-reports.html",
+        "rbc_digest_20261029_1901_rbc-capital-markets-all-reports.html",
+    ]
+    assert ("select", '"[Gmail]/All Mail"', True) in fake.calls
+    assert all(c[2] == "(BODY.PEEK[])" for c in fake.calls if c[0] == "fetch")
+    search = next(c[1] for c in fake.calls if c[0] == "search")
+    assert 'FROM "alerts@insight.rbc.com"' in search and "SINCE" in search
+    assert fake.calls[-1] == ("logout",)
+    # the saved file parses back to the same digest
+    saved = (tmp_path / r["saved"][1]).read_text()
+    assert len(parse_digest(saved).items) == 4
+
+
+def test_fetch_skips_already_saved_and_all_has_no_since(tmp_path, gmail_creds):
+    fake = _FakeIMAP({b"1": _raw_email(SAMPLE)})
+    gmail_fetch.fetch_digests(days=None, folder=tmp_path, imap_factory=fake)
+    r = gmail_fetch.fetch_digests(days=None, folder=tmp_path, imap_factory=fake)
+    assert (r["saved"], r["existing"]) == ([], 1)
+    assert all("SINCE" not in c[1] for c in fake.calls if c[0] == "search")
+
+
+def test_fetch_dry_run_writes_nothing(tmp_path, gmail_creds):
+    fake = _FakeIMAP({b"1": _raw_email(SAMPLE)})
+    r = gmail_fetch.fetch_digests(days=7, folder=tmp_path, dry_run=True, imap_factory=fake)
+    assert len(r["saved"]) == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fetch_unconfigured_never_connects(tmp_path, monkeypatch):
+    monkeypatch.setattr(gmail_fetch, "GMAIL_USER", "")
+    fake = _FakeIMAP({})
+    r = gmail_fetch.fetch_digests(folder=tmp_path, imap_factory=fake)
+    assert r["configured"] is False and fake.calls == []

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run StockScanner RBC research tracker at 19:30 and 23:30 daily (RBC's digest is sent ~19:01 ET)
+
+[Timer]
+OnCalendar=*-*-* 19:30
+OnCalendar=*-*-* 23:30
+Persistent=false
+Unit=stockscanner-rbc-reports.service
+
+[Install]
+WantedBy=timers.target

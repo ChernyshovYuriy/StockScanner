@@ -117,3 +117,13 @@ sudo systemctl start stockscanner-news-watchlist-seed.service
 sudo systemctl start stockscanner-news-watchlist.service
 journalctl -u stockscanner-news-watchlist-seed.service -n 100 --no-pager
 journalctl -u stockscanner-news-watchlist.service -n 100 --no-pager
+
+# RBC research tracker — 12th service (no capital/positions; own DB,
+# data/rbc_reports.db). Pulls the RBC Insight digest emails from Gmail
+# (read-only, FROM alerts@insight.rbc.com only) at 19:30 and 23:30 daily,
+# then parses them; viewed on the dashboard's /rbc tab. One-time backfill
+# of every digest already in the mailbox:
+#   python3 -m rbc_reports.gmail_fetch --all
+sudo systemctl enable --now stockscanner-rbc-reports.timer
+sudo systemctl start stockscanner-rbc-reports.service
+journalctl -u stockscanner-rbc-reports.service -n 100 --no-pager

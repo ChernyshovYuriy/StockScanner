@@ -10,7 +10,8 @@ parser.ReportItem.key), so re-ingesting the same digest -- or the same
 email saved twice under two filenames -- never duplicates a row.
 `report_tickers.position` is the ticker's place in the report's own list
 -- 0 is the report's subject; the rest are often a sector note's peer list.
-`digests` is keyed on the digest's "as of" timestamp and keeps its
+`digests` is keyed on the digest's "as of" timestamp plus its
+subscription name (several alerts can all arrive at ~7pm) and keeps its
 shown/total counts (a digest only lists the first 100 reports).
 """
 from __future__ import annotations
@@ -25,11 +26,13 @@ except Exception:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS digests (
-    as_of TEXT PRIMARY KEY,
+    as_of TEXT NOT NULL,
+    subscription TEXT NOT NULL DEFAULT '',
     shown INTEGER,
     total INTEGER,
     source_file TEXT,
-    ingested_at TEXT NOT NULL
+    ingested_at TEXT NOT NULL,
+    PRIMARY KEY (as_of, subscription)
 );
 CREATE TABLE IF NOT EXISTS reports (
     report_key TEXT PRIMARY KEY,
@@ -69,9 +72,10 @@ def save_digest(conn, digest, source_file: str, ingested_at: str) -> int:
     """Upserts the digest row and inserts every not-yet-stored report.
     Returns how many reports were new."""
     conn.execute(
-        "INSERT INTO digests(as_of, shown, total, source_file, ingested_at) VALUES(?,?,?,?,?) "
-        "ON CONFLICT(as_of) DO UPDATE SET shown=excluded.shown, total=excluded.total",
-        (digest.as_of, digest.shown, digest.total, source_file, ingested_at),
+        "INSERT INTO digests(as_of, subscription, shown, total, source_file, ingested_at) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(as_of, subscription) DO UPDATE SET "
+        "shown=excluded.shown, total=excluded.total",
+        (digest.as_of, digest.subscription, digest.shown, digest.total, source_file, ingested_at),
     )
     new = 0
     for it in digest.items:

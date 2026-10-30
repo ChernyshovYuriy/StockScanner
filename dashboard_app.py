@@ -81,7 +81,7 @@ from news_watchlist_dashboard_data import (
     format_volume_compact, invalidate_news_watchlist_cache,
 )
 from rbc_dashboard_data import build_rbc_state
-from rbc_reports.ingest import ingest_dir as rbc_ingest_dir
+from rbc_reports_service import run_collector as rbc_run_collector
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
 from time_utils import market_now, market_today_str
@@ -680,8 +680,8 @@ def create_app() -> Flask:
     def rbc():
         """Read view of the RBC research tracker (rbc_reports/) -- the
         user's daily RBC Insight digests as a searchable feed plus a
-        per-ticker timeline (?ticker=GS). The one write is the Re-scan
-        button below (POST /rbc/ingest)."""
+        per-ticker timeline (?ticker=GS). The one write is the "Fetch new
+        digests" button below (POST /rbc/ingest)."""
         days_arg = request.args.get("days", "7")
         days = None if days_arg == "all" else int(days_arg) if days_arg.isdigit() else 7
         try:
@@ -696,16 +696,18 @@ def create_app() -> Flask:
 
     @app.post("/rbc/ingest")
     def rbc_ingest():
-        """Re-scans RBC_REPORTS_DIR for newly saved digests (idempotent --
-        see rbc_reports/ingest.py)."""
-        if not RBC_REPORTS_DIR.is_dir():
-            return redirect(url_for("rbc", error=f"Folder not found: {RBC_REPORTS_DIR}"))
+        """Fetches new digests from Gmail, then re-parses RBC_REPORTS_DIR
+        -- the same run as the scheduled rbc_reports_service.py (both
+        steps idempotent)."""
         try:
-            s = rbc_ingest_dir(RBC_REPORTS_DIR)
+            r = rbc_run_collector(uuid.uuid4().hex)
         except Exception as e:
-            return redirect(url_for("rbc", error=f"Ingest failed: {e}"))
-        return redirect(url_for("rbc", message=f"Scanned {s['digests']} digest(s): "
-                                               f"{s['reports_new']} new report(s)."))
+            return redirect(url_for("rbc", error=f"Fetch failed: {e}"))
+        f, i = r["fetch"], r["ingest"]
+        parts = [f"Gmail: {len(f['saved'])} new digest(s) from {f['messages']} RBC email(s)"
+                 if f["configured"] else "Gmail not configured (GMAIL_SENDER / GMAIL_APP_PASSWORD in .env)"]
+        parts.append(f"{i['reports_new']} new report(s)" if i else f"folder not found: {RBC_REPORTS_DIR}")
+        return redirect(url_for("rbc", message="; ".join(parts) + "."))
 
     @app.get("/history")
     def history():

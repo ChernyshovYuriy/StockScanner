@@ -1,0 +1,16 @@
+[Unit]
+Description=StockScanner RBC research tracker (fetch RBC Insight digests from Gmail + ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/bin/python3 /home/pi/dev/stock-scanner/rbc_reports_service.py
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

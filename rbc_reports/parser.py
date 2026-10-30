@@ -31,6 +31,7 @@ EXCHANGE_CODES = frozenset({
 
 _BLOCK_SPLIT = "padding-top:7px;font-family:Arial;font-size:11px"
 _AS_OF_RE = re.compile(r"as of \w+, (\d{1,2} \w+ \d{4}) (\d{1,2}:\d{2}[ap]m) ET")
+_SUBSCRIPTION_RE = re.compile(r"Daily Digest for (.+?) as of ")
 _COUNT_RE = re.compile(r"\b(\d+) of (\d+) Reports\b")
 _TIME_RE = re.compile(r">\s*(?:(\d{1,2}-\w{3}-\d{4}) )?(\d{1,2}:\d{2}[ap]m) ET")
 _SOURCE_RE = re.compile(r"\|\s*([^<]+?)\s*</font>")
@@ -65,6 +66,7 @@ class ReportItem:
 @dataclass
 class Digest:
     as_of: str                 # "YYYY-MM-DDTHH:MM", ET
+    subscription: str          # the alert's name, e.g. "RBC Capital Markets - All Reports"
     shown: int | None
     total: int | None
     items: list = field(default_factory=list)
@@ -108,8 +110,10 @@ def parse_digest(page: str) -> Digest:
         raise ValueError("no 'as of ... ET' digest header found")
     as_of = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%d %B %Y %I:%M%p")
     c = _COUNT_RE.search(text)
+    sub = _SUBSCRIPTION_RE.search(text)
     digest = Digest(
         as_of=as_of.strftime("%Y-%m-%dT%H:%M"),
+        subscription=sub.group(1).strip() if sub else "",
         shown=int(c.group(1)) if c else None,
         total=int(c.group(2)) if c else None,
     )

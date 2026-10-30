@@ -466,11 +466,21 @@ def test_rbc_page_renders_with_no_db(client, monkeypatch, tmp_path):
     assert b"No reports yet" in resp.data
 
 
-def test_rbc_ingest_reports_missing_folder(client, monkeypatch, tmp_path):
-    monkeypatch.setattr("dashboard_app.RBC_REPORTS_DIR", tmp_path / "missing")
+def test_rbc_fetch_button_reports_result(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.rbc_run_collector", lambda run_id: {
+        "fetch": {"configured": True, "messages": 3, "saved": ["a.html"], "existing": 2, "skipped": 0},
+        "ingest": {"digests": 3, "reports_new": 99, "reports_seen": 300, "files": 3, "skipped": []}})
     resp = client.post("/rbc/ingest")
     assert resp.status_code == 302
-    assert "Folder+not+found" in resp.headers["Location"] or "Folder%20not%20found" in resp.headers["Location"]
+    assert "99+new+report" in resp.headers["Location"] or "99%20new%20report" in resp.headers["Location"]
+
+
+def test_rbc_fetch_button_reports_unconfigured_gmail(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.rbc_run_collector", lambda run_id: {
+        "fetch": {"configured": False, "messages": 0, "saved": [], "existing": 0, "skipped": 0},
+        "ingest": None})
+    resp = client.post("/rbc/ingest")
+    assert "not+configured" in resp.headers["Location"] or "not%20configured" in resp.headers["Location"]
 
 
 def test_scanner_page_renders_when_no_rows(client, monkeypatch):

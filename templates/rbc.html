@@ -53,8 +53,8 @@
 {% endblock %}
 {% block content %}
   <h1>RBC Research</h1>
-  <p class="rbc-note">Your daily RBC Insight digests (RBC Capital Markets — All Reports), parsed from
-    <code>{{ reports_dir }}</code>. For your own decisions only: nothing here trades.</p>
+  <p class="rbc-note">Your daily RBC Insight digests, pulled from Gmail at 19:30 and 23:30 into
+    <code>{{ reports_dir }}</code> (a digest saved there by hand counts too). For your own decisions only: nothing here trades.</p>
 
   {% if error %}<p class="banner banner-error">{{ error }}</p>{% endif %}
   {% if message %}<p class="banner banner-info">{{ message }}</p>{% endif %}
@@ -80,7 +80,7 @@
     <a class="rbc-btn-plain" href="{{ url_for('rbc') }}">Reset</a>
   </form>
   <form method="post" action="{{ url_for('rbc_ingest') }}" style="margin-top:8px">
-    <button class="rbc-btn-plain" type="submit">Re-scan folder for new digests</button>
+    <button class="rbc-btn-plain" type="submit">Fetch new digests (Gmail + folder)</button>
   </form>
 
   {% if top_tickers and not ticker %}
@@ -121,7 +121,7 @@
       </tbody>
     </table>
     {% else %}
-      <p class="rbc-note">No reports{% if ticker or query %} match{% else %} yet — save a digest into the folder above and press Re-scan{% endif %}.</p>
+      <p class="rbc-note">No reports{% if ticker or query %} match{% else %} yet — press Fetch new digests{% endif %}.</p>
     {% endif %}
   </div>
 
@@ -130,10 +130,10 @@
     <h2>Digests</h2>
     <p class="rbc-note">Each digest email lists only the first 100 reports of the day; the rest need an RBC Insight login.</p>
     <table class="rbc-table" style="width:auto">
-      <thead><tr><th>Date</th><th>In email</th><th>Published</th><th>Missed</th></tr></thead>
+      <thead><tr><th>Date</th><th>Alert</th><th>In email</th><th>Published</th><th>Missed</th></tr></thead>
       <tbody>
       {% for d in digests %}
-        <tr><td>{{ d.date }}</td><td>{{ d.shown if d.shown is not none else '?' }}</td><td>{{ d.total if d.total is not none else '?' }}</td>
+        <tr><td>{{ d.date }}</td><td>{{ d.subscription }}</td><td>{{ d.shown if d.shown is not none else '?' }}</td><td>{{ d.total if d.total is not none else '?' }}</td>
           <td>{% if d.missed %}<span class="rbc-missed">{{ d.missed }}</span>{% else %}0{% endif %}</td></tr>
       {% endfor %}
       </tbody>

@@ -471,8 +471,15 @@ NEWS_WATCHLIST_MIN_PRICE = 1.00
 # RBC research tracker -- 12th service, organizes the user's daily "RBC
 # Insight Alert" digest emails (RBC Capital Markets - All Reports) for their
 # REAL account decisions (see rbc_reports/__init__.py). No capital or
-# positions. Step 1: the user saves each digest's HTML into
-# RBC_REPORTS_DIR; `python -m rbc_reports.ingest` parses every report in it
-# into its own SQLite DB, shown on the dashboard's /rbc tab.
+# positions. rbc_reports_service.py (timer, ~19:30 and 23:30 daily) pulls
+# each digest email from Gmail (rbc_reports/gmail_fetch.py, read-only,
+# messages FROM RBC_GMAIL_FROM only) into RBC_REPORTS_DIR, then parses every
+# report in that folder into its own SQLite DB, shown on the /rbc tab. A
+# digest saved into the folder by hand is picked up the same way.
 RBC_REPORTS_DIR = Path.home() / "Documents" / "rbc" / "reports"
 RBC_REPORTS_DB_PATH = DATA_PATH / "rbc_reports.db"
+RBC_GMAIL_FROM = "alerts@insight.rbc.com"
+# The scheduled fetch re-checks this many days back, so a run missed while
+# the Pi was down is caught up by the next one (a digest already saved is
+# skipped). `python -m rbc_reports.gmail_fetch --all` backfills everything.
+RBC_GMAIL_FETCH_DAYS = 7

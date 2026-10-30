@@ -95,7 +95,7 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
         ).fetchall()
 
         digests = conn.execute(
-            "SELECT as_of, shown, total FROM digests "
+            "SELECT as_of, subscription, shown, total FROM digests "
             + ("WHERE as_of >= ? " if since else "")
             + "ORDER BY as_of DESC", [since] if since else [],
         ).fetchall()
@@ -111,9 +111,9 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
         })
     return {
         "reports": reports,
-        "digests": [{"date": a[:10], "shown": s, "total": t,
+        "digests": [{"date": a[:10], "subscription": sub, "shown": s, "total": t,
                      "missed": (t - s) if (s is not None and t is not None) else 0}
-                    for a, s, t in digests],
+                    for a, sub, s, t in digests],
         "top_tickers": [{"symbol": s, "count": n} for s, n in top],
         "days": days, "ticker": ticker, "query": query,
         "total_reports": total, "truncated": total > len(reports),
