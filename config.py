@@ -483,3 +483,13 @@ RBC_GMAIL_FROM = "alerts@insight.rbc.com"
 # the Pi was down is caught up by the next one (a digest already saved is
 # skipped). `python -m rbc_reports.gmail_fetch --all` backfills everything.
 RBC_GMAIL_FETCH_DAYS = 7
+# Step 2 (rbc_reports/tagger.py): each report's title + "Our view" teaser
+# is labelled by an LLM (report type, action, tone, rating, theme), several
+# reports per call. ~100 short items a day; the mini tier because a
+# report's tone is often implicit ("Trade Upside for Market Share
+# Defense"). Verify current pricing before relying on a cost estimate.
+RBC_TAG_MODEL = "gpt-5-mini"
+# The model's default ("medium") took ~2 min per 20-report batch.
+RBC_TAG_REASONING_EFFORT = "low"
+RBC_TAG_BATCH_SIZE = 20
+RBC_TAG_WORKERS = 4

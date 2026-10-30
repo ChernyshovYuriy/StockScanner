@@ -13,6 +13,7 @@ email saved twice under two filenames -- never duplicates a row.
 `digests` is keyed on the digest's "as of" timestamp plus its
 subscription name (several alerts can all arrive at ~7pm) and keeps its
 shown/total counts (a digest only lists the first 100 reports).
+`report_tags` holds tagger.py's LLM labels, one row per tagged report.
 """
 from __future__ import annotations
 
@@ -58,6 +59,16 @@ CREATE TABLE IF NOT EXISTS report_tickers (
     PRIMARY KEY (report_key, symbol, exchange)
 );
 CREATE INDEX IF NOT EXISTS idx_report_tickers_symbol ON report_tickers(symbol);
+CREATE TABLE IF NOT EXISTS report_tags (
+    report_key TEXT PRIMARY KEY,
+    report_type TEXT,
+    action TEXT,
+    tone TEXT,
+    rating TEXT,
+    theme TEXT,
+    model TEXT,
+    tagged_at TEXT NOT NULL
+);
 """
 
 
@@ -111,3 +122,29 @@ def save_digest(conn, digest, source_file: str, ingested_at: str, commit: bool =
     if commit:
         conn.commit()
     return new
+
+
+def untagged_reports(conn, limit: int | None = None, retag: bool = False) -> list:
+    """[(report_key, title, view, tickers_raw)] newest first -- reports
+    with no report_tags row (every report with retag=True)."""
+    sql = "SELECT r.report_key, r.title, r.view, r.tickers_raw FROM reports r "
+    if not retag:
+        sql += "WHERE NOT EXISTS (SELECT 1 FROM report_tags g WHERE g.report_key = r.report_key) "
+    sql += "ORDER BY r.published_at DESC"
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return conn.execute(sql).fetchall()
+
+
+def save_tags(conn, labels: dict, model: str, tagged_at: str, commit: bool = True) -> int:
+    """labels: {report_key: {"report_type", "action", "tone", "rating",
+    "theme"}}. Upserts each; returns how many."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO report_tags(report_key, report_type, action, tone, rating, theme, "
+        "model, tagged_at) VALUES(?,?,?,?,?,?,?,?)",
+        [(k, v["report_type"], v["action"], v["tone"], v["rating"], v["theme"], model, tagged_at)
+         for k, v in labels.items()],
+    )
+    if commit:
+        conn.commit()
+    return len(labels)

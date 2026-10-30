@@ -49,6 +49,11 @@
     .rbc-exch { color: var(--text-muted); font-size: 11px; }
     .rbc-analysts { color: var(--text-muted); font-size: 12px; white-space: normal; max-width: 200px; }
     .rbc-missed { color: var(--sell); font-weight: 600; }
+    .rbc-labels { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .rbc-label { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border);
+      border-radius: 3px; padding: 0 5px; text-decoration: none; }
+    .rbc-theme b.bull { color: var(--hold); font-weight: 600; margin-left: 4px; }
+    .rbc-theme b.bear { color: var(--sell); font-weight: 600; margin-left: 2px; }
   </style>
 {% endblock %}
 {% block content %}
@@ -76,12 +81,43 @@
         {% endfor %}
       </select>
     </div>
+    {% for field, label, choices in [("tone", "Tone", tag_filters.tone), ("action", "Action", None), ("theme", "Theme", tag_filters.theme), ("type", "Type", tag_filters.report_type)] %}
+    <div class="field">
+      <label for="rbc-{{ field }}">{{ label }}</label>
+      {% set current = tags.get("report_type" if field == "type" else field, "") %}
+      <select id="rbc-{{ field }}" name="{{ field }}">
+        <option value="">Any</option>
+        {% if field == "action" %}
+          <option value="positive" {{ 'selected' if current == 'positive' }}>Upgrade / PT raise / initiation / beat</option>
+          <option value="negative" {{ 'selected' if current == 'negative' }}>Downgrade / PT cut / miss</option>
+          {% for v in tag_filters.action %}<option value="{{ v }}" {{ 'selected' if current == v }}>{{ v|replace('_', ' ') }}</option>{% endfor %}
+        {% else %}
+          {% for v in choices %}<option value="{{ v }}" {{ 'selected' if current == v }}>{{ v|replace('_', ' ') }}</option>{% endfor %}
+        {% endif %}
+      </select>
+    </div>
+    {% endfor %}
     <button class="rbc-btn" type="submit">Show</button>
     <a class="rbc-btn-plain" href="{{ url_for('rbc') }}">Reset</a>
   </form>
   <form method="post" action="{{ url_for('rbc_ingest') }}" style="margin-top:8px">
     <button class="rbc-btn-plain" type="submit">Fetch new digests (Gmail + folder)</button>
   </form>
+
+  {% if themes and not ticker %}
+  <div class="rbc-section">
+    <h2>Themes {% if days %}(last {{ days }} day{{ 's' if days != 1 }}){% else %}(all time){% endif %}</h2>
+    <p class="rbc-note">Tagged reports per industry, with how many read <span style="color:var(--hold)">bullish</span> /
+      <span style="color:var(--sell)">bearish</span>. Labels are an LLM's reading of each title and teaser — unvalidated.
+      {% if untagged %}{{ untagged }} report(s) not tagged yet.{% endif %}</p>
+    <div class="rbc-chips">
+      {% for t in themes %}
+        <a class="rbc-chip rbc-theme {{ 'active' if tags.get('theme') == t.theme }}"
+           href="{{ url_for('rbc', days=days or 'all', theme=t.theme) }}">{{ t.theme|replace('_', ' ') }}<b>{{ t.count }}</b><b class="bull">{{ t.bullish }}</b><b class="bear">{{ t.bearish }}</b></a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   {% if top_tickers and not ticker %}
   <div class="rbc-section">
@@ -111,6 +147,13 @@
             <span class="rbc-company">{{ r.company }}</span>{% if r.headline %} — {{ r.headline }}{% endif %}
             {% if r.link %} <a href="{{ r.link }}" target="_blank" rel="noopener">open ↗</a>{% endif %}
             {% if r.view %}<div class="rbc-view">{{ r.view }}</div>{% endif %}
+            {% if r.tone %}<div class="rbc-labels">
+              <span class="badge badge-{{ r.tone }}">{{ r.tone }}</span>
+              {% if r.action and r.action != 'none' %}<a class="rbc-label" href="{{ url_for('rbc', days=days or 'all', action=r.action) }}">{{ r.action|replace('_', ' ') }}</a>{% endif %}
+              {% if r.rating %}<span class="rbc-label">{{ r.rating }}</span>{% endif %}
+              {% if r.theme and r.theme != 'other' %}<a class="rbc-label" href="{{ url_for('rbc', days=days or 'all', theme=r.theme) }}">{{ r.theme|replace('_', ' ') }}</a>{% endif %}
+              {% if r.report_type and r.report_type != 'company' %}<span class="rbc-label">{{ r.report_type }} note</span>{% endif %}
+            </div>{% endif %}
           </div></td>
           <td><div class="rbc-tickers">
             {% for t in r.tickers %}<a href="{{ url_for('rbc', ticker=t.symbol) }}">{{ t.symbol }}</a>{% if t.exchange %}<span class="rbc-exch">{{ t.exchange }}</span>{% endif %} {% endfor %}
@@ -121,7 +164,7 @@
       </tbody>
     </table>
     {% else %}
-      <p class="rbc-note">No reports{% if ticker or query %} match{% else %} yet — press Fetch new digests{% endif %}.</p>
+      <p class="rbc-note">No reports{% if ticker or query or tags %} match{% else %} yet — press Fetch new digests{% endif %}.</p>
     {% endif %}
   </div>
 

@@ -457,6 +457,24 @@ def test_rbc_page_renders_feed_and_ticker_timeline(client, monkeypatch, tmp_path
     assert b"WESCO" not in resp.data
 
 
+def test_rbc_page_shows_tags_and_filters(client, monkeypatch, tmp_path):
+    import rbc_dashboard_data
+    from rbc_reports import store as rbc_store
+    path = _rbc_db(tmp_path)
+    conn = rbc_store.connect(path)
+    key = conn.execute("SELECT report_key FROM reports WHERE title LIKE 'Goldman%'").fetchone()[0]
+    rbc_store.save_tags(conn, {key: {"report_type": "company", "action": "upgrade", "tone": "bullish",
+                                     "rating": "Outperform", "theme": "banks"}}, "test", "2026-10-29T20:00")
+    conn.close()
+    monkeypatch.setattr("dashboard_app.build_rbc_state",
+                        lambda **kw: rbc_dashboard_data.build_rbc_state(db_path=path, **kw))
+    resp = client.get("/rbc?days=all&tone=bullish")
+    assert resp.status_code == 200
+    assert b"Goldman Sachs" in resp.data and b"WESCO" not in resp.data
+    assert b"badge-bullish" in resp.data and b"Outperform" in resp.data
+    assert b"Themes" in resp.data
+
+
 def test_rbc_page_renders_with_no_db(client, monkeypatch, tmp_path):
     import rbc_dashboard_data
     monkeypatch.setattr("dashboard_app.build_rbc_state",

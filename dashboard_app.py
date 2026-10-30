@@ -80,6 +80,8 @@ from news_watchlist_dashboard_data import (
     build_news_watchlist_state, build_quote_link, fetch_ticker_volume, fetch_volumes,
     format_volume_compact, invalidate_news_watchlist_cache,
 )
+from rbc_dashboard_data import ACTION_GROUPS as RBC_ACTION_GROUPS
+from rbc_dashboard_data import TAG_FILTERS as RBC_TAG_FILTERS
 from rbc_dashboard_data import build_rbc_state
 from rbc_reports_service import run_collector as rbc_run_collector
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
@@ -686,13 +688,16 @@ def create_app() -> Flask:
         days = None if days_arg == "all" else int(days_arg) if days_arg.isdigit() else 7
         try:
             state = _read_with_retry(lambda: build_rbc_state(
-                days=days, ticker=request.args.get("ticker"), query=request.args.get("q")))
+                days=days, ticker=request.args.get("ticker"), query=request.args.get("q"),
+                tone=request.args.get("tone"), action=request.args.get("action"),
+                theme=request.args.get("theme"), report_type=request.args.get("type")))
             error = request.args.get("error")
         except (sqlite3.Error, OSError):
             state = build_rbc_state(days=days, db_path=Path("/nonexistent"))
             error = "Database temporarily unavailable — retrying on next refresh."
         return render_template("rbc.html", error=error, message=request.args.get("message"),
-                               reports_dir=str(RBC_REPORTS_DIR), **state)
+                               reports_dir=str(RBC_REPORTS_DIR), tag_filters=RBC_TAG_FILTERS,
+                               action_groups=RBC_ACTION_GROUPS, **state)
 
     @app.post("/rbc/ingest")
     def rbc_ingest():
@@ -707,6 +712,9 @@ def create_app() -> Flask:
         parts = [f"Gmail: {len(f['saved'])} new digest(s) from {f['messages']} RBC email(s)"
                  if f["configured"] else "Gmail not configured (GMAIL_SENDER / GMAIL_APP_PASSWORD in .env)"]
         parts.append(f"{i['reports_new']} new report(s)" if i else f"folder not found: {RBC_REPORTS_DIR}")
+        t = r.get("tags")
+        if t and t["configured"] and t["pending"]:
+            parts.append(f"{t['tagged']} of {t['pending']} untagged report(s) tagged")
         return redirect(url_for("rbc", message="; ".join(parts) + "."))
 
     @app.get("/history")

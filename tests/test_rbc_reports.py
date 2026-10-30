@@ -329,3 +329,116 @@ def test_fetch_unconfigured_never_connects(tmp_path, monkeypatch):
     fake = _FakeIMAP({})
     r = gmail_fetch.fetch_digests(folder=tmp_path, imap_factory=fake)
     assert r["configured"] is False and fake.calls == []
+
+
+# ── tagger (fake OpenAI client, never the real API) ───────────────────────
+
+import json
+
+from rbc_reports import tagger
+
+
+class _FakeClient:
+    """Answers each batch from `answer(lines)` -> list of label dicts;
+    records every user message."""
+
+    def __init__(self, answer):
+        self.answer, self.calls = answer, []
+        self.chat = self
+        self.completions = self
+
+    def create(self, model, messages, **kw):
+        lines = [json.loads(l) for l in messages[1]["content"].splitlines()]
+        self.calls.append(lines)
+        content = json.dumps({"reports": self.answer(lines)})
+        msg = type("M", (), {"content": content})
+        return type("R", (), {"choices": [type("C", (), {"message": msg})]})
+
+
+def _bullish(lines):
+    return [{"id": l["id"], "report_type": "company", "action": "results_beat", "tone": "Bullish",
+             "rating": "Outperform", "theme": "industrials"} for l in lines]
+
+
+def test_tagger_labels_every_untagged_report_once(db_path):
+    conn = store.connect(db_path)
+    client = _FakeClient(_bullish)
+    r = tagger.tag_untagged(conn, client=client)
+    assert r == {"configured": True, "pending": 4, "tagged": 4}
+    assert "WESCO" in client.calls[0][0]["title"]          # newest first
+    row = conn.execute("SELECT report_type, action, tone, rating, theme FROM report_tags "
+                       "WHERE report_key LIKE '%A1%'").fetchone()
+    assert row == ("company", "results_beat", "bullish", "Outperform", "industrials")
+    assert tagger.tag_untagged(conn, client=client)["pending"] == 0
+    assert tagger.tag_untagged(conn, client=client, retag=True)["tagged"] == 4
+
+
+def test_tagger_batches_and_limit(db_path, monkeypatch):
+    monkeypatch.setattr(tagger, "RBC_TAG_BATCH_SIZE", 3)
+    client = _FakeClient(_bullish)
+    assert tagger.tag_untagged(store.connect(db_path), client=client)["tagged"] == 4
+    assert sorted(len(c) for c in client.calls) == [1, 3]
+    conn = store.connect(db_path)
+    assert tagger.tag_untagged(conn, client=client, retag=True, limit=2)["pending"] == 2
+
+
+def test_tagger_unknown_values_fall_back_and_bad_ids_are_ignored(db_path):
+    def odd(lines):
+        return [{"id": 0, "report_type": "essay", "action": "maybe", "tone": "euphoric",
+                 "rating": "null", "theme": "crypto"}, {"id": 99, "tone": "bullish"}, "junk"]
+    conn = store.connect(db_path)
+    assert tagger.tag_untagged(conn, client=_FakeClient(odd))["tagged"] == 1
+    assert conn.execute("SELECT report_type, action, tone, rating, theme FROM report_tags").fetchone() == (
+        "company", "none", "neutral", None, "other")
+
+
+def test_tagger_failed_call_leaves_reports_untagged(db_path):
+    def boom(lines):
+        raise RuntimeError("API down")
+    conn = store.connect(db_path)
+    assert tagger.tag_untagged(conn, client=_FakeClient(boom))["tagged"] == 0
+    assert len(store.untagged_reports(conn)) == 4
+
+
+def test_tagger_unconfigured_does_nothing(db_path, monkeypatch):
+    monkeypatch.setattr(tagger, "OPENAI_API_KEY", "")
+    r = tagger.tag_untagged(store.connect(db_path))
+    assert r == {"configured": False, "pending": 4, "tagged": 0}
+
+
+def _tag(db_path, labels):
+    conn = store.connect(db_path)
+    keys = {k.split("?")[1][:2]: k for (k,) in conn.execute("SELECT report_key FROM reports")}
+    store.save_tags(conn, {keys[k]: {"report_type": "company", "rating": None, **v}
+                           for k, v in labels.items()}, "test", "2026-10-29T20:00")
+    conn.close()
+
+
+def test_state_tag_filters_labels_and_themes(db_path):
+    _tag(db_path, {
+        "A1": {"action": "results_beat", "tone": "bullish", "theme": "industrials"},
+        "A2": {"action": "pt_cut", "tone": "bearish", "theme": "restaurants_leisure"},
+        "A3": {"action": "upgrade", "tone": "bullish", "theme": "banks"},
+    })
+    s = build_rbc_state(days=None, db_path=db_path)
+    assert s["tagged"] and s["untagged"] == 1
+    assert s["reports"][0]["tone"] == "bullish" and s["reports"][-1]["tone"] is None
+    assert {t["theme"]: (t["count"], t["bullish"], t["bearish"]) for t in s["themes"]} == {
+        "industrials": (1, 1, 0), "restaurants_leisure": (1, 0, 1), "banks": (1, 1, 0)}
+    company = lambda **kw: [r["company"][:6] for r in build_rbc_state(days=None, db_path=db_path, **kw)["reports"]]
+    assert company(tone="bullish") == ["WESCO ", "Goldma"]
+    assert company(action="positive") == ["WESCO ", "Goldma"]
+    assert company(action="negative") == ["Life T"]
+    assert company(theme="banks", tone="bullish") == ["Goldma"]
+    assert len(company(tone="nonsense")) == 4               # unknown value ignored
+
+
+def test_state_db_without_tag_table_reads_untagged(db_path):
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP TABLE report_tags")
+    conn.commit()
+    conn.close()
+    s = build_rbc_state(days=None, db_path=db_path)
+    assert not s["tagged"] and len(s["reports"]) == 4 and s["themes"] == []
+    assert build_rbc_state(days=None, tone="bullish", db_path=db_path)["reports"] == []
