@@ -459,3 +459,10 @@ NEWS_WATCHLIST_DB_PATH = DATA_PATH / "news_watchlist.db"
 # to follow, and would otherwise get stamped with today's date/price as if
 # it just broke.
 NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS = 7
+# A candidate whose price (looked up at seed time) is below this many
+# dollars is skipped by seed_inbox() rather than seeded -- penny names were
+# flooding the inbox (and its alert emails) with dozens of items a day.
+# $1.00 is the conventional penny-stock line and cut ~60% of past inbox
+# items. Manual adds (typed in on the dashboard) are never filtered; 0
+# disables the filter.
+NEWS_WATCHLIST_MIN_PRICE = 1.00

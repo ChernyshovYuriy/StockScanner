@@ -57,7 +57,7 @@ from datetime import date, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 from concurrent_utils import acquire_lock
-from config import NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS, PRESS_RELEASE_DB_PATH, PRESS_RELEASE_HIGH_ONLY_FEEDS
+from config import NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS, NEWS_WATCHLIST_MIN_PRICE, PRESS_RELEASE_DB_PATH, PRESS_RELEASE_HIGH_ONLY_FEEDS
 from log_utils import log
 from manual_sell import get_market_price
 from market_data import DEFAULT_PROVIDER
@@ -167,6 +167,8 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
     processed, never seeded) -- this service is about fast follow-through
     on a fresh catalyst, and a stale article surfacing late (e.g. after
     the service was down for a while) has no such catalyst left to follow.
+    A candidate priced below NEWS_WATCHLIST_MIN_PRICE is skipped the same
+    way (marked processed, never seeded) -- penny names flooded the inbox.
     Returns the list of newly seeded/updated items (ticker/company/
     category/materiality/summary/flag_price) for the caller to alert on --
     [] if nothing new."""
@@ -190,6 +192,11 @@ def seed_inbox(run_id, conn, pr_db_path, price_fetcher, dry_run=False) -> list[d
             continue
         if price is None:
             log("news_watchlist", run_id, "price_unavailable", ticker=c["ticker"])
+            continue
+        if price < NEWS_WATCHLIST_MIN_PRICE:
+            log("news_watchlist", run_id, "candidate_below_min_price", ticker=c["ticker"], price=price)
+            if not dry_run:
+                store.mark_guid_processed(conn, c["guid"], now)
             continue
         if not dry_run:
             existing = store.find_pending_inbox_item(conn, c["ticker"])

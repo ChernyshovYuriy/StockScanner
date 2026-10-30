@@ -44,6 +44,13 @@ def _no_real_bar_download(monkeypatch):
     monkeypatch.setattr(news_watchlist_service, "_download_bars", lambda symbols, start, end: {})
 
 
+@pytest.fixture(autouse=True)
+def _no_min_price(monkeypatch):
+    """Most fixtures here use penny prices (0.12) -- disable the
+    NEWS_WATCHLIST_MIN_PRICE filter by default; its own tests re-enable it."""
+    monkeypatch.setattr(news_watchlist_service, "NEWS_WATCHLIST_MIN_PRICE", 0.0)
+
+
 def _seed_parsed_release(pr_db_path, guid, ticker, pubdate="Mon, 21 Sep 2026 08:36:00 GMT", **overrides):
     conn = pr_store.connect(pr_db_path)
     item = FeedItem(
@@ -189,6 +196,34 @@ def test_stale_candidate_dry_run_leaves_no_trace(tmp_path):
         price_fetcher=_fake_price({"OMI.V": 0.12}))
 
     assert store.list_by_status(conn, "inbox") == []
+    assert store.seeded_guids(conn) == set()
+
+
+def test_candidate_below_min_price_is_skipped_and_marked_processed(tmp_path, monkeypatch):
+    monkeypatch.setattr(news_watchlist_service, "NEWS_WATCHLIST_MIN_PRICE", 1.0)
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "OMI.V")
+    _seed_parsed_release(pr_db, "g2", "AEM.TO")
+    conn = store.connect(tmp_path / "nw.db")
+
+    seeded = news_watchlist_service.seed_inbox(
+        "run1", conn, pr_db, _fake_price({"OMI.V": 0.12, "AEM.TO": 150.0}))
+
+    assert [s["ticker"] for s in seeded] == ["AEM.TO"]
+    assert [i["ticker"] for i in store.list_by_status(conn, "inbox")] == ["AEM.TO"]
+    assert store.seeded_guids(conn) == {"g1", "g2"}
+
+
+def test_candidate_below_min_price_dry_run_leaves_no_trace(tmp_path, monkeypatch):
+    monkeypatch.setattr(news_watchlist_service, "NEWS_WATCHLIST_MIN_PRICE", 1.0)
+    pr_db = tmp_path / "pr.db"
+    _seed_parsed_release(pr_db, "g1", "OMI.V")
+    conn = store.connect(tmp_path / "nw.db")
+
+    seeded = news_watchlist_service.seed_inbox(
+        "run1", conn, pr_db, _fake_price({"OMI.V": 0.12}), dry_run=True)
+
+    assert seeded == []
     assert store.seeded_guids(conn) == set()
 
 
