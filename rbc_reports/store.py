@@ -73,8 +73,12 @@ def connect(db_path=DB_PATH):
 
 def ingested_files(conn) -> set:
     """Source filenames already ingested -- ingest.py skips re-parsing
-    them (a digest file never changes once saved)."""
-    return {r[0] for r in conn.execute("SELECT source_file FROM digests WHERE source_file IS NOT NULL")}
+    them (a digest file never changes once saved). A digest that yielded
+    no reports doesn't count, so a parser fix (e.g. after an RBC template
+    change) re-reads it on the next run instead of skipping it forever."""
+    return {r[0] for r in conn.execute(
+        "SELECT d.source_file FROM digests d WHERE d.source_file IS NOT NULL "
+        "AND EXISTS (SELECT 1 FROM reports r WHERE r.digest_as_of = d.as_of)")}
 
 
 def save_digest(conn, digest, source_file: str, ingested_at: str, commit: bool = True) -> int:

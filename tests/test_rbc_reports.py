@@ -160,6 +160,18 @@ def test_ingest_dir_skips_files_already_ingested(tmp_path):
     assert (s["already"], s["digests"], s["reports_new"]) == (1, 0, 0)
 
 
+def test_digest_that_yielded_no_reports_is_re_read(tmp_path):
+    folder = tmp_path / "reports"
+    folder.mkdir()
+    (folder / "digest.html").write_text(SAMPLE)
+    conn = store.connect(tmp_path / "rbc.db")
+    empty = parse_digest(SAMPLE)
+    empty.items = []
+    store.save_digest(conn, empty, "digest.html", "2026-10-29T19:30")
+    s = ingest_dir(folder, conn=conn)
+    assert (s["already"], s["reports_new"]) == (0, 4)
+
+
 def test_ingest_dir_dry_run_writes_nothing(tmp_path):
     folder = tmp_path / "reports"
     folder.mkdir()
