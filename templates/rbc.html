@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}RBC Research — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    .rbc-section { margin: 20px 0; }
+    .rbc-section h2 { font-size: 15px; margin: 0 0 10px; }
+    .rbc-note { color: var(--text-muted); font-size: 12px; margin: 4px 0 10px; }
+    .rbc-filters {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 12px 14px;
+    }
+    .rbc-filters .field { display: flex; flex-direction: column; gap: 3px; }
+    .rbc-filters label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.03em; color: var(--text-muted);
+    }
+    .rbc-filters input, .rbc-filters select {
+      border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
+      font-size: 13px; background: var(--page-bg); color: var(--text);
+    }
+    .rbc-btn {
+      background: var(--accent, #2f55d4); color: #fff; border: none;
+      border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;
+    }
+    .rbc-btn-plain {
+      background: none; border: 1px solid var(--border); color: var(--text);
+      border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px;
+      text-decoration: none;
+    }
+    .rbc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .rbc-chip {
+      display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px;
+      border: 1px solid var(--border); color: var(--text); text-decoration: none;
+    }
+    .rbc-chip b { color: var(--text-muted); font-weight: 600; margin-left: 4px; }
+    .rbc-chip.active { border-color: var(--accent); color: var(--accent); }
+    /* Mostly-text feed: left-align every column (dashboard.css defaults
+       non-first columns to right-aligned, built for numeric tables), and
+       let the report cell wrap -- see news_watchlist.html's .nw-summary
+       for why the wrapping lives on an inner <div>, not the <td>. */
+    .rbc-table th, .rbc-table td { text-align: left; vertical-align: top; }
+    .rbc-tight { width: 1%; }
+    .rbc-report { white-space: normal; overflow-wrap: break-word; max-width: 760px; }
+    .rbc-company { font-weight: 600; }
+    .rbc-view { color: var(--text-muted); font-size: 12px; margin-top: 3px; }
+    .rbc-tickers { white-space: normal; max-width: 220px; }
+    .rbc-tickers a { margin-right: 6px; }
+    .rbc-exch { color: var(--text-muted); font-size: 11px; }
+    .rbc-analysts { color: var(--text-muted); font-size: 12px; white-space: normal; max-width: 200px; }
+    .rbc-missed { color: var(--sell); font-weight: 600; }
+  </style>
+{% endblock %}
+{% block content %}
+  <h1>RBC Research</h1>
+  <p class="rbc-note">Your daily RBC Insight digests (RBC Capital Markets — All Reports), parsed from
+    <code>{{ reports_dir }}</code>. For your own decisions only: nothing here trades.</p>
+
+  {% if error %}<p class="banner banner-error">{{ error }}</p>{% endif %}
+  {% if message %}<p class="banner banner-info">{{ message }}</p>{% endif %}
+
+  <form class="rbc-filters" method="get" action="{{ url_for('rbc') }}">
+    <div class="field">
+      <label for="rbc-ticker">Ticker</label>
+      <input id="rbc-ticker" name="ticker" value="{{ ticker or '' }}" placeholder="e.g. GS" size="8">
+    </div>
+    <div class="field">
+      <label for="rbc-q">Search</label>
+      <input id="rbc-q" name="q" value="{{ query or '' }}" placeholder="company, headline, view, analyst" size="30">
+    </div>
+    <div class="field">
+      <label for="rbc-days">Period</label>
+      <select id="rbc-days" name="days">
+        {% for v, label in [("1", "Last day"), ("3", "Last 3 days"), ("7", "Last 7 days"), ("30", "Last 30 days"), ("all", "All")] %}
+          <option value="{{ v }}" {{ 'selected' if (days|string if days else 'all') == v }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="rbc-btn" type="submit">Show</button>
+    <a class="rbc-btn-plain" href="{{ url_for('rbc') }}">Reset</a>
+  </form>
+  <form method="post" action="{{ url_for('rbc_ingest') }}" style="margin-top:8px">
+    <button class="rbc-btn-plain" type="submit">Re-scan folder for new digests</button>
+  </form>
+
+  {% if top_tickers and not ticker %}
+  <div class="rbc-section">
+    <h2>Most covered {% if days %}(last {{ days }} day{{ 's' if days != 1 }}){% else %}(all time){% endif %}</h2>
+    <p class="rbc-note">Company notes only (sector notes and morning digests left out); click a ticker for its full timeline.</p>
+    <div class="rbc-chips">
+      {% for t in top_tickers %}
+        <a class="rbc-chip" href="{{ url_for('rbc', ticker=t.symbol) }}">{{ t.symbol }}<b>{{ t.count }}</b></a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="rbc-section">
+    <h2>
+      {% if ticker %}{{ ticker }} — every RBC report ({{ total_reports }}){% else %}Reports ({{ total_reports }}){% endif %}
+      {% if truncated %}<span class="rbc-note">— newest {{ reports|length }} shown</span>{% endif %}
+    </h2>
+    {% if reports %}
+    <table class="rbc-table">
+      <thead><tr><th class="rbc-tight">When (ET)</th><th>Report</th><th class="rbc-tight">Tickers</th><th class="rbc-tight">Analysts</th></tr></thead>
+      <tbody>
+      {% for r in reports %}
+        <tr>
+          <td>{{ r.date }}<br><span class="rbc-exch">{{ r.time }}</span></td>
+          <td><div class="rbc-report">
+            <span class="rbc-company">{{ r.company }}</span>{% if r.headline %} — {{ r.headline }}{% endif %}
+            {% if r.link %} <a href="{{ r.link }}" target="_blank" rel="noopener">open ↗</a>{% endif %}
+            {% if r.view %}<div class="rbc-view">{{ r.view }}</div>{% endif %}
+          </div></td>
+          <td><div class="rbc-tickers">
+            {% for t in r.tickers %}<a href="{{ url_for('rbc', ticker=t.symbol) }}">{{ t.symbol }}</a>{% if t.exchange %}<span class="rbc-exch">{{ t.exchange }}</span>{% endif %} {% endfor %}
+          </div></td>
+          <td><div class="rbc-analysts">{{ r.analysts }}</div></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="rbc-note">No reports{% if ticker or query %} match{% else %} yet — save a digest into the folder above and press Re-scan{% endif %}.</p>
+    {% endif %}
+  </div>
+
+  {% if digests %}
+  <div class="rbc-section">
+    <h2>Digests</h2>
+    <p class="rbc-note">Each digest email lists only the first 100 reports of the day; the rest need an RBC Insight login.</p>
+    <table class="rbc-table" style="width:auto">
+      <thead><tr><th>Date</th><th>In email</th><th>Published</th><th>Missed</th></tr></thead>
+      <tbody>
+      {% for d in digests %}
+        <tr><td>{{ d.date }}</td><td>{{ d.shown if d.shown is not none else '?' }}</td><td>{{ d.total if d.total is not none else '?' }}</td>
+          <td>{% if d.missed %}<span class="rbc-missed">{{ d.missed }}</span>{% else %}0{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+{% endblock %}

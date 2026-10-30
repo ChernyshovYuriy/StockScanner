@@ -466,3 +466,13 @@ NEWS_WATCHLIST_MAX_ARTICLE_AGE_DAYS = 7
 # items. Manual adds (typed in on the dashboard) are never filtered; 0
 # disables the filter.
 NEWS_WATCHLIST_MIN_PRICE = 1.00
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RBC research tracker -- 12th service, organizes the user's daily "RBC
+# Insight Alert" digest emails (RBC Capital Markets - All Reports) for their
+# REAL account decisions (see rbc_reports/__init__.py). No capital or
+# positions. Step 1: the user saves each digest's HTML into
+# RBC_REPORTS_DIR; `python -m rbc_reports.ingest` parses every report in it
+# into its own SQLite DB, shown on the dashboard's /rbc tab.
+RBC_REPORTS_DIR = Path.home() / "Documents" / "rbc" / "reports"
+RBC_REPORTS_DB_PATH = DATA_PATH / "rbc_reports.db"

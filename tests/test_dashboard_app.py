@@ -432,6 +432,47 @@ def test_news_watchlist_volumes_endpoint_handles_no_tickers(client, monkeypatch)
     assert resp.get_json() == {"volumes": {}}
 
 
+def _rbc_db(tmp_path):
+    from rbc_reports import store as rbc_store
+    from rbc_reports.parser import parse_digest
+    from test_rbc_reports import SAMPLE
+    path = tmp_path / "rbc.db"
+    conn = rbc_store.connect(path)
+    rbc_store.save_digest(conn, parse_digest(SAMPLE), "a.html", "2026-10-29T19:30")
+    conn.close()
+    return path
+
+
+def test_rbc_page_renders_feed_and_ticker_timeline(client, monkeypatch, tmp_path):
+    import rbc_dashboard_data
+    path = _rbc_db(tmp_path)
+    monkeypatch.setattr("dashboard_app.build_rbc_state",
+                        lambda **kw: rbc_dashboard_data.build_rbc_state(db_path=path, **kw))
+    resp = client.get("/rbc?days=all")
+    assert resp.status_code == 200
+    assert b"WESCO International" in resp.data
+    assert b"Industrial Metals Weekly" in resp.data
+    resp = client.get("/rbc?ticker=GS")
+    assert b"GS \xe2\x80\x94 every RBC report (1)" in resp.data
+    assert b"WESCO" not in resp.data
+
+
+def test_rbc_page_renders_with_no_db(client, monkeypatch, tmp_path):
+    import rbc_dashboard_data
+    monkeypatch.setattr("dashboard_app.build_rbc_state",
+                        lambda **kw: rbc_dashboard_data.build_rbc_state(db_path=tmp_path / "none.db", **kw))
+    resp = client.get("/rbc")
+    assert resp.status_code == 200
+    assert b"No reports yet" in resp.data
+
+
+def test_rbc_ingest_reports_missing_folder(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("dashboard_app.RBC_REPORTS_DIR", tmp_path / "missing")
+    resp = client.post("/rbc/ingest")
+    assert resp.status_code == 302
+    assert "Folder+not+found" in resp.headers["Location"] or "Folder%20not%20found" in resp.headers["Location"]
+
+
 def test_scanner_page_renders_when_no_rows(client, monkeypatch):
     monkeypatch.setattr("dashboard_app.build_scanner_state", lambda: {"rows": [], "run_date": None})
     resp = client.get("/scanner")

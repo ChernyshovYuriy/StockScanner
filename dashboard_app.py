@@ -42,6 +42,7 @@ from config import (
     KANGAROO_RR_TARGET,
     MACRO_MAX_POSITIONS,
     MACRO_RISK_PER_TRADE_PCT,
+    RBC_REPORTS_DIR,
 )
 from conviction_dashboard_data import build_conviction_view
 from conviction_watchlist import quality_filter as conviction_quality_filter
@@ -79,6 +80,8 @@ from news_watchlist_dashboard_data import (
     build_news_watchlist_state, build_quote_link, fetch_ticker_volume, fetch_volumes,
     format_volume_compact, invalidate_news_watchlist_cache,
 )
+from rbc_dashboard_data import build_rbc_state
+from rbc_reports.ingest import ingest_dir as rbc_ingest_dir
 from scanner_dashboard_data import build_scanner_state, scanner_criteria_columns
 from scanner_pipeline import run_pipeline as run_scanner_pipeline
 from time_utils import market_now, market_today_str
@@ -672,6 +675,37 @@ def create_app() -> Flask:
             conn.close()
         invalidate_news_watchlist_cache()
         return redirect(url_for("news_watchlist"))
+
+    @app.get("/rbc")
+    def rbc():
+        """Read view of the RBC research tracker (rbc_reports/) -- the
+        user's daily RBC Insight digests as a searchable feed plus a
+        per-ticker timeline (?ticker=GS). The one write is the Re-scan
+        button below (POST /rbc/ingest)."""
+        days_arg = request.args.get("days", "7")
+        days = None if days_arg == "all" else int(days_arg) if days_arg.isdigit() else 7
+        try:
+            state = _read_with_retry(lambda: build_rbc_state(
+                days=days, ticker=request.args.get("ticker"), query=request.args.get("q")))
+            error = request.args.get("error")
+        except (sqlite3.Error, OSError):
+            state = build_rbc_state(days=days, db_path=Path("/nonexistent"))
+            error = "Database temporarily unavailable — retrying on next refresh."
+        return render_template("rbc.html", error=error, message=request.args.get("message"),
+                               reports_dir=str(RBC_REPORTS_DIR), **state)
+
+    @app.post("/rbc/ingest")
+    def rbc_ingest():
+        """Re-scans RBC_REPORTS_DIR for newly saved digests (idempotent --
+        see rbc_reports/ingest.py)."""
+        if not RBC_REPORTS_DIR.is_dir():
+            return redirect(url_for("rbc", error=f"Folder not found: {RBC_REPORTS_DIR}"))
+        try:
+            s = rbc_ingest_dir(RBC_REPORTS_DIR)
+        except Exception as e:
+            return redirect(url_for("rbc", error=f"Ingest failed: {e}"))
+        return redirect(url_for("rbc", message=f"Scanned {s['digests']} digest(s): "
+                                               f"{s['reports_new']} new report(s)."))
 
     @app.get("/history")
     def history():
