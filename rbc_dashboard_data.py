@@ -206,7 +206,9 @@ def _track_record(conn) -> dict:
     cols = ", ".join(f"o.ret_{h}, o.bench_{h}" for h in outcomes.HORIZONS)
     rows = conn.execute(
         f"SELECT o.yahoo_symbol, o.entry_date, r.published_at, g.tone, "
-        f"(g.tone = 'bullish' OR g.action IN ({marks})), o.off_high, o.turning_up, {cols} "
+        f"(g.tone = 'bullish' OR g.action IN ({marks})), o.off_high, o.turning_up, {cols}, "
+        "r.company, r.headline, r.link, (SELECT t.symbol FROM report_tickers t "
+        "WHERE t.report_key = o.report_key ORDER BY t.position LIMIT 1) "
         "FROM note_outcomes o JOIN reports r ON r.report_key = o.report_key "
         "JOIN report_tags g ON g.report_key = o.report_key", list(POSITIVE_ACTIONS)).fetchall()
     if not rows:
@@ -217,6 +219,7 @@ def _track_record(conn) -> dict:
              "bullish": bool(row[4]), "off_high": row[5], "turning_up": row[6]}
         for j, h in enumerate(outcomes.HORIZONS):
             e[f"ret_{h}"], e[f"bench_{h}"] = row[7 + 2 * j], row[8 + 2 * j]
+        e["company"], e["headline"], e["link"], e["symbol"] = row[7 + 2 * len(outcomes.HORIZONS):]
         events.append(e)
     groups = outcomes.summarize(events)
     return {"track_record": groups, "track_horizons": outcomes.HORIZONS,

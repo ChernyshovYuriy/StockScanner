@@ -124,8 +124,9 @@ def summarize(events: list, horizons=HORIZONS) -> list:
     tone, off_high, turning_up, ret_<h>, bench_<h>. One event per stock per
     entry day (the earliest note). Returns per group: {"label", "events",
     "by_horizon": {h: {"n", "avg_excess", "median_excess", "hit_rate",
-    "avg_return"} or None}} -- `excess` is return minus benchmark over the
-    same days, `hit_rate` the share that beat the benchmark."""
+    "avg_return"} or None}, "members": the group's events, newest first} --
+    `excess` is return minus benchmark over the same days, `hit_rate` the
+    share that beat the benchmark."""
     seen, unique = set(), []
     for e in sorted(events, key=lambda e: e["published_at"]):
         k = (e["yahoo_symbol"], e["entry_date"])
@@ -149,5 +150,6 @@ def summarize(events: list, horizons=HORIZONS) -> list:
                 "hit_rate": sum(x > 0 for x in excess) / len(excess),
                 "avg_return": sum(e[f"ret_{h}"] for e in done) / len(done),
             }
-        rows.append({"label": label, "events": len(members), "by_horizon": by_h})
+        rows.append({"label": label, "events": len(members), "by_horizon": by_h,
+                     "members": sorted(members, key=lambda e: e["published_at"], reverse=True)})
     return rows

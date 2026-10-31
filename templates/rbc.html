@@ -56,6 +56,9 @@
     .rbc-theme b.bear { color: var(--sell); font-weight: 600; margin-left: 2px; }
     .rbc-num { text-align: right !important; white-space: nowrap; }
     .rbc-up { color: var(--hold); }
+    .rbc-track-group { cursor: pointer; }
+    .rbc-track-group:hover td { background: var(--surface-hover, rgba(127,127,127,0.08)); }
+    .rbc-track-members { margin: 4px 0 8px; font-size: 12px; }
     .rbc-down { color: var(--sell); }
     .rbc-price { font-size: 13px; margin: 4px 0 10px; }
   </style>
@@ -167,12 +170,39 @@
       </tr></thead>
       <tbody>
       {% for g in track_record %}
-        <tr><td>{{ g.label }}</td>
+        <tr class="rbc-track-group" title="Show the stocks in this group"
+            onclick="var d=document.getElementById('track-{{ loop.index }}'); d.hidden=!d.hidden; this.querySelector('.rbc-caret').textContent=d.hidden?'▸':'▾';">
+          <td><span class="rbc-caret">▸</span> {{ g.label }} <span class="rbc-exch">({{ g.events }})</span></td>
           {% for h in track_horizons %}{% set c = g.by_horizon[h] %}
             {% if c %}<td class="rbc-num">{{ c.n }}</td><td class="rbc-num">{{ pct(c.avg_excess) }}</td><td class="rbc-num">{{ '%.0f'|format(c.hit_rate * 100) }}%</td>
             {% else %}<td class="rbc-num">—</td><td></td><td></td>{% endif %}
           {% endfor %}
         </tr>
+        <tr id="track-{{ loop.index }}" hidden><td colspan="{{ 1 + 3 * track_horizons|length }}">
+          {% if g.members %}
+          <table class="rbc-table rbc-track-members">
+            <thead><tr><th class="rbc-tight">Ticker</th><th>Note</th><th class="rbc-tight">Entry</th>
+              <th class="rbc-num">Off 52w high</th><th class="rbc-tight">Turning up</th>
+              {% for h in track_horizons %}<th class="rbc-num">{{ h }}d vs market</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for e in g.members %}
+              <tr>
+                <td>{% if e.symbol %}<a href="{{ url_for('rbc', ticker=e.symbol) }}">{{ e.symbol }}</a><br>{% endif %}<span class="rbc-exch">{{ e.yahoo_symbol }}</span></td>
+                <td><span class="rbc-company">{{ e.company or '' }}</span>{% if e.headline %} — {{ e.headline }}{% endif %}
+                  {% if e.link %} <a href="{{ e.link }}" target="_blank" rel="noopener">open ↗</a>{% endif %}
+                  {% if e.tone %}<span class="badge badge-{{ e.tone }}">{{ e.tone }}</span>{% endif %}</td>
+                <td class="rbc-tight">{{ e.entry_date }}</td>
+                <td class="rbc-num">{{ pct(e.off_high) }}</td>
+                <td class="rbc-tight">{{ 'yes' if e.turning_up == 1 else 'no' if e.turning_up == 0 else '—' }}</td>
+                {% for h in track_horizons %}
+                  <td class="rbc-num">{% if e['ret_' ~ h] is not none and e['bench_' ~ h] is not none %}{{ pct(e['ret_' ~ h] - e['bench_' ~ h]) }}{% else %}—{% endif %}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% else %}<span class="rbc-note">No stocks in this group yet.</span>{% endif %}
+        </td></tr>
       {% endfor %}
       </tbody>
     </table>

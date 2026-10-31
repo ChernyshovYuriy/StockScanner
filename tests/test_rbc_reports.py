@@ -682,6 +682,8 @@ def test_summarize_groups_and_dedups():
     assert rows["Bearish"]["by_horizon"][20]["avg_excess"] == -0.08
     assert rows["Neutral"]["events"] == 0
     assert rule["by_horizon"][5] is None
+    assert [e["yahoo_symbol"] for e in rule["members"]] == ["A"]
+    assert [e["yahoo_symbol"] for e in rows["All bullish"]["members"]] == ["B", "C", "A"]  # newest first (B/C tie)
 
 
 def test_state_track_record(db_path):
