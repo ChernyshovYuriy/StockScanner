@@ -105,6 +105,7 @@
     </div>
     {% endfor %}
     <button class="rbc-btn" type="submit">Show</button>
+    <input type="hidden" name="feed" value="1">
     <a class="rbc-btn-plain" href="{{ url_for('rbc') }}">Reset</a>
   </form>
   <form method="post" action="{{ url_for('rbc_ingest') }}" style="margin-top:8px">
@@ -119,7 +120,7 @@
     <p class="rbc-note">
       {{ L.reports }} report(s){% for a in L.alerts %} · {{ a.subscription }} ({{ a.time }}): {{ a.shown if a.shown is not none else '?' }} of {{ a.total if a.total is not none else '?' }}{% if a.missed %} — <span class="rbc-missed">{{ a.missed }} missed</span>{% endif %}{% endfor %}
       {% if tagged %} · <span class="rbc-up">{{ L.tones.bullish }} bullish</span> / {{ L.tones.neutral }} neutral / <span class="rbc-down">{{ L.tones.bearish }} bearish</span>{% if L.tones.untagged %} / {{ L.tones.untagged }} untagged{% endif %}{% endif %}
-      · <a href="{{ url_for('rbc', days=1) }}">see the feed</a></p>
+      · <a href="{{ url_for('rbc', days=1, feed=1) }}#rbc-feed">see the feed</a></p>
     {% if L.moves %}
     <table class="rbc-table" style="width:auto">
       <tbody>
@@ -263,7 +264,7 @@
   </div>
   {% endif %}
 
-  <div class="rbc-section">
+  <div class="rbc-section" id="rbc-feed">
     <h2>
       {% if ticker %}{{ ticker }} — every RBC report ({{ total_reports }}){% else %}Reports ({{ total_reports }}){% endif %}
       {% if truncated %}<span class="rbc-note">— newest {{ reports|length }} shown</span>{% endif %}
@@ -274,7 +275,10 @@
       20 days {{ pct(p.ret_20d) }} ·
       {% if p.turning_up %}turning up{% elif p.above_sma50 %}above 50-day average{% else %}below 50-day average{% endif %}</p>
     {% endif %}
-    {% if reports %}
+    {% if not feed_shown %}
+      <p class="rbc-note"><a class="rbc-btn-plain" href="{{ url_for('rbc', **dict(request.args.to_dict(), feed=1)) }}#rbc-feed">Show reports</a>
+        Hidden until asked for — a search, ticker or tag filter shows the matching reports right away.</p>
+    {% elif reports %}
     <table class="rbc-table">
       <thead><tr><th class="rbc-tight">When (ET)</th><th>Report</th><th class="rbc-tight">Tickers</th><th class="rbc-tight">Analysts</th></tr></thead>
       <tbody>

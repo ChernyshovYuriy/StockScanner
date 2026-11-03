@@ -450,8 +450,12 @@ def test_rbc_page_renders_feed_and_ticker_timeline(client, monkeypatch, tmp_path
                         lambda **kw: rbc_dashboard_data.build_rbc_state(db_path=path, **kw))
     resp = client.get("/rbc?days=all")
     assert resp.status_code == 200
+    # The feed is loaded on demand only.
+    assert b"Reports (4)" in resp.data and b"Show reports" in resp.data
+    assert b"Industrial Metals Weekly" not in resp.data
+    resp = client.get("/rbc?days=all&feed=1")
     assert b"WESCO International" in resp.data
-    assert b"Industrial Metals Weekly" in resp.data
+    assert b"Industrial Metals Weekly" in resp.data and b"Show reports" not in resp.data
     resp = client.get("/rbc?ticker=GS")
     assert b"GS \xe2\x80\x94 every RBC report (1)" in resp.data
     assert b"WESCO" not in resp.data

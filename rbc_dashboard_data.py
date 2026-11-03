@@ -57,6 +57,7 @@ def _empty_state(days, ticker, query, tags):
             "track_record": [], "track_horizons": outcomes.HORIZONS, "track_events": 0,
             "track_first": None, "latest": None,
             "ticker": ticker, "query": query, "tags": tags, "total_reports": 0, "truncated": False,
+            "feed_shown": True,
             "tagged": False, "untagged": 0}
 
 
@@ -77,7 +78,8 @@ def _tag_filters(tone, action, theme, report_type) -> dict:
 def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str | None = None,
                     db_path=RBC_REPORTS_DB_PATH, now: datetime | None = None,
                     tone: str | None = None, action: str | None = None, theme: str | None = None,
-                    report_type: str | None = None, show_all_candidates: bool = False) -> dict:
+                    report_type: str | None = None, show_all_candidates: bool = False,
+                    with_feed: bool = True) -> dict:
     """Feed rows for the last `days` days (None = all), optionally only one
     ticker symbol's reports or those matching a free-text `query` (company,
     headline, view or analyst). A ticker view ignores `days` -- it's that
@@ -133,7 +135,7 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
             f"r.analysts, {tag_cols} FROM reports r {join}{clause} "
             f"ORDER BY r.published_at DESC LIMIT ?",
             params + [FEED_LIMIT],
-        ).fetchall()
+        ).fetchall() if with_feed else []
         keys = [r[0] for r in rows]
         tickers_by_key: dict = {}
         for i in range(0, len(keys), 500):
@@ -197,7 +199,8 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
         "themes": [{"theme": t, "count": n, "bullish": b or 0, "bearish": x or 0}
                    for t, n, b, x in themes if t != "other"],
         "days": days, "ticker": ticker, "query": query, "tags": tags,
-        "total_reports": total, "truncated": total > len(reports),
+        "total_reports": total, "truncated": with_feed and total > len(reports),
+        "feed_shown": with_feed,
         "tagged": tagged, "untagged": untagged, "ticker_price": ticker_price, "latest": latest,
         **cands, **track,
     }

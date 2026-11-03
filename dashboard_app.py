@@ -691,7 +691,11 @@ def create_app() -> Flask:
                 days=days, ticker=request.args.get("ticker"), query=request.args.get("q"),
                 tone=request.args.get("tone"), action=request.args.get("action"),
                 theme=request.args.get("theme"), report_type=request.args.get("type"),
-                show_all_candidates=request.args.get("cand") == "all"))
+                show_all_candidates=request.args.get("cand") == "all",
+                # The feed grows every day: built only on demand (?feed=1),
+                # or when a ticker/search/tag filter narrows it.
+                with_feed=any(request.args.get(k) for k in
+                              ("feed", "ticker", "q", "tone", "action", "theme", "type"))))
             error = request.args.get("error")
         except (sqlite3.Error, OSError):
             state = build_rbc_state(days=days, db_path=Path("/nonexistent"))
