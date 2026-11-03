@@ -433,6 +433,22 @@ def test_state_tag_filters_labels_and_themes(db_path):
     assert len(company(tone="nonsense")) == 4               # unknown value ignored
 
 
+def test_state_latest_digest_summary(db_path):
+    _tag(db_path, {
+        "A1": {"action": "results_beat", "tone": "bullish", "theme": "industrials"},
+        "A2": {"action": "pt_cut", "tone": "bearish", "theme": "restaurants_leisure"},
+        "A3": {"action": "upgrade", "tone": "bullish", "theme": "banks"},
+    })
+    # A filter or a short window never hides it -- it's the newest digest regardless.
+    L = build_rbc_state(days=1, tone="neutral", db_path=db_path, now=datetime(2026, 12, 1))["latest"]
+    assert L["date"] == "2026-10-29" and L["reports"] == 4
+    assert L["tones"] == {"bullish": 2, "neutral": 0, "bearish": 1, "untagged": 1}
+    assert L["alerts"] == [{"time": "19:01", "subscription": "RBC Capital Markets - All Reports",
+                            "shown": 4, "total": 9, "missed": 5}]
+    assert [(m["label"], [i["symbol"] for i in m["notes"]]) for m in L["moves"]] == [
+        ("Upgrades", ["GS"]), ("PT cuts", ["LTH"]), ("Beats", ["WCC"])]
+
+
 def test_state_db_without_tag_table_reads_untagged(db_path):
     import sqlite3
     conn = sqlite3.connect(db_path)

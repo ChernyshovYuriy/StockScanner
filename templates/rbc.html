@@ -113,6 +113,33 @@
 
   {% macro pct(v, signed=True) %}{% if v is none %}—{% else %}<span class="{{ 'rbc-up' if v > 0 else 'rbc-down' if v < 0 }}">{{ '%+.1f'|format(v * 100) if signed else '%.0f'|format(v * 100) }}%</span>{% endif %}{% endmacro %}
 
+  {% if latest and not ticker %}{% set L = latest %}
+  <div class="rbc-section rbc-latest">
+    <h2>Latest digest — {{ L.date }}</h2>
+    <p class="rbc-note">
+      {{ L.reports }} report(s){% for a in L.alerts %} · {{ a.subscription }} ({{ a.time }}): {{ a.shown if a.shown is not none else '?' }} of {{ a.total if a.total is not none else '?' }}{% if a.missed %} — <span class="rbc-missed">{{ a.missed }} missed</span>{% endif %}{% endfor %}
+      {% if tagged %} · <span class="rbc-up">{{ L.tones.bullish }} bullish</span> / {{ L.tones.neutral }} neutral / <span class="rbc-down">{{ L.tones.bearish }} bearish</span>{% if L.tones.untagged %} / {{ L.tones.untagged }} untagged{% endif %}{% endif %}
+      · <a href="{{ url_for('rbc', days=1) }}">see the feed</a></p>
+    {% if L.moves %}
+    <table class="rbc-table" style="width:auto">
+      <tbody>
+      {% for m in L.moves %}
+        <tr><td class="rbc-tight"><b>{{ m.label }}</b> <span class="rbc-exch">{{ m.notes|length }}</span></td>
+          <td><div class="rbc-chips">
+            {% for i in m.notes %}
+              <a class="rbc-chip {{ 'rbc-up' if i.tone == 'bullish' else 'rbc-down' if i.tone == 'bearish' }}"
+                 href="{{ i.link if not i.symbol else url_for('rbc', ticker=i.symbol) }}"
+                 {% if not i.symbol %}target="_blank" rel="noopener"{% endif %}
+                 title="{{ i.company }}{% if i.headline %} — {{ i.headline }}{% endif %}">{{ i.symbol or i.company }}</a>
+            {% endfor %}
+          </div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% elif tagged %}<p class="rbc-note">No upgrades, downgrades, initiations, PT changes or results beats/misses tagged in this digest{% if L.tones.untagged %} yet{% endif %}.</p>{% endif %}
+  </div>
+  {% endif %}
+
   {% if not ticker and (candidates_all or candidates_unpriced) %}
   <div class="rbc-section">
     <h2>Candidates — bullish notes, last {{ candidate_days }} days

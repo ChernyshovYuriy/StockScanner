@@ -39,6 +39,12 @@ ACTION_GROUPS = {
     "positive": ("upgrade", "pt_raise", "initiation", "results_beat"),
     "negative": ("downgrade", "pt_cut", "results_miss"),
 }
+# The "Latest digest" summary's rows, in display order: (label, actions).
+LATEST_ACTION_ROWS = (
+    ("Upgrades", ("upgrade",)), ("Downgrades", ("downgrade",)), ("Initiations", ("initiation",)),
+    ("PT raises", ("pt_raise",)), ("PT cuts", ("pt_cut",)),
+    ("Beats", ("results_beat",)), ("Misses", ("results_miss",)),
+)
 
 
 def _connect(db_path):
@@ -49,7 +55,7 @@ def _empty_state(days, ticker, query, tags):
     return {"reports": [], "digests": [], "top_tickers": [], "themes": [], "days": days,
             "candidates": [], "candidates_all": 0, "candidates_unpriced": 0, "ticker_price": None,
             "track_record": [], "track_horizons": outcomes.HORIZONS, "track_events": 0,
-            "track_first": None,
+            "track_first": None, "latest": None,
             "ticker": ticker, "query": query, "tags": tags, "total_reports": 0, "truncated": False,
             "tagged": False, "untagged": 0}
 
@@ -163,6 +169,7 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
         cands = _candidates(conn, now, show_all_candidates)
         track = _track_record(conn)
         ticker_price = _ticker_price(conn, ticker) if ticker else None
+        latest = _latest_digest(conn, tagged)
 
         digests = conn.execute(
             "SELECT as_of, subscription, shown, total FROM digests "
@@ -191,7 +198,45 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
                    for t, n, b, x in themes if t != "other"],
         "days": days, "ticker": ticker, "query": query, "tags": tags,
         "total_reports": total, "truncated": total > len(reports),
-        "tagged": tagged, "untagged": untagged, "ticker_price": ticker_price, **cands, **track,
+        "tagged": tagged, "untagged": untagged, "ticker_price": ticker_price, "latest": latest,
+        **cands, **track,
+    }
+
+
+def _latest_digest(conn, tagged: bool) -> dict | None:
+    """The newest digest day at a glance -- independent of the page's
+    filters, so it's always at the top instead of below the growing feed:
+    each alert's shown/total, the reports' tone split, and the rating/PT/
+    results moves (LATEST_ACTION_ROWS), each by its first-listed ticker."""
+    row = conn.execute("SELECT MAX(substr(as_of, 1, 10)) FROM digests").fetchone()
+    if not row or not row[0]:
+        return None
+    day = row[0]
+    alerts = conn.execute(
+        "SELECT as_of, subscription, shown, total FROM digests WHERE substr(as_of, 1, 10) = ? "
+        "ORDER BY as_of DESC, subscription", [day]).fetchall()
+    in_day = "r.digest_as_of IN (SELECT as_of FROM digests WHERE substr(as_of, 1, 10) = ?)"
+    join = "LEFT JOIN report_tags g ON g.report_key = r.report_key " if tagged else ""
+    cols = "g.action, g.tone" if tagged else "NULL, NULL"
+    rows = conn.execute(
+        f"SELECT r.report_key, r.company, r.title, r.headline, r.link, {cols}, "
+        f"(SELECT symbol FROM report_tickers t WHERE t.report_key = r.report_key ORDER BY position LIMIT 1) "
+        f"FROM reports r {join}WHERE {in_day} ORDER BY r.published_at DESC", [day]).fetchall()
+    tones = {"bullish": 0, "neutral": 0, "bearish": 0, "untagged": 0}
+    by_action: dict = {}
+    for _key, company, title, headline, link, act, tone, symbol in rows:
+        tones[tone if tone in tones else "untagged"] += 1
+        by_action.setdefault(act, []).append({
+            "symbol": symbol, "company": company or title, "headline": headline,
+            "link": link, "tone": tone})
+    moves = [{"label": label, "notes": [i for a in acts for i in by_action.get(a, [])]}
+             for label, acts in LATEST_ACTION_ROWS]
+    return {
+        "date": day, "reports": len(rows), "tones": tones,
+        "alerts": [{"time": a[11:16], "subscription": sub, "shown": sh, "total": t,
+                    "missed": (t - sh) if (sh is not None and t is not None) else 0}
+                   for a, sub, sh, t in alerts],
+        "moves": [m for m in moves if m["notes"]],
     }
 
 
