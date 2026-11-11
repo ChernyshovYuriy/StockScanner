@@ -102,8 +102,9 @@ def score_notes(notes, bars: dict) -> dict:
 
 
 # Track-record groups, in display order: (label, predicate over an event).
-# "bullish" = the Candidates table's own definition (tone bullish, or an
-# upgrade / PT raise / initiation / beat).
+# "bullish" = the Candidates table's own definition: the tagger's tone is
+# bullish. A positive action alone (a beat, a PT raise) doesn't count --
+# RBC often frames those as neutral ("beat, but guidance falls short").
 def _beaten(e):
     return e["off_high"] is not None and e["off_high"] <= -RBC_CANDIDATE_DIP_PCT
 

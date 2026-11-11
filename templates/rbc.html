@@ -145,7 +145,7 @@
   <div class="rbc-section">
     <h2>Candidates — bullish notes, last {{ candidate_days }} days
       {% if show_all_candidates %}(all {{ candidates_all }}){% else %}(≥{{ '%.0f'|format(candidate_dip_pct * 100) }}% off the 52-week high: {{ candidates|length }} of {{ candidates_all }}){% endif %}</h2>
-    <p class="rbc-note">Stocks with a bullish (or upgrade / PT raise / initiation / beat) company note, with where the price
+    <p class="rbc-note">Stocks with a company note tagged bullish, with where the price
       stands. "Turning up" = close above a rising 20-day average. "Since note" = from the last close before RBC published.
       Prices refresh once per trading day (19:30 run). A research list, not a signal — nothing here is validated yet.
       {% if candidates_unpriced %}{{ candidates_unpriced }} more without a price (no North-American listing found, or not looked up yet).{% endif %}

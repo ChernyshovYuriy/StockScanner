@@ -479,13 +479,15 @@ def test_names_match():
     assert not prices.names_match("Loblaw Companies Limited", "Loews Corporation")
     assert not prices.names_match("First Horizon Corporation", "First Industrial Realty Trust, Inc.")
     assert not prices.names_match("", "Anything")
+    assert not prices.names_match("Sandfire Resources Limited", "Sandfire Resources America Inc.")
+    assert prices.names_match("A&W Food Services of Canada Inc.", "A & W Food Services of Canada Inc.")
 
 
 def test_yahoo_candidates():
-    assert prices.yahoo_candidates("GS", "") == ["GS", "GS.TO", "GS.V"]
+    assert prices.yahoo_candidates("GS", "") == ["GS.TO", "GS", "GS.V"]
     assert prices.yahoo_candidates("GS", "US") == ["GS"]
     assert prices.yahoo_candidates("CTC.A", "CN") == ["CTC-A.TO", "CTC-A.V"]
-    assert prices.yahoo_candidates("AV.", "") == ["AV", "AV.TO", "AV.V"]
+    assert prices.yahoo_candidates("AV.", "") == ["AV.TO", "AV", "AV.V"]
     assert prices.yahoo_candidates("ANTO", "LN") == []
 
 
@@ -515,6 +517,31 @@ def test_resolve_symbols_skips_depositary_receipts(db_path):
     conn = store.connect(db_path)
     prices.resolve_symbols(conn, info_fn=lambda s: info.get(s, {}), pacer=_NoPace())
     assert conn.execute("SELECT yahoo_symbol FROM symbol_map WHERE symbol='WCC'").fetchone() == ("WCC.TO",)
+
+
+def test_interlisted_canadian_name_maps_to_its_tsx_listing(db_path):
+    info = {"WCC": {"longName": "WESCO International, Inc.", "currency": "USD"},
+            "WCC.TO": {"longName": "WESCO International, Inc.", "currency": "CAD"}}
+    conn = store.connect(db_path)
+    prices.resolve_symbols(conn, info_fn=lambda s: info.get(s, {}), pacer=_NoPace())
+    assert conn.execute("SELECT yahoo_symbol, currency FROM symbol_map WHERE symbol='WCC'").fetchone() == (
+        "WCC.TO", "CAD")
+
+
+def test_recheck_symbols_re_resolves_found_mappings(db_path):
+    conn = _priced_db(db_path)                       # WCC/GS/LTH found, checked 2026-10-29
+    store.save_symbol(conn, "SFR", "", "Sandfire Resources Limited", "SFR.V",
+                      "Sandfire Resources America Inc.", "CAD", "2026-10-29")
+    info = {"WCC.TO": {"longName": "WESCO International, Inc.", "currency": "CAD"},
+            "GS": {"longName": "The Goldman Sachs Group, Inc.", "currency": "USD"},
+            "LTH": {"longName": "Life Time Group Holdings, Inc.", "currency": "USD"},
+            "SFR.V": {"longName": "Sandfire Resources America Inc.", "currency": "CAD"}}
+    r = prices.recheck_symbols(conn, "2026-10-30", info_fn=lambda s: info.get(s, {}), pacer=_NoPace())
+    assert r == {"checked": 4, "changed": 2, "stopped": False}
+    got = dict(conn.execute("SELECT symbol, yahoo_symbol FROM symbol_map").fetchall())
+    assert got == {"WCC": "WCC.TO", "GS": "GS", "LTH": "LTH", "SFR": None}
+    # Resumable: a re-checked row's checked_at is now, past the cutoff.
+    assert prices.recheck_symbols(conn, "2026-10-30", info_fn=lambda s: {}, pacer=_NoPace())["checked"] == 0
 
 
 def test_resolve_symbols_records_misses_and_stops_on_rate_limit(db_path):
@@ -583,7 +610,7 @@ def test_sync_prices_writes_context_and_base_close(db_path):
     assert sorted(synced) == ["GS", "SPY", "WCC", "XIU.TO"]  # + benchmarks; LTH's 4-ticker list isn't a company note
     # WCC's 6:24pm note enters at the next session's close (not in the bars yet);
     # GS's previous-evening note enters at the 29th's close.
-    assert r == {"symbols": 2, "with_context": 2, "scored": 1, "stopped": False}
+    assert r == {"symbols": 2, "with_context": 2, "scored": 1, "stale": 0, "stopped": False}
     assert dict(conn.execute("SELECT yahoo_symbol, turning_up FROM price_context").fetchall()) == {
         "WCC": 1, "GS": 1}
     base = conn.execute("SELECT base_date, base_close FROM report_prices WHERE yahoo_symbol='WCC'").fetchone()
@@ -595,6 +622,23 @@ def test_sync_prices_stops_when_a_chunk_gets_no_bars(db_path):
     r = prices.sync_prices(conn, now=datetime(2026, 10, 29, 19, 30), pacer=_NoPace(), cache_conn=object(),
                            sync_fn=lambda *a, **k: None, load_fn=lambda *a, **k: {})
     assert r["stopped"] and r["with_context"] == 0
+
+
+def test_sync_prices_stops_when_a_chunk_gets_no_new_bars(db_path):
+    """A failed download leaves a known symbol's older cached bars in
+    place: the chunk isn't empty, but nothing reached the benchmarks' day."""
+    conn = _priced_db(db_path)
+    fresh, behind = _bars([10.0] * 255, end="2026-10-29"), _bars([10.0] * 255, end="2026-10-28")
+    bars = {"SPY": fresh, "XIU.TO": fresh, "WCC": behind, "GS": behind}
+    r = prices.sync_prices(conn, now=datetime(2026, 10, 29, 19, 30), pacer=_NoPace(), cache_conn=object(),
+                           sync_fn=lambda *a, **k: None,
+                           load_fn=lambda syms, *a, **k: {s: bars[s] for s in syms if s in bars})
+    assert r["stopped"] and r["stale"] == 2
+    bars["GS"] = fresh                                 # one fresh symbol: a delisted WCC isn't a failed run
+    r = prices.sync_prices(conn, now=datetime(2026, 10, 29, 19, 30), pacer=_NoPace(), cache_conn=object(),
+                           sync_fn=lambda *a, **k: None,
+                           load_fn=lambda syms, *a, **k: {s: bars[s] for s in syms if s in bars})
+    assert not r["stopped"] and r["stale"] == 1
 
 
 def test_due_today_once_per_trading_day(db_path):
@@ -619,12 +663,12 @@ def test_state_candidates(db_path):
         "SELECT report_key FROM reports WHERE title LIKE 'WESCO%'")])
     conn.close()
     s = build_rbc_state(days=7, db_path=db_path, now=_NOW)
-    assert [c["symbol"] for c in s["candidates"]] == ["WCC"]           # GS too close to its high
+    assert [c["symbol"] for c in s["candidates"]] == ["WCC"]
     wcc = s["candidates"][0]
     assert wcc["turning_up"] and round(wcc["since_note"], 2) == 0.4 and wcc["tone"] == "bullish"
-    assert s["candidates_all"] == 2 and s["candidates_unpriced"] == 0
+    assert s["candidates_all"] == 1 and s["candidates_unpriced"] == 0
     s = build_rbc_state(days=7, db_path=db_path, now=_NOW, show_all_candidates=True)
-    assert [c["symbol"] for c in s["candidates"]] == ["WCC", "GS"]     # most beaten-down first
+    assert [c["symbol"] for c in s["candidates"]] == ["WCC"]   # GS: an upgrade, but neutral tone
     t = build_rbc_state(ticker="WCC", db_path=db_path, now=_NOW)
     assert t["ticker_price"]["pct_off_high"] == -0.3
 
@@ -716,4 +760,5 @@ def test_state_track_record(db_path):
     rows = {r["label"]: r for r in s["track_record"]}
     assert s["track_events"] == 2 and s["track_first"] == "2026-10-29"
     assert rows["Bullish, beaten down, turning up (the Candidates rule)"]["by_horizon"][5]["n"] == 1
-    assert rows["All bullish"]["by_horizon"][5]["n"] == 2       # GS: neutral tone but an upgrade
+    assert rows["All bullish"]["by_horizon"][5]["n"] == 1       # GS: an upgrade, but neutral tone
+    assert rows["Neutral"]["by_horizon"][5]["n"] == 1

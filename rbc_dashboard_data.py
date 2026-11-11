@@ -21,7 +21,6 @@ from pathlib import Path
 from config import RBC_CANDIDATE_DAYS, RBC_CANDIDATE_DIP_PCT, RBC_REPORTS_DB_PATH
 from rbc_reports import store
 from rbc_reports import outcomes
-from rbc_reports.prices import POSITIVE_ACTIONS
 from rbc_reports.tagger import ACTIONS, REPORT_TYPES, THEMES, TONES
 
 FEED_LIMIT = 500
@@ -250,15 +249,14 @@ def _track_record(conn) -> dict:
              "track_first": None}
     if not all(_has_table(conn, t) for t in ("note_outcomes", "report_tags")):
         return empty
-    marks = ",".join("?" * len(POSITIVE_ACTIONS))
     cols = ", ".join(f"o.ret_{h}, o.bench_{h}" for h in outcomes.HORIZONS)
     rows = conn.execute(
         f"SELECT o.yahoo_symbol, o.entry_date, r.published_at, g.tone, "
-        f"(g.tone = 'bullish' OR g.action IN ({marks})), o.off_high, o.turning_up, {cols}, "
+        f"(g.tone = 'bullish'), o.off_high, o.turning_up, {cols}, "
         "r.company, r.headline, r.link, (SELECT t.symbol FROM report_tickers t "
         "WHERE t.report_key = o.report_key ORDER BY t.position LIMIT 1) "
         "FROM note_outcomes o JOIN reports r ON r.report_key = o.report_key "
-        "JOIN report_tags g ON g.report_key = o.report_key", list(POSITIVE_ACTIONS)).fetchall()
+        "JOIN report_tags g ON g.report_key = o.report_key").fetchall()
     if not rows:
         return empty
     events = []
@@ -281,8 +279,9 @@ def _has_table(conn, name: str) -> bool:
 
 
 def _candidates(conn, now, show_all: bool) -> dict:
-    """The Candidates table (step 3): one row per stock with a bullish or
-    positive-action company note in the last RBC_CANDIDATE_DAYS -- its
+    """The Candidates table (step 3): one row per stock with a bullish
+    company note (the tagger's tone -- a beat or PT raise RBC itself framed
+    as neutral doesn't count) in the last RBC_CANDIDATE_DAYS -- its
     latest such note, how many there were, and its price context (see
     rbc_reports/prices.py). By default only stocks at least
     RBC_CANDIDATE_DIP_PCT off their 52-week high; show_all keeps every
@@ -293,7 +292,6 @@ def _candidates(conn, now, show_all: bool) -> dict:
     if not all(_has_table(conn, t) for t in ("report_tags", "symbol_map", "price_context")):
         return empty
     since = ((now or datetime.now()) - timedelta(days=RBC_CANDIDATE_DAYS)).strftime("%Y-%m-%dT%H:%M")
-    marks = ",".join("?" * len(POSITIVE_ACTIONS))
     rows = conn.execute(
         "SELECT t.symbol, m.yahoo_symbol, m.currency, r.published_at, r.company, r.headline, "
         "r.link, g.tone, g.action, g.rating, p.close, p.as_of, p.pct_off_high, p.range_pos, "
@@ -305,8 +303,8 @@ def _candidates(conn, now, show_all: bool) -> dict:
         "LEFT JOIN price_context p ON p.yahoo_symbol = m.yahoo_symbol "
         "LEFT JOIN report_prices rp ON rp.report_key = r.report_key "
         f"WHERE r.published_at >= ? AND r.{store.COMPANY_NOTE_SQL} "
-        f"AND (g.tone = 'bullish' OR g.action IN ({marks})) ORDER BY r.published_at DESC",
-        [since, *POSITIVE_ACTIONS]).fetchall()
+        "AND g.tone = 'bullish' ORDER BY r.published_at DESC",
+        [since]).fetchall()
     by_symbol: dict = {}
     for (sym, ys, cur, published, company, headline, link, tone, action, rating, close, as_of,
          off_high, range_pos, ret20, above50, turning, base) in rows:

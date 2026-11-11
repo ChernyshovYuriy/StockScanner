@@ -708,11 +708,20 @@ def create_app() -> Flask:
     def rbc_ingest():
         """Fetches new digests from Gmail, then re-parses RBC_REPORTS_DIR
         -- the same run as the scheduled rbc_reports_service.py (both
-        steps idempotent)."""
+        steps idempotent). Guarded by the same fcntl lock the scheduled
+        run takes, so a click during the 19:30 run can't tag the same
+        reports twice."""
+        try:
+            lock_path, lock_file = acquire_lock("rbc_reports")
+        except BlockingIOError:
+            return redirect(url_for(
+                "rbc", error="A fetch is already running (scheduled or manual) — try again shortly."))
         try:
             r = rbc_run_collector(uuid.uuid4().hex, with_prices=False)
         except Exception as e:
             return redirect(url_for("rbc", error=f"Fetch failed: {e}"))
+        finally:
+            lock_file.close()
         f, i = r["fetch"], r["ingest"]
         parts = [f"Gmail: {len(f['saved'])} new digest(s) from {f['messages']} RBC email(s)"
                  if f["configured"] else "Gmail not configured (GMAIL_SENDER / GMAIL_APP_PASSWORD in .env)"]
