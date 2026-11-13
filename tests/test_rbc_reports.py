@@ -669,6 +669,22 @@ def test_due_today_once_per_trading_day(db_path):
     assert prices.due_today(conn, now=datetime(2026, 11, 2, 19, 30))        # Monday
 
 
+def test_run_past_midnight_stays_due_next_evening(db_path, monkeypatch):
+    # The 23:30 run finishes after midnight -- it still counts for the day
+    # it started, so the next evening's 19:30 run is due.
+    clock = [datetime(2026, 11, 11, 23, 30)]
+    monkeypatch.setattr(prices, "market_now", lambda: clock[0])
+
+    def slow_resolve(conn, retry=False):
+        clock[0] = datetime(2026, 11, 12, 0, 3)
+        return {"stopped": False}
+    monkeypatch.setattr(prices, "resolve_symbols", slow_resolve)
+    monkeypatch.setattr(prices, "sync_prices", lambda conn: {"stopped": False})
+    conn = store.connect(db_path)
+    assert prices.run(conn) is not None
+    assert store.get_meta(conn, "prices_last_run") == "2026-11-11"
+    assert prices.due_today(conn, now=datetime(2026, 11, 12, 19, 30))
+
 def test_state_candidates(db_path):
     conn = _priced_db(db_path)
     store.save_price_context(conn, {

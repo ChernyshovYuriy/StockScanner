@@ -355,12 +355,16 @@ def run(conn=None, retry: bool = False, force: bool = False) -> dict | None:
     conn = conn or store.connect()
     if not force and not due_today(conn):
         return None
+    # The day the run STARTED: a 23:30 run can take over half an hour, and
+    # stamping it with the after-midnight end date made the next evening's
+    # run skip (2026-11-12 -- that night's notes went unpriced).
+    started = market_now().date().isoformat()
     resolved = resolve_symbols(conn, retry=retry)
     synced = {"symbols": 0, "with_context": 0, "stopped": True}
     if not resolved["stopped"]:
         synced = sync_prices(conn)
     if not resolved["stopped"] and not synced["stopped"]:
-        store.set_meta(conn, "prices_last_run", market_now().date().isoformat())
+        store.set_meta(conn, "prices_last_run", started)
     return {"resolve": resolved, "sync": synced}
 
 
@@ -376,6 +380,7 @@ def main(argv=None) -> int:
         r = recheck_symbols(conn, args.recheck_before)
         print(f"recheck: {r}")
         return 1 if r["stopped"] else 0
+    started = market_now().date().isoformat()   # see run()
     resolved = resolve_symbols(conn, retry=args.retry, limit=None if args.all else RBC_RESOLVE_MAX_PER_RUN)
     print(f"resolve: {resolved}")
     if resolved["stopped"]:
@@ -384,7 +389,7 @@ def main(argv=None) -> int:
     synced = sync_prices(conn)
     print(f"prices: {synced}")
     if not synced["stopped"]:
-        store.set_meta(conn, "prices_last_run", market_now().date().isoformat())
+        store.set_meta(conn, "prices_last_run", started)
     return 0
 
 
