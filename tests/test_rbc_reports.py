@@ -203,6 +203,24 @@ def test_state_feed_is_newest_first_with_tickers(db_path):
                              "shown": 4, "total": 9, "missed": 5}]
 
 
+def test_state_latest_missed_counts_across_alerts(db_path):
+    # A narrower alert the same evening brings one report the capped All
+    # Reports email left out (and repeats one it had): 9 published, 5 stored.
+    sector = _digest([
+        _item("6:24pm ET", "WESCO International, Inc. - Strong 3Q26 Beat &amp; Raise", "WCC", "Jeffrey Reive",
+              link_id="A1", border=False),
+        _item("4:10pm ET", "Royal Bank of Canada - Steady quarter", "RY", "Darko Mihelic", link_id="S1"),
+    ], shown=2, total=2).replace("All Reports", "Equities, Fundamental Equity, Sectors, Financials")
+    conn = store.connect(db_path)
+    store.save_digest(conn, parse_digest(sector), "b.html", "2026-10-29T19:30")
+    conn.close()
+    L = build_rbc_state(days=1, db_path=db_path, now=_NOW)["latest"]
+    assert L["reports"] == 5 and L["missed"] == 4
+    assert [(a["subscription"], a["missed"]) for a in L["alerts"]] == [
+        ("RBC Capital Markets - All Reports", 5),
+        ("RBC Capital Markets - Equities, Fundamental Equity, Sectors, Financials", 0)]
+
+
 def test_state_days_window(db_path):
     s = build_rbc_state(days=1, db_path=db_path, now=_NOW)
     assert s["total_reports"] == 3
@@ -441,7 +459,7 @@ def test_state_latest_digest_summary(db_path):
     })
     # A filter or a short window never hides it -- it's the newest digest regardless.
     L = build_rbc_state(days=1, tone="neutral", db_path=db_path, now=datetime(2026, 12, 1))["latest"]
-    assert L["date"] == "2026-10-29" and L["reports"] == 4
+    assert L["date"] == "2026-10-29" and L["reports"] == 4 and L["missed"] == 5
     assert L["tones"] == {"bullish": 2, "neutral": 0, "bearish": 1, "untagged": 1}
     assert L["alerts"] == [{"time": "19:01", "subscription": "RBC Capital Markets - All Reports",
                             "shown": 4, "total": 9, "missed": 5}]

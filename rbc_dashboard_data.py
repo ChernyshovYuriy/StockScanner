@@ -233,8 +233,14 @@ def _latest_digest(conn, tagged: bool) -> dict | None:
             "link": link, "tone": tone})
     moves = [{"label": label, "notes": [i for a in acts for i in by_action.get(a, [])]}
              for label, acts in LATEST_ACTION_ROWS]
+    # The day's missed count across all its alerts: the reports were deduped
+    # on their link, so the largest alert total (All Reports' is the whole
+    # day's) minus what got stored -- a per-alert "missed" overstates it once
+    # narrower alerts (e.g. the sector ones) cover what one alert's cap dropped.
+    totals = [t for _a, _s, _sh, t in alerts if t is not None]
     return {
         "date": day, "reports": len(rows), "tones": tones,
+        "missed": max(0, max(totals) - len(rows)) if totals else 0,
         "alerts": [{"time": a[11:16], "subscription": sub, "shown": sh, "total": t,
                     "missed": (t - sh) if (sh is not None and t is not None) else 0}
                    for a, sub, sh, t in alerts],

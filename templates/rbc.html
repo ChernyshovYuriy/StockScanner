@@ -118,7 +118,7 @@
   <div class="rbc-section rbc-latest">
     <h2>Latest digest — {{ L.date }}</h2>
     <p class="rbc-note">
-      {{ L.reports }} report(s){% for a in L.alerts %} · {{ a.subscription }} ({{ a.time }}): {{ a.shown if a.shown is not none else '?' }} of {{ a.total if a.total is not none else '?' }}{% if a.missed %} — <span class="rbc-missed">{{ a.missed }} missed</span>{% endif %}{% endfor %}
+      {{ L.reports }} report(s){% for a in L.alerts %} · {{ a.subscription }} ({{ a.time }}): {{ a.shown if a.shown is not none else '?' }} of {{ a.total if a.total is not none else '?' }}{% endfor %}{% if L.missed %} — <span class="rbc-missed">{{ L.missed }} missed</span>{% endif %}
       {% if tagged %} · <span class="rbc-up">{{ L.tones.bullish }} bullish</span> / {{ L.tones.neutral }} neutral / <span class="rbc-down">{{ L.tones.bearish }} bearish</span>{% if L.tones.untagged %} / {{ L.tones.untagged }} untagged{% endif %}{% endif %}
       · <a href="{{ url_for('rbc', days=1, feed=1) }}#rbc-feed">see the feed</a></p>
     {% if L.moves %}
@@ -316,7 +316,8 @@
     <p class="rbc-note">RBC caps each digest email at 100 reports — the full email (not just Gmail's
       "[Message clipped]" preview) ends with RBC's own footer, e.g. "100 of 238 Reports. Please login to Insight to see
       all of the research for this alert." "Missed" is the reports beyond that cap; splitting the alert into narrower
-      ones keeps each under it.</p>
+      ones keeps each under it. A report one alert missed may still have come in through another; the "Latest
+      digest" count above is across all of the day's alerts.</p>
     <table class="rbc-table" style="width:auto">
       <thead><tr><th>Date</th><th>Alert</th><th>In email</th><th>Published</th><th>Missed</th></tr></thead>
       <tbody>
