@@ -205,6 +205,13 @@ def build_rbc_state(days: int | None = 7, ticker: str | None = None, query: str 
     }
 
 
+def _alert_name(subscription: str) -> str:
+    """'RBC Capital Markets - Equities, Fundamental Equity, Sectors, Health
+    Care' -> 'Health Care'; 'RBC Capital Markets - All Reports' -> 'All
+    Reports'."""
+    return (subscription or "").split(" - ", 1)[-1].split(",")[-1].strip() or subscription
+
+
 def _latest_digest(conn, tagged: bool) -> dict | None:
     """The newest digest day at a glance -- independent of the page's
     filters, so it's always at the top instead of below the growing feed:
@@ -240,12 +247,52 @@ def _latest_digest(conn, tagged: bool) -> dict | None:
     totals = [t for _a, _s, _sh, t in alerts if t is not None]
     return {
         "date": day, "reports": len(rows), "tones": tones,
+        "highlights": _highlights(conn, day),
         "missed": max(0, max(totals) - len(rows)) if totals else 0,
-        "alerts": [{"time": a[11:16], "subscription": sub, "shown": sh, "total": t,
+        "alerts": [{"time": a[11:16], "subscription": sub, "name": _alert_name(sub),
+                    "shown": sh, "total": t,
                     "missed": (t - sh) if (sh is not None and t is not None) else 0}
                    for a, sub, sh, t in alerts],
         "moves": [m for m in moves if m["notes"]],
     }
+
+
+def _highlights(conn, day: str) -> dict:
+    """rbc_reports/highlights.py's picks for `day` -- {"bullish": [...],
+    "bearish": [...]}, strongest first -- each with the note, the model's
+    one-line reason, and the stock's price context (as the Candidates
+    table), so a first look needs no trip to Yahoo. Empty lists when the
+    day has no picks yet."""
+    out = {"bullish": [], "bearish": []}
+    if not _has_table(conn, "highlights"):
+        return out
+    prices_ready = all(_has_table(conn, t) for t in ("symbol_map", "price_context", "report_prices"))
+    cols = ("m.yahoo_symbol, m.currency, p.close, p.as_of, p.pct_off_high, p.range_pos, p.ret_20d, "
+            "p.above_sma50, p.turning_up, rp.base_close" if prices_ready else ", ".join(["NULL"] * 10))
+    joins = ("LEFT JOIN symbol_map m ON m.symbol = t.symbol AND m.exchange = t.exchange "
+             "AND m.company = r.company "
+             "LEFT JOIN price_context p ON p.yahoo_symbol = m.yahoo_symbol "
+             "LEFT JOIN report_prices rp ON rp.report_key = r.report_key " if prices_ready else "")
+    rows = conn.execute(
+        "SELECT h.side, h.why, t.symbol, r.company, r.headline, r.link, r.published_at, "
+        f"g.action, g.rating, g.tone, {cols} FROM highlights h "
+        "JOIN reports r ON r.report_key = h.report_key "
+        "LEFT JOIN report_tags g ON g.report_key = r.report_key "
+        "LEFT JOIN report_tickers t ON t.report_key = r.report_key AND t.position = 0 "
+        f"{joins}WHERE h.day = ? ORDER BY h.side, h.rank", [day]).fetchall()
+    for (side, why, sym, company, headline, link, published, action, rating, tone, ys, cur,
+         close, as_of, off_high, range_pos, ret20, above50, turning, base) in rows:
+        if side not in out:
+            continue
+        out[side].append({
+            "symbol": sym, "company": company, "headline": headline, "link": link, "why": why,
+            "time": (published or "")[11:16], "action": action, "rating": rating, "tone": tone,
+            "yahoo_symbol": ys, "currency": cur, "close": close, "as_of": as_of,
+            "pct_off_high": off_high, "range_pos": range_pos, "ret_20d": ret20,
+            "above_sma50": bool(above50), "turning_up": bool(turning),
+            "since_note": (close / base - 1) if close and base else None,
+        })
+    return out
 
 
 def _track_record(conn) -> dict:

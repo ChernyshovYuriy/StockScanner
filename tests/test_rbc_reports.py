@@ -462,7 +462,8 @@ def test_state_latest_digest_summary(db_path):
     assert L["date"] == "2026-10-29" and L["reports"] == 4 and L["missed"] == 5
     assert L["tones"] == {"bullish": 2, "neutral": 0, "bearish": 1, "untagged": 1}
     assert L["alerts"] == [{"time": "19:01", "subscription": "RBC Capital Markets - All Reports",
-                            "shown": 4, "total": 9, "missed": 5}]
+                            "name": "All Reports", "shown": 4, "total": 9, "missed": 5}]
+    assert L["highlights"] == {"bullish": [], "bearish": []}
     assert [(m["label"], [i["symbol"] for i in m["notes"]]) for m in L["moves"]] == [
         ("Upgrades", ["GS"]), ("PT cuts", ["LTH"]), ("Beats", ["WCC"])]
 
@@ -796,3 +797,80 @@ def test_state_track_record(db_path):
     assert rows["Bullish, beaten down, turning up (the Candidates rule)"]["by_horizon"][5]["n"] == 1
     assert rows["All bullish"]["by_horizon"][5]["n"] == 1       # GS: an upgrade, but neutral tone
     assert rows["Neutral"]["by_horizon"][5]["n"] == 1
+
+
+# ── highlights (fake OpenAI client, never the real API) ───────────────────
+
+from rbc_reports import highlights
+
+
+class _FakeHighlightClient:
+    def __init__(self, answer):
+        self.answer, self.calls = answer, []
+        self.chat = self
+        self.completions = self
+
+    def create(self, model, messages, **kw):
+        lines = [json.loads(l) for l in messages[1]["content"].splitlines()]
+        self.calls.append(lines)
+        msg = type("M", (), {"content": json.dumps(self.answer(lines))})
+        return type("R", (), {"choices": [type("C", (), {"message": msg})]})
+
+
+def _tagged_day(db_path):
+    # The sample's two company notes (LTH lists 4 tickers -- a peer list, so
+    # not a company note; A4 has none).
+    _tag(db_path, {
+        "A1": {"action": "results_miss", "tone": "bearish", "theme": "industrials"},
+        "A2": {"action": "pt_cut", "tone": "bearish", "theme": "restaurants_leisure"},
+        "A3": {"action": "upgrade", "tone": "bullish", "theme": "banks"},
+        "A4": {"action": "none", "tone": "neutral", "theme": "other"},
+    })
+    return store.connect(db_path)
+
+
+def _ids(lines, *companies):
+    return [next(l["id"] for l in lines if l["company"].startswith(c)) for c in companies]
+
+
+def test_highlights_pick_store_and_show(db_path):
+    conn = _tagged_day(db_path)
+
+    def answer(lines):
+        gs, wcc = _ids(lines, "Goldman", "WESCO")
+        # WCC (tagged bearish) offered as bullish is dropped; so are a
+        # repeat and an unknown id.
+        return {"bullish": [{"id": gs, "why": "Upgrade to Outperform"}, {"id": wcc, "why": "x"},
+                            {"id": gs, "why": "dup"}],
+                "bearish": [{"id": wcc, "why": "Missed on margins"}, {"id": 99}]}
+    client = _FakeHighlightClient(answer)
+    r = highlights.run(conn, client=client)
+    assert r == {"configured": True, "pending": 1, "done": 1}
+    assert sorted(l["ticker"] for l in client.calls[0]) == ["GS", "WCC"]
+    # Done -- not picked again until more notes arrive that day.
+    assert highlights.run(conn, client=client)["pending"] == 0
+    L = build_rbc_state(days=1, db_path=db_path, now=_NOW)["latest"]
+    assert [(h["symbol"], h["why"]) for h in L["highlights"]["bullish"]] == [("GS", "Upgrade to Outperform")]
+    assert [(h["symbol"], h["why"]) for h in L["highlights"]["bearish"]] == [("WCC", "Missed on margins")]
+
+
+def test_highlights_wait_for_tags_and_retry_failures(db_path):
+    conn = store.connect(db_path)
+    client = _FakeHighlightClient(lambda lines: {"bullish": [], "bearish": []})
+    assert highlights.run(conn, client=client)["pending"] == 0      # nothing tagged yet
+    conn = _tagged_day(db_path)
+
+    class Broken:
+        chat = completions = None
+    broken = Broken()
+    broken.chat = broken
+    broken.completions = broken
+    broken.create = lambda **kw: (_ for _ in ()).throw(RuntimeError("down"))
+    assert highlights.run(conn, client=broken)["done"] == 0
+    assert highlights.run(conn, client=client)["done"] == 1        # retried next run
+
+
+def test_alert_name_is_the_last_part():
+    from rbc_dashboard_data import _alert_name
+    assert _alert_name("RBC Capital Markets - Equities, Fundamental Equity, Sectors, Health Care") == "Health Care"
+    assert _alert_name("RBC Capital Markets - All Reports") == "All Reports"

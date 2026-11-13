@@ -61,6 +61,11 @@
     .rbc-track-members { margin: 4px 0 8px; font-size: 12px; }
     .rbc-down { color: var(--sell); }
     .rbc-price { font-size: 13px; margin: 4px 0 10px; }
+    .rbc-alerts { font-size: 12px; margin: -4px 0 10px; }
+    .rbc-alerts summary { cursor: pointer; color: var(--text-muted); }
+    .rbc-alerts .rbc-label { display: inline-block; margin: 3px 2px 0 0; }
+    .rbc-hl-title { font-size: 15px; margin: 14px 0 6px; }
+    .rbc-why { font-size: 13px; margin-top: 3px; }
   </style>
 {% endblock %}
 {% block content %}
@@ -118,9 +123,53 @@
   <div class="rbc-section rbc-latest">
     <h2>Latest digest — {{ L.date }}</h2>
     <p class="rbc-note">
-      {{ L.reports }} report(s){% for a in L.alerts %} · {{ a.subscription }} ({{ a.time }}): {{ a.shown if a.shown is not none else '?' }} of {{ a.total if a.total is not none else '?' }}{% endfor %}{% if L.missed %} — <span class="rbc-missed">{{ L.missed }} missed</span>{% endif %}
+      {{ L.reports }} report(s) from {{ L.alerts|length }} alert{{ 's' if L.alerts|length != 1 }}{% if L.missed %} — <span class="rbc-missed">{{ L.missed }} missed</span>{% endif %}
       {% if tagged %} · <span class="rbc-up">{{ L.tones.bullish }} bullish</span> / {{ L.tones.neutral }} neutral / <span class="rbc-down">{{ L.tones.bearish }} bearish</span>{% if L.tones.untagged %} / {{ L.tones.untagged }} untagged{% endif %}{% endif %}
       · <a href="{{ url_for('rbc', days=1, feed=1) }}#rbc-feed">see the feed</a></p>
+    <details class="rbc-alerts"><summary>Alerts</summary>
+      {% for a in L.alerts %}<span class="rbc-label" title="{{ a.subscription }} ({{ a.time }})">{{ a.name }} {{ a.shown if a.shown is not none else '?' }}/{{ a.total if a.total is not none else '?' }}</span> {% endfor %}
+    </details>
+
+    {% for side, title in (('bullish', 'Most bullish'), ('bearish', 'Most bearish')) %}{% set picks = L.highlights[side] %}
+    {% if picks %}
+    <h3 class="rbc-hl-title {{ 'rbc-up' if side == 'bullish' else 'rbc-down' }}">{{ title }}</h3>
+    <table class="rbc-table">
+      <thead><tr><th class="rbc-tight">Ticker</th><th>Note — why it stands out</th>
+        <th class="rbc-num">Close</th><th class="rbc-num">Off 52w high</th><th class="rbc-num">52w range</th>
+        <th class="rbc-num">20 days</th><th class="rbc-num">Since note</th><th class="rbc-tight">Trend</th></tr></thead>
+      <tbody>
+      {% for h in picks %}
+        <tr>
+          <td>{% if h.symbol %}<a href="{{ url_for('rbc', ticker=h.symbol) }}">{{ h.symbol }}</a>{% endif %}
+            {% if h.yahoo_symbol %}<br><a class="rbc-exch" href="https://finance.yahoo.com/quote/{{ h.yahoo_symbol }}" target="_blank" rel="noopener">{{ h.yahoo_symbol }} ↗</a>{% endif %}</td>
+          <td><div class="rbc-report">
+            <span class="rbc-company">{{ h.company }}</span>{% if h.headline %} — {{ h.headline }}{% endif %}
+            {% if h.link %} <a href="{{ h.link }}" target="_blank" rel="noopener">open ↗</a>{% endif %}
+            {% if h.why %}<div class="rbc-why">{{ h.why }}</div>{% endif %}
+            <div class="rbc-labels"><span class="rbc-exch">{{ h.time }}</span>
+              {% if h.action and h.action != 'none' %}<span class="rbc-label">{{ h.action|replace('_', ' ') }}</span>{% endif %}
+              {% if h.rating %}<span class="rbc-label">{{ h.rating }}</span>{% endif %}</div>
+          </div></td>
+          {% if h.close is not none %}
+          <td class="rbc-num">{{ '%.2f'|format(h.close) }} <span class="rbc-exch">{{ h.currency or '' }}</span><br><span class="rbc-exch">{{ h.as_of }}</span></td>
+          <td class="rbc-num">{{ pct(h.pct_off_high) }}</td>
+          <td class="rbc-num">{{ pct(h.range_pos, signed=False) }}</td>
+          <td class="rbc-num">{{ pct(h.ret_20d) }}</td>
+          <td class="rbc-num">{{ pct(h.since_note) }}</td>
+          <td>{% if h.turning_up %}<span class="badge badge-bullish">turning up</span>{% elif not h.above_sma50 %}<span class="badge badge-bearish">below 50d</span>{% else %}<span class="badge badge-neutral">above 50d</span>{% endif %}</td>
+          {% else %}
+          <td class="rbc-num rbc-exch" colspan="6">{{ 'no price yet' if h.yahoo_symbol else 'no price (no North-American listing, or not looked up yet)' }}</td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% endfor %}
+    {% if L.highlights.bullish or L.highlights.bearish %}
+    <p class="rbc-note">Picked by an LLM from the day's company notes (title + teaser only — RBC's PDF isn't readable here);
+      the reason is its summary of RBC's text. Unvalidated. Price = the last daily close (refreshed once per trading day).</p>
+    {% endif %}
     {% if L.moves %}
     <table class="rbc-table" style="width:auto">
       <tbody>

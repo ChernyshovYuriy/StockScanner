@@ -28,14 +28,15 @@ from concurrent_utils import acquire_lock
 from config import RBC_GMAIL_FETCH_DAYS, RBC_REPORTS_DIR
 from log_utils import log
 from rbc_reports.gmail_fetch import fetch_digests
-from rbc_reports import prices
+from rbc_reports import highlights, prices
 from rbc_reports.ingest import ingest_dir
 from rbc_reports.tagger import tag_untagged
 
 
 def run_collector(run_id, dry_run=False, with_prices=True) -> dict:
     """Returns {"fetch": fetch_digests() result, "ingest": ingest_dir()
-    result or None, "tags": tag_untagged() result or None, "prices":
+    result or None, "tags": tag_untagged() result or None, "highlights":
+    highlights.run() result or None (dry run), "prices":
     prices.run() result or None (not due today, dry run, or
     with_prices=False)}. An
     unconfigured Gmail still ingests whatever is already in the folder.
@@ -58,6 +59,13 @@ def run_collector(run_id, dry_run=False, with_prices=True) -> dict:
         tags = tag_untagged(dry_run=dry_run)
         log("rbc_reports", run_id, "tagged", configured=tags["configured"],
             pending=tags["pending"], tagged=tags["tagged"])
+    picked = None
+    if ingested is not None and not dry_run:
+        try:
+            picked = highlights.run()
+            log("rbc_reports", run_id, "highlights", **picked)
+        except Exception as e:   # never block pricing on it
+            log("rbc_reports", run_id, "highlights_error", error=str(e))
     priced = None
     if ingested is not None and with_prices and not dry_run:
         try:
@@ -71,7 +79,8 @@ def run_collector(run_id, dry_run=False, with_prices=True) -> dict:
         print(fetched)
         print(ingested)
         print(tags)
-    return {"fetch": fetched, "ingest": ingested, "tags": tags, "prices": priced}
+    return {"fetch": fetched, "ingest": ingested, "tags": tags, "highlights": picked,
+            "prices": priced}
 
 
 def _build_parser() -> argparse.ArgumentParser:

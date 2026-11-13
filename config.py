@@ -493,6 +493,10 @@ RBC_TAG_MODEL = "gpt-5-mini"
 RBC_TAG_REASONING_EFFORT = "low"
 RBC_TAG_BATCH_SIZE = 20
 RBC_TAG_WORKERS = 4
+# rbc_reports/highlights.py: the same model reads one digest day's company
+# notes together and picks at most this many most-bullish and most-bearish
+# ones for the top of the /rbc tab.
+RBC_HIGHLIGHTS_PER_SIDE = 5
 # Step 3 (rbc_reports/prices.py): price context for the stocks of every
 # company note from the last RBC_OUTCOME_WINDOW_DAYS, refreshed once per
 # trading day -- long enough for step 5 (rbc_reports/outcomes.py) to score
