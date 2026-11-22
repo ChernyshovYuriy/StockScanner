@@ -144,3 +144,33 @@ document.addEventListener("click", (event) => {
       btn.textContent = "Sell";
     });
 });
+
+// Position tabs (Monitor, Momentum, Macro, Kangaroo) render first without
+// live prices (#live-section holds a "Loading live prices…" placeholder), so
+// the page opens at once instead of waiting on Yahoo. Fetch the full render
+// (?partial=1) and swap its #live-section in. The Sell buttons work as-is
+// (one delegated click handler above); sortable tables need re-binding.
+document.querySelectorAll("[data-live-src]").forEach((section) => {
+  showNavProgress();
+  const bar = document.getElementById("nav-progress-bar");
+  fetch(section.dataset.liveSrc)
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    })
+    .then((html) => {
+      const fresh = new DOMParser().parseFromString(html, "text/html").getElementById(section.id);
+      if (!fresh) throw new Error("live section missing from response");
+      fresh.removeAttribute("data-live-src");
+      section.replaceWith(fresh);
+      fresh.querySelectorAll("table.sortable").forEach(makeSortable);
+    })
+    .catch((err) => {
+      section.innerHTML = "";
+      const p = document.createElement("p");
+      p.className = "banner banner-error";
+      p.textContent = `Could not load live prices (${err.message}). Press Refresh to retry.`;
+      section.appendChild(p);
+    })
+    .finally(() => { if (bar) bar.classList.remove("active"); });
+});

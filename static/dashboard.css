@@ -224,3 +224,6 @@ thead th:first-child { text-align: left; }
     --text-muted: #9099b8;
   }
 }
+
+/* Placeholder while a position tab fetches its live prices (dashboard.js). */
+.live-loading { color: var(--text-muted); font-style: italic; }

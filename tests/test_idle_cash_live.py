@@ -166,7 +166,7 @@ def test_dashboard_equity_and_initial_capital_include_the_parked_holding(monkeyp
     monkeypatch.setattr("dashboard_app.build_live_positions", lambda: [])
     monkeypatch.setattr("dashboard_app.build_parked_holdings", lambda: [
         {"ticker": PARK, "shares": 200.0, "price": 42.0, "value": 8_400.0, "price_source": "5m-intraday"}])
-    html = dashboard_app.create_app().test_client().get("/").data.decode()
+    html = dashboard_app.create_app().test_client().get("/?partial=1").data.decode()
     assert "Parked (XIU.TO)" in html
     assert "$10000.00" in html                                         # initial capital
     assert "$10400.00" in html                                         # equity: 2,000 cash + 8,400 parked

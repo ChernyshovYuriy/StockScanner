@@ -161,6 +161,14 @@ def _read_with_retry(fn: Callable[[], Any], retries: int = 2, backoff: float = 0
     raise last_exc  # noqa: B904 — re-raising the last captured DB error as-is
 
 
+def _deferred() -> bool:
+    """True for a position tab's first render: the page shell without live
+    prices, which needs no Yahoo call so it opens at once. dashboard.js then
+    fetches the same URL with ?partial=1 -- the full render, live prices
+    included -- and swaps its #live-section into the page."""
+    return "partial" not in request.args
+
+
 def create_app() -> Flask:
     """Build the Flask app. Does not call init_db() itself — the caller
     (the __main__ entrypoint below, or a test fixture) is responsible for
@@ -176,6 +184,8 @@ def create_app() -> Flask:
 
     @app.get("/")
     def monitor():
+        if _deferred():
+            return render_template("monitor.html", deferred=True)
         try:
             rows = _read_with_retry(build_live_positions)
             cash = _read_with_retry(get_cash)
@@ -234,6 +244,8 @@ def create_app() -> Flask:
         /api/momentum/positions/<ticker>/sell, which sells in a child
         process: db.py's global DB_PATH means an in-process sell sharing
         this process with the core sleeve's would race between the two DBs."""
+        if _deferred():
+            return render_template("momentum_monitor.html", deferred=True)
         try:
             rows = _read_with_retry(build_momentum_positions)
             cash = _read_with_retry(get_momentum_cash)
@@ -284,6 +296,12 @@ def create_app() -> Flask:
         """View of the Kangaroo Tail sleeve (separate DB/capital —
         see config.py KANGAROO_* and kangaroo_dashboard_data.py). Its Sell
         button sells in a child process, same as /momentum's."""
+        if _deferred():
+            return render_template(
+                "kangaroo_monitor.html", deferred=True, rr_target=KANGAROO_RR_TARGET,
+                max_hold_days=KANGAROO_MAX_HOLD_DAYS, risk_pct=KANGAROO_RISK_PER_TRADE_PCT,
+                max_positions=KANGAROO_MAX_POSITIONS,
+            )
         try:
             rows = _read_with_retry(build_kangaroo_positions)
             cash = _read_with_retry(get_kangaroo_cash)
@@ -341,6 +359,11 @@ def create_app() -> Flask:
         """View of the macro conviction sleeve (separate DB/capital
         — see config.py MACRO_* and macro_dashboard_data.py). Its Sell button
         sells in a child process, same as /momentum's."""
+        if _deferred():
+            return render_template(
+                "macro_monitor.html", deferred=True,
+                risk_pct=MACRO_RISK_PER_TRADE_PCT, max_positions=MACRO_MAX_POSITIONS,
+            )
         try:
             rows = _read_with_retry(build_macro_positions)
             cash = _read_with_retry(get_macro_cash)

@@ -45,7 +45,7 @@ def test_healthz(client):
 
 def test_monitor_page_renders_when_no_positions(client):
     set_cash(1000.0)
-    resp = client.get("/")
+    resp = client.get("/?partial=1")
     assert resp.status_code == 200
     assert b"No open positions" in resp.data
 
@@ -59,7 +59,7 @@ def test_monitor_page_renders_open_position(client, monkeypatch):
     }
     monkeypatch.setattr("dashboard_app.build_live_positions", lambda: [row])
 
-    resp = client.get("/")
+    resp = client.get("/?partial=1")
 
     assert resp.status_code == 200
     assert b"RY.TO" in resp.data
@@ -77,7 +77,7 @@ def test_monitor_page_shows_initial_capital_and_total_equity(client, monkeypatch
     }
     monkeypatch.setattr("dashboard_app.build_live_positions", lambda: [row])
 
-    resp = client.get("/")
+    resp = client.get("/?partial=1")
     html = resp.data.decode()
 
     assert resp.status_code == 200
@@ -174,7 +174,7 @@ def test_momentum_page_shows_sell_button(client, monkeypatch):
     monkeypatch.setattr("dashboard_app.get_momentum_cash", lambda: 1_000.0)
     monkeypatch.setattr("dashboard_app.get_momentum_transactions", lambda: get_transactions())
 
-    resp = client.get("/momentum")
+    resp = client.get("/momentum?partial=1")
 
     assert resp.status_code == 200
     assert b'data-sell-url="/api/momentum/positions/"' in resp.data
@@ -224,7 +224,7 @@ def test_kangaroo_page_shows_sell_button(client, monkeypatch):
     monkeypatch.setattr("dashboard_app.get_kangaroo_transactions", lambda: get_transactions())
     monkeypatch.setattr("dashboard_app.get_kangaroo_pending_intents", lambda: None)
 
-    resp = client.get("/kangaroo")
+    resp = client.get("/kangaroo?partial=1")
 
     assert resp.status_code == 200
     assert b'data-sell-url="/api/kangaroo/positions/"' in resp.data
@@ -238,7 +238,7 @@ def test_macro_page_shows_sell_button(client, monkeypatch):
     monkeypatch.setattr("dashboard_app.get_macro_transactions", lambda: get_transactions())
     monkeypatch.setattr("dashboard_app.get_current_regime", lambda: 1 / 0)
 
-    resp = client.get("/macro")
+    resp = client.get("/macro?partial=1")
 
     assert resp.status_code == 200
     assert b'data-sell-url="/api/macro/positions/"' in resp.data
@@ -299,7 +299,7 @@ def test_macro_page_renders_when_no_positions(client, monkeypatch):
         lambda: {"label": "neutral", "composite": 0, "votes": {}, "detail": {}},
     )
 
-    resp = client.get("/macro")
+    resp = client.get("/macro?partial=1")
 
     assert resp.status_code == 200
     assert b"No open positions" in resp.data
@@ -315,7 +315,7 @@ def test_macro_page_shows_regime_label(client, monkeypatch):
         lambda: {"label": "risk_on", "composite": 2, "votes": {"T10Y2Y": 1, "WALCL": 1}, "detail": {}},
     )
 
-    resp = client.get("/macro")
+    resp = client.get("/macro?partial=1")
     html = resp.data.decode()
 
     assert resp.status_code == 200
@@ -332,7 +332,7 @@ def test_macro_page_degrades_gracefully_when_regime_fetch_fails(client, monkeypa
         raise RuntimeError("FRED unreachable")
     monkeypatch.setattr("dashboard_app.get_current_regime", _raise)
 
-    resp = client.get("/macro")
+    resp = client.get("/macro?partial=1")
 
     assert resp.status_code == 200
     assert b"UNKNOWN" in resp.data
@@ -717,3 +717,21 @@ def test_news_watchlist_page_renders_the_analyst_read(client, monkeypatch):
     assert "nw-verdict-bearish" in html
     assert "Raise priced 30% below market." in html
     assert "+25% of shares" in html and "going concern" in html
+
+
+@pytest.mark.parametrize("path", ["/", "/momentum", "/kangaroo", "/macro"])
+def test_position_tab_first_render_skips_live_prices(client, monkeypatch, path):
+    """The first render is the shell: no Yahoo-backed build_*() call at all,
+    just a placeholder that dashboard.js swaps for the ?partial=1 render."""
+    def _boom():
+        raise AssertionError("live prices fetched on the first render")
+    for name in ("build_live_positions", "build_parked_holdings", "build_momentum_positions",
+                 "build_kangaroo_positions", "build_macro_positions", "get_current_regime"):
+        monkeypatch.setattr(f"dashboard_app.{name}", _boom)
+
+    html = client.get(path).data.decode()
+
+    assert 'id="live-section"' in html
+    assert f'data-live-src="{path}?partial=1"' in html
+    assert "Loading live prices" in html
+    assert "Sell</button>" not in html

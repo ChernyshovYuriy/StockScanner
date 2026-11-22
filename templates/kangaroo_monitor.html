@@ -41,6 +41,13 @@
       (56.6% winners, average +0.25R, p=0.033, 143 trades); buying at the tail day's close showed none.</p>
   </div>
 
+  {# Rendered first without live prices (deferred) so the page opens at once;
+     dashboard.js then fetches ?partial=1 and swaps in this whole section. #}
+  <div id="live-section" data-live-src="{{ request.path }}?partial=1">
+  {% if deferred %}
+    <p class="live-loading">Loading live prices…</p>
+    <noscript><p><a href="{{ request.path }}?partial=1">Show positions</a></p></noscript>
+  {% else %}
   {% if error %}
     <p class="banner banner-error">{{ error }}</p>
   {% endif %}
@@ -150,4 +157,6 @@
   </table>
   </div>
   {% endif %}
+  {% endif %}
+  </div>
 {% endblock %}
