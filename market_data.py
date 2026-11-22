@@ -219,6 +219,29 @@ class MarketDataProvider:
         raise NotImplementedError
 
 
+def _today_bar_from_5m(df: pd.DataFrame) -> Optional[TodayBar]:
+    """Today's session low/close/high from one ticker's 5-min bars, or None
+    when none of them are from today."""
+    df = df.dropna(subset=["High", "Low", "Close"])
+    # period="1d" is Yahoo's LAST session, not necessarily today's: on a
+    # day its feed hasn't started yet it returns yesterday's bars, and
+    # callers would act on them (a pre-close sell at yesterday's price,
+    # a breakout fill on yesterday's high). Keep only today's bars.
+    idx = df.index
+    if idx.tz is not None:
+        idx = idx.tz_convert(TSX_TZ)
+    df = df[idx.date == market_today().date()]
+    if df.empty:
+        return None
+
+    return TodayBar(
+        low=float(df["Low"].min()),
+        close=float(df["Close"].iloc[-1]),
+        high=float(df["High"].max()),
+        source="5m-intraday",
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LIVE DATA PROVIDER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -393,28 +416,53 @@ class LiveDataProvider(MarketDataProvider):
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
-            df = df.dropna(subset=["High", "Low", "Close"])
-            # period="1d" is Yahoo's LAST session, not necessarily today's: on a
-            # day its feed hasn't started yet it returns yesterday's bars, and
-            # callers would act on them (a pre-close sell at yesterday's price,
-            # a breakout fill on yesterday's high). Keep only today's bars.
-            idx = df.index
-            if idx.tz is not None:
-                idx = idx.tz_convert(TSX_TZ)
-            df = df[idx.date == market_today().date()]
-            if df.empty:
-                return None
-
-            return TodayBar(
-                low=float(df["Low"].min()),
-                close=float(df["Close"].iloc[-1]),
-                high=float(df["High"].max()),
-                source="5m-intraday",
-            )
+            return _today_bar_from_5m(df)
 
         except Exception as e:
             print(f"    {Fore.YELLOW}Intraday snapshot failed for {ticker}: {e}{Style.RESET_ALL}")
             return None
+
+    def get_intraday_snapshots(self, tickers: List[str]) -> Dict[str, TodayBar]:
+        """Batched get_intraday_snapshot(): one yf.download for every ticker
+        instead of one round trip each (the web dashboard values all open
+        positions at once). A ticker that failed or has no bars today is
+        absent from the result — callers treat that exactly like a None
+        from get_intraday_snapshot()."""
+        out: Dict[str, TodayBar] = {}
+        if not tickers:
+            return out
+        try:
+            raw = yf.download(
+                tickers=list(tickers),
+                period="1d",
+                interval="5m",
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=True,
+            )
+        except Exception as e:
+            print(f"    {Fore.YELLOW}Batched intraday snapshot failed: {e}{Style.RESET_ALL}")
+            return out
+        if raw is None or raw.empty:
+            return out
+
+        for ticker in tickers:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    if ticker not in raw.columns.get_level_values(0):
+                        continue
+                    df = raw[ticker]
+                elif len(tickers) == 1:
+                    df = raw
+                else:
+                    continue
+                bar = _today_bar_from_5m(df)
+                if bar is not None:
+                    out[ticker] = bar
+            except Exception:
+                continue
+        return out
 
     # ------------------------------------------------------------------
     # get_sector() — GICS sector classification (cached to disk)

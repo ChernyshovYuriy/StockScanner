@@ -34,8 +34,6 @@ from position_monitor import (
     Position,
     check_stale_data,
     compute_signals,
-    fetch_intraday_snapshot,
-    load_or_fetch_data,
     stale_no_data_row,
 )
 from schema_keys import (
@@ -50,6 +48,13 @@ from schema_keys import (
     SIGNAL_COL_TICKER,
 )
 from time_utils import is_market_open
+
+import dashboard_market_data
+# Batched, memoized stand-ins for position_monitor's per-ticker Yahoo fetches
+# (see dashboard_market_data.py) — same signatures, so the loop below and
+# its tests are unchanged.
+from dashboard_market_data import intraday_snapshot as fetch_intraday_snapshot
+from dashboard_market_data import load_daily_bars as load_or_fetch_data
 
 _cache_lock = threading.Lock()
 _cache: Dict[str, object] = {"ts": 0.0, "rows": None}
@@ -155,6 +160,12 @@ def _build_macro_positions() -> List[Dict]:
 
     use_intraday = is_market_open()
     rows: List[Dict] = []
+
+    starts: Dict[str, object] = {}
+    for pos in positions:
+        start = (pd.Timestamp(pos.entry_date) - pd.Timedelta(days=LOOKBACK_DAYS_BEFORE_ENTRY)).date()
+        starts[pos.ticker] = min(start, starts.get(pos.ticker, start))
+    dashboard_market_data.prefetch(starts, intraday=(list(starts)) if use_intraday else ())
 
     for pos in positions:
         start = (pd.Timestamp(pos.entry_date) - pd.Timedelta(days=LOOKBACK_DAYS_BEFORE_ENTRY)).date()
