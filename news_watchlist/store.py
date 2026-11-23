@@ -115,6 +115,14 @@ _ITEM_COLUMNS = (
 
 def connect(db_path=DB_PATH):
     conn = sqlite3.connect(db_path)
+    # WAL + synchronous=NORMAL: a commit no longer waits for the Pi's SD card
+    # to flush (measured 2026-11: median 0.74 s, up to 5.4 s per commit while
+    # another process kept the card busy -- a dashboard Dismiss sat for ~5 s;
+    # ~1 ms in WAL). NORMAL can lose the last few commits on a power cut but
+    # never corrupts the file. journal_mode is stored in the DB file itself,
+    # so news_watchlist_dashboard_data's read-only connections follow it.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(_SCHEMA)
     # Migration for a watchlist_items table created before yahoo_ticker was
     # added -- no-op on a fresh DB, where the column already exists from

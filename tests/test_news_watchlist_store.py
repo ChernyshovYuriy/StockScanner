@@ -246,3 +246,24 @@ def test_delete_item_does_not_undo_guid_seeding(tmp_path):
     store.delete_item(conn, item_id)
 
     assert "g1" in store.seeded_guids(conn)
+
+
+def test_connect_uses_wal_so_commits_skip_the_sd_card_flush(tmp_path):
+    """WAL + synchronous=NORMAL (see connect()); a read-only connection --
+    the dashboard's -- still sees every committed write."""
+    db = tmp_path / "nw.db"
+    conn = store.connect(db)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
+
+    ro = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    item_id = store.seed_inbox_item(
+        conn, guid="g1", ticker="OMI.V", company="Orosur Mining", category="exploration_drilling",
+        materiality="high", summary="s", source_link="https://example.com/g1",
+        flagged_at="2026-09-20", flag_price=0.12, created_at="2026-09-20T17:10:00",
+    )
+    assert ro.execute("SELECT count(*) FROM watchlist_items").fetchall() == [(1,)]
+    store.delete_item(conn, item_id)
+    assert ro.execute("SELECT count(*) FROM watchlist_items").fetchall() == [(0,)]
+    ro.close()
+    conn.close()
