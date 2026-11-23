@@ -540,27 +540,37 @@
       const action = btn.dataset.nwAction;
       const url = `/news-watchlist/${btn.dataset.id}/${action}`;
       btn.disabled = true;
+      // Take the row out at once rather than after the response: the
+      // server's SQLite commit waits on the Pi's SD card, which can take
+      // several seconds when another process keeps the card busy. The row
+      // goes back where it was if the request fails.
+      const row = btn.closest("tr");
+      const parent = row ? row.parentNode : null;
+      const next = row ? row.nextSibling : null;
+      if (row) {
+        updateCount(row, -1);
+        row.remove();
+      }
+      const restore = (message) => {
+        if (row && parent) {
+          parent.insertBefore(row, next && next.parentNode === parent ? next : null);
+          updateCount(row, 1);
+        }
+        btn.disabled = false;
+        alert(message);
+      };
       fetch(url, { method: "POST" })
         .then((res) => res.json())
         .then((data) => {
           if (!data.ok) {
-            alert("Action failed.");
-            btn.disabled = false;
+            restore("Action failed.");
             return;
-          }
-          const row = btn.closest("tr");
-          if (row) {
-            updateCount(row, -1);
-            row.remove();
           }
           if (action === "confirm" && data.item) {
             insertWatchingRow(data.item);
           }
         })
-        .catch((err) => {
-          alert("Request failed: " + err);
-          btn.disabled = false;
-        });
+        .catch((err) => restore("Request failed: " + err));
     });
 
     document.querySelectorAll(".note-form").forEach(wireNoteForm);
