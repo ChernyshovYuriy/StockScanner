@@ -1,0 +1,19 @@
+[Unit]
+Description=StockScanner Minervini setup scan (emails candidates, no capital/positions; reads the breakout scan's bars)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/bin/python3 -m research.minervini.scan auto
+Nice=15
+MemoryMax=500M
+OOMScoreAdjust=800
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

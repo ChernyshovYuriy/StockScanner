@@ -138,3 +138,8 @@ journalctl -u stockscanner-swing-rank.service -n 100 --no-pager
 # Weekdays 17:45; 21:00 only repeats a scan that failed. No breakout = no email.
 sudo systemctl enable --now stockscanner-breakouts.timer
 journalctl -u stockscanner-breakouts.service -n 100 --no-pager
+
+# Minervini setup scan — emails candidates, /minervini tab (no capital/positions; own DB, data/minervini.db).
+# Weekdays 18:20, reads the bars the 17:45 breakout scan saved (cache/breakout_bars.pkl); 21:40 only if they were not there.
+sudo systemctl enable --now stockscanner-minervini.timer
+journalctl -u stockscanner-minervini.service -n 100 --no-pager

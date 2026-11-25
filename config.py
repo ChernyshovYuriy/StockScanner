@@ -332,6 +332,9 @@ DEMAND_SHORTVOL_STRENGTH_SCALE = 0.05
 # service uses (no separate SCANNER_*_TICKERS_URL needed).
 SCANNER_BOARD_DB_PATH = DATA_PATH / "scanner_board.db"
 
+# Minervini setup scan (research/minervini/scan.py): emails candidates, shown on /minervini for one week.
+MINERVINI_DB_PATH = DATA_PATH / "minervini.db"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Press-release tracker — 10th service, a news aggregator/collector (see

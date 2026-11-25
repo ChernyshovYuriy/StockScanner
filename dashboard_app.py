@@ -80,6 +80,7 @@ from news_watchlist_dashboard_data import (
     build_news_watchlist_state, build_quote_link, fetch_ticker_volume, fetch_volumes,
     format_volume_compact, invalidate_news_watchlist_cache,
 )
+from minervini_dashboard_data import build_minervini_state
 from rbc_dashboard_data import ACTION_GROUPS as RBC_ACTION_GROUPS
 from rbc_dashboard_data import TAG_FILTERS as RBC_TAG_FILTERS
 from rbc_dashboard_data import build_rbc_state
@@ -461,6 +462,20 @@ def create_app() -> Flask:
             "scanner.html", rows=state["rows"], run_date=state["run_date"], error=error,
             criteria_columns=scanner_criteria_columns(),
         )
+
+    @app.get("/minervini")
+    def minervini():
+        """Read-only view of this week's Minervini setups (see
+        research/minervini/LIVE_PLAN.md): a display layer over what the
+        evening scan stored -- nothing here places an order."""
+        try:
+            state = _read_with_retry(build_minervini_state)
+            error = None
+        except (sqlite3.Error, OSError):
+            state = {"rows": [], "session": None}
+            error = "Database temporarily unavailable — retrying on next refresh."
+
+        return render_template("minervini.html", rows=state["rows"], session=state["session"], error=error)
 
     @app.post("/scanner/refresh")
     def scanner_refresh():

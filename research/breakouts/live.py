@@ -46,6 +46,8 @@ GONE_DAYS = 14                   # a name without data this long is dropped from
 MIN_FRESH = 0.90                 # share of liquid names whose bars must reach the session
 NEED = DEFAULT.max_bars + AGAIN + CATCH_UP + 2 * DEFAULT.pivot + 2          # bars the detector can look at
 
+BARS = ROOT / "cache" / "breakout_bars.pkl"       # the last scanned session's bars, for research/minervini/scan.py
+
 RECORD = """What happened after such breakouts, 2012-2026 (3,024 on today's Canadian names; before costs):
   200-day average rising : 57% up after a month; within two weeks 38% touched +5%, 32% touched -5%
   200-day average falling: 46% up after a month; within two weeks 38% touched +5%, 42% touched -5%
@@ -142,8 +144,8 @@ def yahoo(tickers: List[str]) -> Dict[str, pd.DataFrame]:
 
 
 def scan_all(names: List[str], session: date, done: List[str], known_liquid: Set[str], fetch: Fetch, pacer: Pacer, progress=print
-             ) -> Tuple[List[Dict], Dict[str, Optional[float]]]:
-    """(breakouts of the sessions not scanned yet, {name: 20-day dollar volume, None without data}). Stops if Yahoo refuses."""
+             ) -> Tuple[List[Dict], Dict[str, Optional[float]], Dict[str, pd.DataFrame]]:
+    """(breakouts of the sessions not scanned yet, {name: 20-day dollar volume, None without data}, bars). Stops if Yahoo refuses."""
     def get(chunk):
         pacer.wait(len(chunk))
         return fetch(chunk)
@@ -151,7 +153,8 @@ def scan_all(names: List[str], session: date, done: List[str], known_liquid: Set
     x = get([XIU]).get(XIU)
     if x is None or x.empty:
         raise YahooBlocked("no benchmark bars at the start")
-    cal = clean(x, session).index
+    bars = {XIU: clean(x, session)}
+    cal = bars[XIU].index
     last = pd.Timestamp(session)
     if cal[-1] != last:
         raise NotNow(f"{XIU} has no bar for {session} yet")
@@ -169,6 +172,7 @@ def scan_all(names: List[str], session: date, done: List[str], known_liquid: Set
                 dollars[t] = None
                 liquid += t in known_liquid
                 continue
+            bars[t] = d
             dollars[t] = dollar_volume(d, cal, last)
             if dollars[t] >= MIN_DOLLAR:
                 liquid, fresh = liquid + 1, fresh + (d.index[-1] == last)
@@ -176,7 +180,14 @@ def scan_all(names: List[str], session: date, done: List[str], known_liquid: Set
         progress(f"{min(i + CHUNK, len(names))}/{len(names)}")
     if not liquid or fresh / liquid < MIN_FRESH:
         raise NotNow(f"only {fresh} of {liquid} liquid names have a bar for {session}")
-    return found, dollars
+    return found, dollars, bars
+
+
+def save_bars(session: date, bars: Dict[str, pd.DataFrame], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    pd.to_pickle({"session": session.isoformat(), "bars": bars}, tmp)
+    tmp.replace(path)
 
 
 def save(conn: sqlite3.Connection, session: date, found: List[Dict], dollars: Dict[str, Optional[float]], now: datetime) -> None:
@@ -233,7 +244,8 @@ def full_list() -> List[str]:
 
 
 def auto(dry_run: bool = False, path: Path = DB, fetch: Fetch = yahoo, full: Callable[[], List[str]] = full_list,
-         send: Optional[Callable[[str, str], bool]] = None, pacer: Optional[Pacer] = None, seed: Optional[List[str]] = None) -> int:
+         send: Optional[Callable[[str, str], bool]] = None, pacer: Optional[Pacer] = None, seed: Optional[List[str]] = None,
+         bars_path: Path = BARS) -> int:
     """Scans the last finished session if that has not been done, then emails every
     breakout not emailed yet. A failure is emailed and left for the next scheduled try."""
     if send is None:
@@ -252,7 +264,7 @@ def auto(dry_run: bool = False, path: Path = DB, fetch: Fetch = yahoo, full: Cal
                     print(f"full list not available ({type(exc).__name__}); known names only")
                     others = []
                 names = choose(conn, seed if seed is not None else SEED.read_text().split(), others)
-                found, dollars = scan_all(names, session, done, liquid_names(conn), fetch, pacer or Pacer(YAHOO_PER_SECOND))
+                found, dollars, bars = scan_all(names, session, done, liquid_names(conn), fetch, pacer or Pacer(YAHOO_PER_SECOND))
             except Exception as exc:
                 print(f"STOPPED: {type(exc).__name__}: {exc}")
                 if not dry_run:
@@ -264,6 +276,11 @@ def auto(dry_run: bool = False, path: Path = DB, fetch: Fetch = yahoo, full: Cal
                     print("\n".join(message(pd.DataFrame(found).sort_values(["date", "rising"], ascending=False), session)))
                 return 0
             save(conn, session, found, dollars, market_now())
+            try:
+                save_bars(session, bars, bars_path)
+            except Exception as exc:
+                print(f"bars not saved: {type(exc).__name__}: {exc}")
+            del bars
         rows = unsent(conn)
         if rows.empty:
             return 0

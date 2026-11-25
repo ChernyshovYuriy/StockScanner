@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Minervini — StockScanner{% endblock %}
+{% block head %}
+  <style>
+    .mv-table th:nth-child(2), .mv-table td:nth-child(2) { text-align: left; }
+    .mv-loss { color: var(--sell); }
+    .mv-profit { color: var(--hold); }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="header-row">
+    <h1>Minervini Setups</h1>
+    <button onclick="location.reload()" class="refresh-btn">↻ Refresh</button>
+  </div>
+
+  {% if error %}<p class="banner banner-error">{{ error }}</p>{% endif %}
+
+  <p class="banner banner-info">
+    Strong-trend Canadian stocks resting within 3% of their entry price, shown for the five sessions after they were found.
+    Prices are the last close, updated each weekday evening. In the past 30% of the entries won (+19.4% on average) and 70% lost
+    (−6.1%); as a portfolio about the same as XIU. Nothing here places an order.
+  </p>
+
+  <p class="stat">{% if session %}Last scan: {{ session }}{% else %}Not scanned yet{% endif %}</p>
+
+  {% if not rows %}
+    <p>No setups this week.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table class="sortable mv-table">
+    <thead>
+      <tr>
+        <th>Ticker</th>
+        <th>Status</th>
+        <th title="The evening it was found">Found</th>
+        <th title="The order is good until this session's close">Good until</th>
+        <th title="Buy when the price passes this; the actual fill once it was hit">Entry</th>
+        <th title="Do not buy if it opens above this">Not above</th>
+        <th title="Sell if the price falls to this">Loss point</th>
+        <th title="Sell at this price">Take profit</th>
+        <th title="Last close">Last</th>
+        <th title="How far the entry is above the last close">To entry</th>
+        <th title="Since the entry, before costs: at the last close, or at the exit">Result</th>
+        <th title="12-month strength against the other stocks">Rank</th>
+        <th title="Sessions since the entry high was made, when found">Rest</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="https://finance.yahoo.com/quote/{{ r.ticker }}" target="_blank" rel="noopener">{{ r.ticker }}</a></td>
+        <td><span class="badge {{ r.badge }}">{{ r.words }}</span>{% if r.state_date %} {{ r.state_date }}{% endif %}</td>
+        <td>{{ r.signal }}</td>
+        <td>{{ r.expires or '—' }}</td>
+        <td>{{ '%.2f' | format(r.buy) }}</td>
+        <td>{{ '%.2f' | format(r.limit) }}</td>
+        <td class="mv-loss">{{ '%.2f' | format(r.stop) }} ({{ '%+.1f' | format(r.risk_pct) }}%)</td>
+        <td class="mv-profit">{{ '%.2f' | format(r.target) }}</td>
+        <td>{{ '%.2f' | format(r.last) if r.last is not none else '—' }}</td>
+        <td>{{ '%+.1f%%' | format(r.distance_pct) if r.distance_pct is not none else '—' }}</td>
+        <td class="{{ 'mv-profit' if r.result_pct is not none and r.result_pct > 0 else 'mv-loss' if r.result_pct is not none else '' }}">{{ '%+.1f%%' | format(r.result_pct) if r.result_pct is not none else '—' }}</td>
+        <td>{{ '%.0f' | format((r.rank or 0) * 100) }}</td>
+        <td>{{ r.rest }}d</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}

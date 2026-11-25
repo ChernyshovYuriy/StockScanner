@@ -735,3 +735,36 @@ def test_position_tab_first_render_skips_live_prices(client, monkeypatch, path):
     assert f'data-live-src="{path}?partial=1"' in html
     assert "Loading live prices" in html
     assert "Sell</button>" not in html
+
+
+def test_minervini_page_renders_when_empty(client, monkeypatch):
+    monkeypatch.setattr("dashboard_app.build_minervini_state", lambda: {"rows": [], "session": None})
+    resp = client.get("/minervini")
+    assert resp.status_code == 200
+    assert b"No setups this week" in resp.data and b"Not scanned yet" in resp.data
+
+
+def test_minervini_page_renders_rows(client, monkeypatch):
+    from minervini_dashboard_data import describe
+    base = {"ticker": "ACO-X.TO", "signal": "2026-11-24", "expires": "2026-12-01", "pivot": 90.01, "stop": 86.45,
+            "target": 108.01, "last": 87.9, "rank": 0.95, "rest": 9, "state": "waiting", "state_date": None, "entry": None}
+    rows = [describe(base), describe({**base, "ticker": "KXS.TO", "state": "bought", "state_date": "2026-11-25",
+                                      "entry": 91.0, "last": 92.0})]
+    monkeypatch.setattr("dashboard_app.build_minervini_state", lambda: {"rows": rows, "session": "2026-11-25"})
+
+    html = client.get("/minervini").data.decode()
+
+    assert "ACO-X.TO" in html and "Waiting for entry" in html
+    assert "90.01" in html and "86.45" in html and "108.01" in html
+    assert "Entry hit" in html and "+1.1%" in html
+    assert "Last scan: 2026-11-25" in html
+
+
+def test_minervini_page_survives_a_locked_database(client, monkeypatch):
+    import sqlite3
+
+    def boom():
+        raise sqlite3.OperationalError("locked")
+    monkeypatch.setattr("dashboard_app.build_minervini_state", boom)
+    resp = client.get("/minervini")
+    assert resp.status_code == 200 and b"temporarily unavailable" in resp.data

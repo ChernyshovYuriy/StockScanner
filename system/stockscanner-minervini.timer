@@ -1,0 +1,11 @@
+[Unit]
+Description=Run StockScanner Minervini setup scan at 18:20 and 21:40 on weekdays (the second only if the first had no bars)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 18:20
+OnCalendar=Mon..Fri *-*-* 21:40
+Persistent=false
+Unit=stockscanner-minervini.service
+
+[Install]
+WantedBy=timers.target

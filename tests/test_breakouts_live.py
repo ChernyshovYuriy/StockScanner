@@ -64,7 +64,8 @@ def pacer():
 
 
 def go(tmp_path, y, mail, seed=None, full=(), dry=False):
-    return live.auto(dry, tmp_path / "b.db", y, lambda: list(full), mail, pacer(), seed if seed is not None else [t for t in y.data if t != "XIU.TO"])
+    return live.auto(dry, tmp_path / "b.db", y, lambda: list(full), mail, pacer(), seed if seed is not None else [t for t in y.data if t != "XIU.TO"],
+                     tmp_path / "bars.pkl")
 
 
 # ── When ─────────────────────────────────────────────────────────────────────
@@ -153,7 +154,7 @@ def test_short_history_is_not_called_falling():
 
 def test_numbers_in_the_email():
     mail, y = Mail(), Yahoo({"A.TO": bars(breakout())})
-    found, _ = live.scan_all(["A.TO"], TODAY.date(), [], set(), y, pacer(), lambda m: None)
+    found, _, _ = live.scan_all(["A.TO"], TODAY.date(), [], set(), y, pacer(), lambda m: None)
     r, = found
     b = scan(y.data["A.TO"])[-1]
     assert (r["date"], r["close"], r["line"], r["confirm"], r["lfd_low"], r["target"]) == ("2026-11-25", 104.0, b.level, b.confirm, b.lfd_low, b.target)
@@ -266,7 +267,7 @@ def test_full_list_down_still_scans_known_names(tmp_path):
     def boom():
         raise OSError("down")
     mail = Mail()
-    assert live.auto(False, tmp_path / "b.db", Yahoo({"A.TO": bars(breakout())}), boom, mail, pacer(), ["A.TO"]) == 0 and len(mail.sent) == 1
+    assert live.auto(False, tmp_path / "b.db", Yahoo({"A.TO": bars(breakout())}), boom, mail, pacer(), ["A.TO"], tmp_path / "bars.pkl") == 0 and len(mail.sent) == 1
 
 
 def test_dry_run_writes_and_sends_nothing(tmp_path, capsys):
@@ -364,7 +365,7 @@ def test_price_is_judged_on_the_breakout_day():
 
 def test_a_recorded_breakout_is_never_rewritten(tmp_path):
     y = Yahoo({"A.TO": bars(breakout())})
-    found, dollars = live.scan_all(["A.TO"], TODAY.date(), [], set(), y, pacer(), lambda m: None)
+    found, dollars, _ = live.scan_all(["A.TO"], TODAY.date(), [], set(), y, pacer(), lambda m: None)
     conn = live.connect(tmp_path / "b.db")
     live.save(conn, TODAY.date(), found, dollars, datetime(2026, 11, 25, 18))
     conn.execute("UPDATE breakouts SET emailed = 1")
@@ -376,7 +377,7 @@ def test_a_recorded_breakout_is_never_rewritten(tmp_path):
 @pytest.mark.parametrize("stored", [False, True])
 def test_no_earlier_breakout_is_not_printed_as_nan(tmp_path, stored):
     y = Yahoo({"A.TO": bars(breakout()), "B.TO": bars(breakout())})
-    found, dollars = live.scan_all(["A.TO", "B.TO"], TODAY.date(), [], set(), y, pacer(), lambda m: None)
+    found, dollars, _ = live.scan_all(["A.TO", "B.TO"], TODAY.date(), [], set(), y, pacer(), lambda m: None)
     found[1]["previous"] = "2026-11-09"
     rows = pd.DataFrame(found)
     if stored:
@@ -386,3 +387,25 @@ def test_no_earlier_breakout_is_not_printed_as_nan(tmp_path, stored):
         conn.close()
     body = live.message(rows, TODAY.date())[1]
     assert body.count("also broke out on") == 1 and "also broke out on 2026-11-09" in body and "nan" not in body
+
+
+def test_the_sessions_bars_are_saved_for_the_minervini_scan(tmp_path):
+    y = Yahoo({"A.TO": bars(breakout()), "Q.TO": bars(quiet())})
+    go(tmp_path, y, Mail())
+    got = pd.read_pickle(tmp_path / "bars.pkl")
+    assert got["session"] == "2026-11-25" and set(got["bars"]) == {"XIU.TO", "A.TO", "Q.TO"}
+    pd.testing.assert_frame_equal(got["bars"]["A.TO"], live.clean(y.data["A.TO"], TODAY.date()))
+
+
+def test_a_failed_or_dry_scan_saves_no_bars(tmp_path):
+    go(tmp_path, Yahoo({"A.TO": bars(breakout())}, dead_after=1), Mail())
+    go(tmp_path, Yahoo({"A.TO": bars(breakout())}), Mail(), dry=True)
+    assert not (tmp_path / "bars.pkl").exists()
+
+
+def test_bars_that_cannot_be_saved_do_not_stop_the_email(tmp_path, monkeypatch):
+    def boom(*a):
+        raise OSError("disk full")
+    monkeypatch.setattr(live, "save_bars", boom)
+    mail = Mail()
+    assert go(tmp_path, Yahoo({"A.TO": bars(breakout())}), mail) == 0 and len(mail.sent) == 1
