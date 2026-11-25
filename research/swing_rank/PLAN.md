@@ -111,9 +111,10 @@ is counted.
 
 ## Forward record of S1 (owner's request, 2026-11-25)
 
-Paper only, no money, no service. `python -m research.swing_rank.forward record` after
-each month's last close and before the next open; it writes the ten names to
-`reports/swing_rank/forward_s1.csv`, which is committed the same day. First signal
+Paper only, no money. The Pi's `stockscanner-swing-rank.timer` runs `forward auto` every
+weekday evening; it does nothing unless a month has just ended, then writes the ten
+names to `data/swing_rank_forward.csv` and emails them with the results so far (the
+email's date is the proof that the list came first). By hand: `forward record`. First signal
 2026-11-30, entry 2026-12-01; it starts with no holdings. Rules fixed in advance:
 - The list is S1 exactly as tested (same code, `DEFAULT` settings); no changes while it runs.
 - Entry is the first open after recording. More than 5 sessions late: the month is

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run StockScanner swing rank forward record at 18:30 and 20:15 on weekdays (acts only after a month's last close)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 18:30
+OnCalendar=Mon..Fri *-*-* 20:15
+Persistent=false
+Unit=stockscanner-swing-rank.service
+
+[Install]
+WantedBy=timers.target

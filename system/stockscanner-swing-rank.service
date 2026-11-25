@@ -1,0 +1,19 @@
+[Unit]
+Description=StockScanner swing rank forward record (S1's ten names at each month-end, paper only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/bin/python3 -m research.swing_rank.forward auto
+Nice=15
+MemoryMax=600M
+OOMScoreAdjust=800
+TimeoutStartSec=3600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -107,6 +107,11 @@ python -m rbc_reports.tagger                         # LLM-label every untagged 
 python -m rbc_reports.highlights                      # LLM picks each digest day's most bullish/bearish company notes (--days N, --redo)
 python -m rbc_reports.prices --all                   # map every covered ticker to a Yahoo listing + refresh price context (paced 0.4 req/s; --retry re-checks misses)
 
+# Swing rank forward record — paper only, S1's ten names at each month-end (see research/swing_rank/PLAN.md)
+python -m research.swing_rank.forward auto             # timer (weekdays 18:30 + 20:15): acts only after a month's last close; records + emails the list
+python -m research.swing_rank.forward record --dry-run # show the latest month's list, write nothing
+python -m research.swing_rank.forward score            # results so far vs XIU.TO
+
 # Inspect live state — console report of the trading database
 python report.py
 

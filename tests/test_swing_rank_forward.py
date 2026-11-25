@@ -396,3 +396,97 @@ def test_list_shows_the_labels_of_the_signal_month():
     files[pd.Timestamp(d0)] = files[pd.Timestamp(d0)].assign(name=lambda m: m["name"] + " RENAMED")
     got = fw.make_list(data_at(d0, files=files), d0, set())
     assert got["name"].str.endswith("RENAMED").all()
+
+
+def test_load_prices_equals_load_all(tmp_path):
+    from research.vcp import prices
+    import market_data_cache as mdc
+    conn = prices.connect(str(tmp_path / "p.db"))
+    for t in ("XIU.TO", "CAA.TO"):
+        mdc._upsert(conn, t, WORLD[1][t])
+    a, b = prices.load_all(conn), fw.load_prices(conn)
+    conn.close()
+    assert list(a) == list(b) == ["CAA.TO", "XIU.TO"]
+    for t in a:
+        pd.testing.assert_frame_equal(a[t], b[t], check_dtype=False, check_index_type=False)
+
+
+# ── On the timer ─────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def box(tmp_path, monkeypatch):
+    monkeypatch.setattr(fw, "CACHE", tmp_path)
+    (tmp_path / "swing_rank_fwd_20261130.db").write_text("x")
+    (tmp_path / "swing_rank_prices.db").write_text("keep")
+    mails = []
+
+    class Box:
+        path, cache = tmp_path / "r.csv", tmp_path
+        sent = mails
+
+        def run(self, record_fn=None, score_fn=lambda: "SCORE"):
+            return fw.auto(self.path, record_fn or (lambda: fw.record(path=self.path, build_fn=data_at)), score_fn,
+                           lambda s, b: mails.append((s, b)) or True)
+    return Box()
+
+
+@pytest.mark.parametrize("now", ["2026-11-25 18:30", "2026-11-27 20:15", "2026-12-08 18:30"])
+def test_auto_is_silent_when_nothing_is_due(box, clock, now):
+    clock(now)
+    assert box.run(record_fn=lambda: 1 / 0) == 0
+    assert box.sent == [] and not box.path.exists() and (box.cache / "swing_rank_fwd_20261130.db").exists()
+
+
+def test_auto_records_emails_once_and_cleans_up(box, clock):
+    clock("2026-11-30 18:30")
+    assert box.run() == 0
+    rec = fw.load_record(box.path)
+    assert len(rec) == 10 and set(rec["entry_date"]) == {"2026-12-01"}
+    (subject, body), = box.sent
+    assert subject == "Swing rank S1: 2026-11-30" and "2026-12-01" in body and "SCORE" in body and "did not pass" in body
+    assert all(t in body for t in rec["symbol"])
+    assert [p.name for p in box.cache.glob("*.db")] == ["swing_rank_prices.db"]
+    clock("2026-11-30 20:15")
+    assert box.run(record_fn=lambda: 1 / 0) == 0 and len(box.sent) == 1
+
+
+def test_auto_failure_is_emailed_and_retried(box, clock):
+    clock("2026-11-30 18:30")
+
+    def blocked():
+        raise fw.prices.YahooBlocked("no bars")
+    assert box.run(record_fn=blocked) == 2
+    assert box.sent[0][0] == "Swing rank S1: list NOT recorded" and "YahooBlocked: no bars" in box.sent[0][1]
+    assert not box.path.exists() and (box.cache / "swing_rank_fwd_20261130.db").exists()
+    clock("2026-11-30 20:15")
+    assert box.run() == 0 and len(fw.load_record(box.path)) == 10
+
+
+def test_a_failing_score_does_not_lose_the_list(box, clock):
+    clock("2026-11-30 18:30")
+    assert box.run(score_fn=lambda: 1 / 0) == 0
+    assert len(fw.load_record(box.path)) == 10 and "not available: ZeroDivisionError" in box.sent[0][1]
+
+
+def test_score_text(tmp_path, monkeypatch, clock):
+    clock("2026-12-04 18:00")
+    path = tmp_path / "r.csv"
+    assert fw.score_text(path) == "Nothing recorded yet."
+    monkeypatch.setattr(fw, "fetch_prices", lambda symbols, db, end: flat())
+    sym = [n + ".TO" for n in NAMES]
+    rec(("2026-12-07", sym)).to_csv(path, index=False)
+    monkeypatch.setattr(fw, "load_record", lambda p: rec(("2026-12-07", sym)))
+    assert "not started" in fw.score_text(path)
+    monkeypatch.setattr(fw, "load_record", lambda p: rec(("2026-12-01", sym), ("2026-12-03", sym)))
+    assert "1 complete months: S1 -0.20%, XIU +0.00%" in fw.score_text(path)
+
+
+def test_fetch_prices_asks_again_for_names_without_data(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(fw.prices, "download", lambda conn, symbols, start, end, retry=False: calls.append((symbols, end, retry)))
+    fw.fetch_prices(["B.TO", "A.TO"], tmp_path / "p.db", date(2026, 11, 30))
+    assert calls == [(["A.TO", "B.TO"], "2026-11-30", False), (["A.TO", "B.TO"], "2026-11-30", True)]
+
+
+def test_the_default_record_is_the_state_file():
+    assert fw.RECORD.parts[-2:] == ("data", "swing_rank_forward.csv")

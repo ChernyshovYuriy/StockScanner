@@ -127,3 +127,9 @@ journalctl -u stockscanner-news-watchlist.service -n 100 --no-pager
 sudo systemctl enable --now stockscanner-rbc-reports.timer
 sudo systemctl start stockscanner-rbc-reports.service
 journalctl -u stockscanner-rbc-reports.service -n 100 --no-pager
+
+# Swing rank forward record — paper only (no capital/positions; data/swing_rank_forward.csv).
+# Runs weekday evenings, acts only after a month's last close; emails the list. Needs
+# cache/xic_holdings (copied from the dev box, topped up monthly by itself).
+sudo systemctl enable --now stockscanner-swing-rank.timer
+journalctl -u stockscanner-swing-rank.service -n 100 --no-pager

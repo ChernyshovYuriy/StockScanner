@@ -1,11 +1,12 @@
 """
 Forward record of S1 (PLAN.md, "Forward record"): each month-end, the ten names
 S1 would hold, written down before they could be bought. Paper only: no money, no
-service, no database of any sleeve. The list goes to reports/swing_rank/
-forward_s1.csv, which is meant to be committed the same day: the commit is the
-proof that it was made in advance.
+service account, no database of any sleeve. The list goes to
+data/swing_rank_forward.csv and by email: the email's date is the proof that it
+was made in advance.
 
-    python -m research.swing_rank.forward record            # after a month's last close
+    python -m research.swing_rank.forward auto              # the Pi's timer: records when a list is due, emails it
+    python -m research.swing_rank.forward record            # by hand, after a month's last close
     python -m research.swing_rank.forward record --dry-run  # show the list, write nothing
     python -m research.swing_rank.forward score             # results so far
 """
@@ -29,9 +30,10 @@ from time_utils import last_trading_day_on_or_before, market_now, next_trading_d
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "cache"
-RECORD = ROOT / "reports" / "swing_rank" / "forward_s1.csv"
+RECORD = ROOT / "data" / "swing_rank_forward.csv"
 COLUMNS = ["signal_date", "recorded_at", "entry_date", "file_date", "rank", "ticker", "symbol", "name", "sector",
            "momentum", "close"]
+SUBJECT = "Swing rank S1"
 PRICE_START = "2005-01-01"
 CLOSE_HOUR = 16.5                # bars are taken as final half an hour after the close
 MAX_LATE = 5                     # sessions an entry may be late; after that the month is skipped
@@ -159,11 +161,24 @@ def check_time(now: datetime, record: pd.DataFrame) -> date:
     return signal
 
 
+def load_prices(conn) -> Dict[str, pd.DataFrame]:
+    """prices.load_all() one ticker at a time: about half the memory, for the Pi."""
+    conn.execute("SET memory_limit='100MB'")
+    conn.execute("SET threads=1")
+    out = {}
+    for (t,) in conn.execute("SELECT DISTINCT ticker FROM ohlcv_daily ORDER BY ticker").fetchall():
+        r = conn.execute("SELECT date, open, high, low, close, volume FROM ohlcv_daily WHERE ticker = ? ORDER BY date", [t]).fetchnumpy()
+        out[t] = pd.DataFrame({c.title(): r[c] for c in ("open", "high", "low", "close", "volume")},
+                              index=pd.DatetimeIndex(r["date"], name="date"))
+    return out
+
+
 def fetch_prices(symbols: List[str], db: Path, end: date) -> Dict[str, pd.DataFrame]:
     conn = prices.connect(str(db))
     try:
         prices.download(conn, sorted(symbols), PRICE_START, end.isoformat())
-        return prices.load_all(conn)
+        prices.download(conn, sorted(symbols), PRICE_START, end.isoformat(), retry=True)     # a passing failure
+        return load_prices(conn)
     finally:
         conn.close()
 
@@ -229,30 +244,72 @@ def results(rec: pd.DataFrame, data: Dict[str, pd.DataFrame], cost: float = COST
     return out
 
 
+def score_text(path: Path = RECORD) -> str:
+    rec = load_record(path)
+    if rec.empty:
+        return "Nothing recorded yet."
+    today = market_now().date()
+    out = results(rec, fetch_prices(sorted(set(rec["symbol"])), CACHE / f"swing_rank_fwd_score_{today:%Y%m%d}.db", today))
+    if out.empty:
+        return "The first list has not started yet."
+    text = out.round(4).to_string(index=False)
+    full = out[out["complete"]]
+    if len(full):
+        text += f"\n{len(full)} complete months: S1 {(1 + full['net']).prod() - 1:+.2%}, XIU {(1 + full['xiu']).prod() - 1:+.2%}"
+    return text
+
+
+# ── On the timer ─────────────────────────────────────────────────────────────
+
+def auto(path: Path = RECORD, record_fn: Optional[Callable[[], pd.DataFrame]] = None,
+         score_fn: Optional[Callable[[], str]] = None, send: Optional[Callable[[str, str], bool]] = None) -> int:
+    """Does nothing unless a list is due. A failure is emailed and left for the
+    next scheduled try, which resumes the download."""
+    if send is None:
+        from send_report import send_text_email as send
+    try:
+        check_time(market_now(), load_record(path))
+    except NotNow as exc:
+        print(f"nothing to do: {exc}")
+        return 0
+    try:
+        rows = record_fn() if record_fn else record(path=path)
+    except Exception as exc:
+        send(f"{SUBJECT}: list NOT recorded", f"{type(exc).__name__}: {exc}\n\nThe next scheduled run tries again.")
+        print(f"STOPPED: {type(exc).__name__}: {exc}")
+        return 2
+    try:
+        done = score_fn() if score_fn else score_text(path)
+    except Exception as exc:
+        done = f"not available: {type(exc).__name__}: {exc}"
+    entry = load_record(path)["entry_date"].iloc[-1]
+    show = rows[["rank", "symbol", "name", "sector", "momentum", "close"]].to_string(index=False)
+    send(f"{SUBJECT}: {rows['signal_date'].iloc[0]}",
+         f"Paper list, bought at the open of {entry}, held until the next one. Not advice: S1 did not pass its test.\n\n"
+         f"{show}\n\nResults so far (net and XIU per period, the last one still open):\n{done}\n")
+    for f in CACHE.glob("swing_rank_fwd_*.db"):
+        f.unlink()
+    print(show)
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Forward record of S1 (paper)")
-    p.add_argument("action", choices=["record", "score"])
+    p.add_argument("action", choices=["auto", "record", "score"])
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
     pd.set_option("display.width", 200)
+    if args.action == "auto":
+        return auto()
     try:
         if args.action == "record":
             rows = record(args.dry_run)
             print(rows.to_string(index=False))
-            print("(dry run, nothing written)" if args.dry_run else f"Recorded in {RECORD}; commit it today.")
+            print("(dry run, nothing written)" if args.dry_run else f"Recorded in {RECORD}")
             return 0
-        rec = load_record()
-        if rec.empty:
-            print("Nothing recorded yet.")
-            return 0
-        today = market_now().date()
-        out = results(rec, fetch_prices(sorted(set(rec["symbol"])), CACHE / f"swing_rank_fwd_score_{today:%Y%m%d}.db", today))
-        print(out.round(4).to_string(index=False))
-        full = out[out["complete"]]
-        if len(full):
-            print(f"{len(full)} complete months: S1 {(1 + full['net']).prod() - 1:+.2%}, XIU {(1 + full['xiu']).prod() - 1:+.2%}")
+        print(score_text())
         return 0
-    except (NotNow, holdings.FetchFailed, prices.YahooBlocked) as exc:
+    except (NotNow, holdings.FetchFailed, prices.YahooBlocked, OSError) as exc:
         print(f"STOPPED: {exc}")
         return 2
 
