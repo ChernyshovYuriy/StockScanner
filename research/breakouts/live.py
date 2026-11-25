@@ -209,7 +209,7 @@ def describe(r) -> str:
              f"  base {r.bars / 21:.1f} months, {r.tests} tests of the line, {r.depth:.0%} deep",
              f"  day {r.day_ret:+.1%}, volume {r.vol_x:.1f}x its 50-day average, daily range {r.atr:.1%}",
              f"  Last Full Day low {r.lfd_low:,.2f} ({r.lfd_low / r.close - 1:+.1%}), measured target {r.target:,.2f} ({r.target / r.close - 1:+.1%})"]
-    if r.previous:
+    if pd.notna(r.previous):
         lines.append(f"  also broke out on {r.previous}")
     return "\n".join(lines)
 

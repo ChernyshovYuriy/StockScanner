@@ -371,3 +371,18 @@ def test_a_recorded_breakout_is_never_rewritten(tmp_path):
     live.save(conn, TODAY.date(), found, dollars, datetime(2026, 11, 25, 21))
     assert live.unsent(conn).empty
     conn.close()
+
+
+@pytest.mark.parametrize("stored", [False, True])
+def test_no_earlier_breakout_is_not_printed_as_nan(tmp_path, stored):
+    y = Yahoo({"A.TO": bars(breakout()), "B.TO": bars(breakout())})
+    found, dollars = live.scan_all(["A.TO", "B.TO"], TODAY.date(), [], set(), y, pacer(), lambda m: None)
+    found[1]["previous"] = "2026-11-09"
+    rows = pd.DataFrame(found)
+    if stored:
+        conn = live.connect(tmp_path / "b.db")
+        live.save(conn, TODAY.date(), found, dollars, datetime(2026, 11, 25, 18))
+        rows = live.unsent(conn)
+        conn.close()
+    body = live.message(rows, TODAY.date())[1]
+    assert body.count("also broke out on") == 1 and "also broke out on 2026-11-09" in body and "nan" not in body
