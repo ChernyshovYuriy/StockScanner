@@ -1,0 +1,19 @@
+[Unit]
+Description=StockScanner breakout scan (techcharts.net rule; emails confirmed breakouts, no capital/positions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/dev/stock-scanner
+ExecStart=/usr/bin/python3 -m research.breakouts.live auto
+Nice=15
+MemoryMax=500M
+OOMScoreAdjust=800
+TimeoutStartSec=5400
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

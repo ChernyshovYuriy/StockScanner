@@ -1,0 +1,11 @@
+[Unit]
+Description=Run StockScanner breakout scan at 17:45 and 21:00 on weekdays (the second only if the first failed)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 17:45
+OnCalendar=Mon..Fri *-*-* 21:00
+Persistent=false
+Unit=stockscanner-breakouts.service
+
+[Install]
+WantedBy=timers.target
