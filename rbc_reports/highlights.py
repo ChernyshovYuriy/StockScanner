@@ -8,7 +8,11 @@ note's own text. The tagger's labels alone can't rank a day -- 41 notes
 can all be "results_beat / bullish" -- so this is the one step that
 compares notes against each other.
 
-One call per digest day, after tagging (rbc_reports_service.py). A day is
+Only notes on a stock with a North-American listing are offered (a
+European pharma day once filled every spot with unpriceable names), so a
+day waits until prices.py has looked up all its stocks.
+
+One call per digest day, after tagging and pricing (rbc_reports_service.py). A day is
 redone only if more of its notes arrive later (a hand-saved digest). A
 pick on the wrong side of the note's own tone (a "bullish" pick the
 tagger read as bearish) is dropped, so the table never contradicts the
@@ -72,19 +76,25 @@ def ensure_schema(conn) -> None:
 
 def day_notes(conn, day: str) -> list:
     """[(report_key, symbol, company, title, view, action, tone, rating)]:
-    the tagged company notes from `day`'s digests (YYYY-MM-DD)."""
+    the tagged company notes from `day`'s digests (YYYY-MM-DD) whose
+    stock has a North-American listing (prices.py found one in
+    symbol_map) -- a European/Australian name can't be priced or bought
+    in the user's account, so it never takes a highlight spot."""
     return conn.execute(
-        "SELECT r.report_key, (SELECT t.symbol FROM report_tickers t WHERE t.report_key = r.report_key "
-        "ORDER BY t.position LIMIT 1), r.company, r.title, r.view, g.action, g.tone, g.rating "
+        "SELECT r.report_key, t.symbol, r.company, r.title, r.view, g.action, g.tone, g.rating "
         "FROM reports r JOIN report_tags g ON g.report_key = r.report_key "
+        "JOIN report_tickers t ON t.report_key = r.report_key AND t.position = 0 "
+        "JOIN symbol_map m ON m.symbol = t.symbol AND m.exchange = t.exchange "
+        "AND m.company = r.company AND m.yahoo_symbol IS NOT NULL "
         f"WHERE substr(r.digest_as_of, 1, 10) = ? AND r.{store.COMPANY_NOTE_SQL} "
         "AND g.report_type = 'company' ORDER BY r.published_at DESC", [day]).fetchall()
 
 
 def pending_days(conn, days: int = 7, redo: bool = False) -> list:
     """The newest `days` digest days that need a run: none yet, or more
-    tagged company notes now than when it ran. A day with untagged
-    reports waits for the tagger."""
+    tagged, listed company notes now than when it ran. A day with
+    untagged reports waits for the tagger; one whose stocks aren't all
+    looked up yet (prices.py's resolve step) waits for that."""
     out = []
     for (day,) in conn.execute(
             "SELECT DISTINCT substr(as_of, 1, 10) d FROM digests ORDER BY d DESC LIMIT ?", [days]):
@@ -92,6 +102,15 @@ def pending_days(conn, days: int = 7, redo: bool = False) -> list:
             "SELECT COUNT(*) FROM reports r WHERE substr(r.digest_as_of, 1, 10) = ? AND NOT EXISTS "
             "(SELECT 1 FROM report_tags g WHERE g.report_key = r.report_key)", [day]).fetchone()[0]
         if untagged:
+            continue
+        unchecked = conn.execute(
+            "SELECT COUNT(*) FROM reports r JOIN report_tickers t "
+            "ON t.report_key = r.report_key AND t.position = 0 "
+            f"WHERE substr(r.digest_as_of, 1, 10) = ? AND r.{store.COMPANY_NOTE_SQL} "
+            "AND r.company IS NOT NULL AND NOT EXISTS (SELECT 1 FROM symbol_map m "
+            "WHERE m.symbol = t.symbol AND m.exchange = t.exchange AND m.company = r.company)",
+            [day]).fetchone()[0]
+        if unchecked:
             continue
         n = len(day_notes(conn, day))
         done = conn.execute("SELECT notes FROM highlight_runs WHERE day = ?", [day]).fetchone()

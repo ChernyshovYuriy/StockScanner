@@ -829,12 +829,21 @@ def _tagged_day(db_path):
     return store.connect(db_path)
 
 
+def _list_all(conn, missing=()):
+    # prices.py's resolve step, faked: every subject found under its own
+    # symbol, except those in `missing` (no North-American listing).
+    for sym, exch, company in store.unresolved_subjects(conn):
+        found = (None, None, None) if sym in missing else (sym, company, "USD")
+        store.save_symbol(conn, sym, exch, company, *found, checked_at="2026-10-01")
+    return conn
+
+
 def _ids(lines, *companies):
     return [next(l["id"] for l in lines if l["company"].startswith(c)) for c in companies]
 
 
 def test_highlights_pick_store_and_show(db_path):
-    conn = _tagged_day(db_path)
+    conn = _list_all(_tagged_day(db_path))
 
     def answer(lines):
         gs, wcc = _ids(lines, "Goldman", "WESCO")
@@ -858,7 +867,7 @@ def test_highlights_wait_for_tags_and_retry_failures(db_path):
     conn = store.connect(db_path)
     client = _FakeHighlightClient(lambda lines: {"bullish": [], "bearish": []})
     assert highlights.run(conn, client=client)["pending"] == 0      # nothing tagged yet
-    conn = _tagged_day(db_path)
+    conn = _list_all(_tagged_day(db_path))
 
     class Broken:
         chat = completions = None
@@ -868,6 +877,19 @@ def test_highlights_wait_for_tags_and_retry_failures(db_path):
     broken.create = lambda **kw: (_ for _ in ()).throw(RuntimeError("down"))
     assert highlights.run(conn, client=broken)["done"] == 0
     assert highlights.run(conn, client=client)["done"] == 1        # retried next run
+
+
+def test_highlights_only_listed_stocks_and_wait_for_lookup(db_path):
+    conn = _tagged_day(db_path)
+    client = _FakeHighlightClient(lambda lines: {"bullish": [], "bearish": []})
+    # Tagged, but only GS looked up so far -> the day waits for prices.py.
+    sym, exch, company = next(s for s in store.unresolved_subjects(conn) if s[0] == "GS")
+    store.save_symbol(conn, sym, exch, company, "GS", company, "USD", checked_at="2026-10-01")
+    assert highlights.run(conn, client=client)["pending"] == 0
+    # WCC has no North-American listing (a European name): never offered.
+    _list_all(conn, missing={"WCC"})
+    assert highlights.run(conn, client=client)["done"] == 1
+    assert [l["ticker"] for l in client.calls[0]] == ["GS"]
 
 
 def test_alert_name_is_the_last_part():

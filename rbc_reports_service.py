@@ -59,13 +59,6 @@ def run_collector(run_id, dry_run=False, with_prices=True) -> dict:
         tags = tag_untagged(dry_run=dry_run)
         log("rbc_reports", run_id, "tagged", configured=tags["configured"],
             pending=tags["pending"], tagged=tags["tagged"])
-    picked = None
-    if ingested is not None and not dry_run:
-        try:
-            picked = highlights.run()
-            log("rbc_reports", run_id, "highlights", **picked)
-        except Exception as e:   # never block pricing on it
-            log("rbc_reports", run_id, "highlights_error", error=str(e))
     priced = None
     if ingested is not None and with_prices and not dry_run:
         try:
@@ -75,6 +68,16 @@ def run_collector(run_id, dry_run=False, with_prices=True) -> dict:
         if priced is not None:
             log("rbc_reports", run_id, "prices", **priced["resolve"], **{
                 f"sync_{k}": v for k, v in priced["sync"].items()})
+    # After pricing: highlights only offer notes on stocks prices.py
+    # found a North-American listing for (a day waits until all its
+    # stocks are looked up).
+    picked = None
+    if ingested is not None and not dry_run:
+        try:
+            picked = highlights.run()
+            log("rbc_reports", run_id, "highlights", **picked)
+        except Exception as e:
+            log("rbc_reports", run_id, "highlights_error", error=str(e))
     if dry_run:
         print(fetched)
         print(ingested)
