@@ -164,3 +164,22 @@ A missing feature is left out of that feature's test. No settings will be change
 rising/falling. Nothing is traded. Over four sample weeks (2020, 2024, 2026 twice) it gives exactly the backtest's 46
 eligible detections from 3 years of bars. 42 tests; 35 injected bugs, all caught but three that cannot change a result.
 `recent.py` shows the same mark.
+
+## Ascending triangle (owner's question, 2026-11-25; definition written before its result)
+Two 1930s charts (Hudson Motor, Johns Manville): flat top, rising lows, falling volume, 5-8 weeks. At bar t: level = highest of at
+least 2 swing highs (3 bars either side, confirmed before t) within 2% of it, with a fall of >= 3% between them; first touch 20-126
+sessions ago; no close > level x 1.01 since; t closes above level x 1.01 (variant 1.03). The lows between touches and from the last
+touch to t-1 (>= 2): **ascending** if each is >= 1.01 x the one before; **falling** if the last is < 0.99 x the first; else **flat**.
+Eligible names, 20 sessions between events of a name, next open, 20 and 60 sessions, 0.5% cost. Compared with same-day eligible
+names, plain new highs, and above all the same pattern without rising lows. Variants shown: volume falling (last third of the
+base below the first), breakout volume >= 1.5x. Trade: stop under the last low, target level + (level - first low), against same-day
+names of equal volatility. **Relevant** if ascending beats both same-day names and the non-ascending ones (60 sessions, all years)
+with 95% intervals above zero, and is ahead in A, B and C. All years were used for other ideas before.
+- **2026-11-25, ascending triangle: does not pass** (7,323 flat-top breakouts; 2,464 ascending). Ascending, 60 sessions: excess over
+  same-day names +0.33% (-0.78..+1.53); over the same pattern without rising lows +0.66% (-0.54..+1.94); A +0.04, B +1.38, C -0.82%.
+  20 sessions: -0.07% (-0.67..+0.52); 53% up. Trade to the measured target, stop under the last low: 49.9% reach it, same-day names
+  of equal volatility 50.6%. 3% margin: the same. One variant stands out, breakout volume >= 1.5x (776): +2.98% (+0.33..+6.02) at
+  60 sessions, but one of many, see the check below.
+  Check: with volume its median excess is +0.3% and +0.6% without its ten best trades (top five +153..+395%); the same pattern without
+  rising lows and with volume -0.1% (median -1.0%); rising lows on lower volume -0.9%. By period +2.5 / +4.3 / +1.7%, each spanning
+  zero. Suggestive, found after looking; the textbook pattern does ask for volume on the breakout. Scripts not kept in the repo.

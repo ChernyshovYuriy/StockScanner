@@ -28,8 +28,8 @@ def strength(m: bt.Market) -> pd.DataFrame:
     return raw.where(m.eligible).rank(axis=1, pct=True)
 
 class Study:
-    def __init__(self, data: Dict[str, pd.DataFrame], earnings: Optional[pd.DataFrame] = None):
-        self.m = bt.Market(data)
+    def __init__(self, data: Dict[str, pd.DataFrame], earnings: Optional[pd.DataFrame] = None, market: Optional[bt.Market] = None):
+        self.m = market if market is not None else bt.Market(data)
         self.rank = strength(self.m)
         self.a, self.ok, self.idx, self.setups = {}, {}, {}, {}
         for t, d in self.m.bars.items():
